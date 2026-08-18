@@ -69,7 +69,7 @@ export async function loadAvailableTenants(fallbackTenants = []) {
 
 export function subscribeToClientEvents(onChange, activeTenantSlug = defaultTenantSlug) {
   const supabase = getClient();
-  if (!supabase) return () => {};
+  if (!supabase) return () => { };
 
   const channel = supabase
     .channel(`tenant-events:${activeTenantSlug}`)
@@ -132,10 +132,26 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     ...fallback,
     source: 'supabase',
     conversations: eventsToConversations(data),
-    kanbanColumns: eventsToKanban(data),
+    kanbanColumns: eventsToKanban(data, activeTenantSlug),
     funnelStages: eventsToFunnel(data),
     status: buildStatus({ source: 'supabase', events: data, tenantSlug: activeTenantSlug }),
   };
+}
+
+function normalizeStage(stage) {
+  const s = String(stage || '').toLowerCase().trim();
+  if (s.includes('qualific') || s === 'qualificacao') return 'Qualificação';
+  if (s.includes('agend') || s === 'agendamento') return 'Agendamento';
+  if (s.includes('brief') || s.includes('briefing')) return 'Briefing necessário';
+  if (s.includes('suport') || s.includes('suporte')) return 'Suporte técnico';
+  if (s.includes('orc') || s.includes('orç') || s.includes('orcamento')) return 'Orçamento solicitado';
+  if (s.includes('human') || s.includes('atendimento_humano') || s.includes('atendimento humano')) return 'Atendimento humano';
+  if (s.includes('diagnos') || s.includes('diagnostico')) return 'Diagnóstico';
+  if (s.includes('negoc') || s.includes('negociacao')) return 'Negociação';
+  if (s.includes('fechad') || s.includes('fechado')) return 'Cliente fechado';
+  if (s.includes('propost') || s.includes('proposta')) return 'Proposta';
+  if (s.includes('fora de contexto')) return 'Fora de contexto';
+  return stage || 'Qualificação';
 }
 
 function eventsToConversations(events) {
@@ -143,7 +159,11 @@ function eventsToConversations(events) {
 
   for (const event of [...events].reverse()) {
     const channelType = normalizeChannel(event.channel_type);
+    const stageName = normalizeStage(event.stage);
     const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.contact_handle || event.id}`;
+    const isHumanTransfer = Boolean(event.handoff && (normalizeStage(event.stage) === 'Atendimento humano' || event.service === 'manual_reply'));
+    const defaultOwner = isHumanTransfer ? 'Recepção / Núbia' : 'Assistente IA';
+
     if (!byChat.has(key)) {
       byChat.set(key, {
         id: `conv-${key}`,
@@ -152,13 +172,13 @@ function eventsToConversations(events) {
         company: event.contact_handle ? `@${event.contact_handle}` : channelType.label,
         channel: channelType.label,
         channelType: channelType.type,
-        status: statusFromEvent(event),
-        stage: event.stage || 'Qualificação',
-        owner: event.handoff ? 'Equipe JIW' : 'Assistente JIW',
+        status: isHumanTransfer ? 'atendimento_humano' : 'ia_ativa',
+        stage: stageName,
+        owner: defaultOwner,
         unread: 0,
         lastMessage: event.message_text || '',
         lastAt: formatDate(event.created_at),
-        tags: [event.service, event.stage].filter(Boolean),
+        tags: [event.service, stageName].filter(Boolean),
         sentiment: sentimentFromEvent(event),
         value: estimatedValue(event),
         messages: [],
@@ -169,11 +189,11 @@ function eventsToConversations(events) {
     const conversation = byChat.get(key);
     conversation.lastMessage = event.message_text || conversation.lastMessage;
     conversation.lastAt = formatDate(event.created_at);
-    conversation.stage = event.stage || conversation.stage;
-    conversation.status = statusFromEvent(event);
-    conversation.owner = event.handoff ? 'Equipe JIW' : 'Assistente JIW';
+    conversation.stage = stageName;
+    conversation.status = isHumanTransfer ? 'atendimento_humano' : (conversation.status === 'atendimento_humano' ? 'atendimento_humano' : 'ia_ativa');
+    conversation.owner = isHumanTransfer ? 'Recepção / Núbia' : conversation.owner;
     conversation.value = Math.max(conversation.value, estimatedValue(event));
-    conversation.tags = Array.from(new Set([...conversation.tags, event.service, event.stage].filter(Boolean)));
+    conversation.tags = Array.from(new Set([...conversation.tags, event.service, stageName].filter(Boolean)));
     if (event.direction === 'outbound') {
       conversation.messages.push({
         from: event.sender_type === 'agent' ? 'agent' : 'ai',
@@ -187,24 +207,33 @@ function eventsToConversations(events) {
     if (event.direction !== 'outbound' && event.response_text) {
       conversation.messages.push({ from: 'ai', text: event.response_text, at: formatDate(event.created_at) });
     }
-    conversation.events.push(`Serviço: ${event.service || 'geral'} - Etapa: ${event.stage || 'Qualificação'}`);
+    conversation.events.push(`Serviço: ${event.service || 'geral'} - Etapa: ${stageName}`);
   }
 
   return Array.from(byChat.values()).sort((a, b) => compareDateLabel(b.lastAt, a.lastAt));
 }
 
+export const TENANT_SCHEDULING_LINKS = {
+  clinica_nubia: 'https://nbbronze.tuaagenda.app/',
+  jiw: 'https://nbbronze.tuaagenda.app/',
+};
+
+export function getTenantSchedulingLink(tenantSlug) {
+  return TENANT_SCHEDULING_LINKS[tenantSlug] || 'https://nbbronze.tuaagenda.app/';
+}
+
 export function emptyKanban() {
   return [
-    { id: 'novo', title: 'Novo contato', cards: [] },
-    { id: 'qualificacao', title: 'Qualificação', cards: [] },
-    { id: 'briefing', title: 'Briefing necessário', cards: [] },
-    { id: 'suporte', title: 'Suporte técnico', cards: [] },
-    { id: 'orcamento', title: 'Orçamento solicitado', cards: [] },
+    { id: 'novo', title: 'Novos contatos', cards: [] },
+    { id: 'qualificacao', title: 'Qualificação & Dúvidas', cards: [] },
+    { id: 'link_enviado', title: 'Link de agendamento enviado', cards: [] },
+    { id: 'agendamento_confirmado', title: 'Agendamento confirmado', cards: [] },
     { id: 'humano', title: 'Atendimento humano', cards: [] },
+    { id: 'concluido', title: 'Concluídos', cards: [] },
   ];
 }
 
-function eventsToKanban(events) {
+function eventsToKanban(events, tenantSlug = 'clinica_nubia') {
   const columns = emptyKanban();
   const latestByChat = new Map();
 
@@ -213,17 +242,39 @@ function eventsToKanban(events) {
     if (!latestByChat.has(key)) latestByChat.set(key, event);
   }
 
+  const defaultSchedulingUrl = getTenantSchedulingLink(tenantSlug);
+
   for (const event of latestByChat.values()) {
     const channelType = normalizeChannel(event.channel_type);
-    const target = pickColumn(event.stage, event.handoff);
-    const column = columns.find((item) => item.id === target) || columns[1];
+    const target = pickColumn(event.stage, event.handoff, event.message_text);
+    const column = columns.find((item) => item.id === target) || columns[0];
+
+    let aiReason = 'IA respondendo dúvidas';
+    if (target === 'link_enviado') {
+      aiReason = 'IA identificou intenção de agendamento e enviou link';
+    } else if (target === 'agendamento_confirmado') {
+      aiReason = 'Agendamento registrado pelo sistema';
+    } else if (target === 'humano') {
+      aiReason = 'Transferido para atendimento humano';
+    } else if (target === 'novo') {
+      aiReason = 'Primeiro contato recebido';
+    }
+
     column.cards.push({
       id: `card-${event.id}`,
+      externalConversationId: event.external_conversation_id,
       title: event.contact_name || `Contato ${channelType.label}`,
-      subtitle: event.message_text || event.service || 'Contato',
+      subtitle: event.message_text || event.service || 'Mensagem recente',
       channel: channelType.label,
+      channelType: channelType.type,
+      stage: normalizeStage(event.stage),
+      targetColumnId: target,
       value: formatCurrency(estimatedValue(event)),
-      owner: event.handoff ? 'Equipe JIW' : 'Assistente JIW',
+      owner: event.handoff ? 'Recepção / Núbia' : 'Assistente IA',
+      aiReason,
+      schedulingLink: defaultSchedulingUrl,
+      hasSchedulingLink: target === 'link_enviado' || target === 'agendamento_confirmado' || String(event.message_text || '').toLowerCase().includes('agendar'),
+      lastAt: formatDate(event.created_at),
     });
   }
 
@@ -250,7 +301,8 @@ function eventsToFunnel(events) {
   }
 
   for (const event of latestByChat.values()) {
-    const index = event.stage === 'Orçamento solicitado' || event.stage === 'Orcamento solicitado' ? 2 : event.stage === 'Briefing necessário' || event.stage === 'Briefing necessario' || event.stage === 'Suporte técnico' || event.stage === 'Suporte tecnico' ? 1 : 0;
+    const norm = normalizeStage(event.stage);
+    const index = norm === 'Orçamento solicitado' ? 2 : norm === 'Briefing necessário' || norm === 'Suporte técnico' ? 1 : 0;
     const value = estimatedValue(event);
     stages[index].count += 1;
     stages[index].value += value;
@@ -260,25 +312,30 @@ function eventsToFunnel(events) {
   return stages.map((stage) => ({ ...stage, conversion: Math.round((stage.count / total) * 100) }));
 }
 
-function pickColumn(stage, handoff) {
-  if (handoff || stage === 'Atendimento humano') return 'humano';
-  if (stage === 'Briefing necessário' || stage === 'Briefing necessario') return 'briefing';
-  if (stage === 'Suporte técnico' || stage === 'Suporte tecnico') return 'suporte';
-  if (stage === 'Orçamento solicitado' || stage === 'Orcamento solicitado') return 'orcamento';
-  if (stage === 'Fora de contexto') return 'novo';
-  return 'qualificacao';
+function pickColumn(stage, handoff, messageText = '') {
+  const norm = normalizeStage(stage);
+  const text = String(messageText || '').toLowerCase();
+
+  if (handoff || norm === 'Atendimento humano') return 'humano';
+  if (norm === 'Cliente fechado' || norm === 'Concluídos' || norm === 'Finalizada') return 'concluido';
+  if (norm === 'Agendamento confirmado' || text.includes('confirmado') || text.includes('agendado')) return 'agendamento_confirmado';
+  if (norm === 'Agendamento' || text.includes('agendar') || text.includes('horario') || text.includes('tuaagenda') || text.includes('link')) return 'link_enviado';
+  if (norm === 'Qualificação' || text.includes('bronze') || text.includes('resultado') || text.includes('duvida')) return 'qualificacao';
+  return 'novo';
 }
 
 function statusFromEvent(event) {
   if (event.handoff) return 'atendimento_humano';
-  if (event.stage === 'Fora de contexto') return 'erro';
+  if (normalizeStage(event.stage) === 'Fora de contexto') return 'erro';
   return 'ia_ativa';
 }
 
 function sentimentFromEvent(event) {
-  if (event.stage === 'Fora de contexto') return 'neutro';
-  if (event.handoff || event.stage === 'Suporte técnico' || event.stage === 'Suporte tecnico') return 'urgente';
-  return 'positivo';
+  const norm = normalizeStage(event.stage);
+  if (norm === 'Fora de contexto') return 'neutro';
+  if (event.handoff || norm === 'Suporte técnico') return 'urgente';
+  if (norm === 'Orçamento solicitado' || norm === 'Agendamento') return 'positivo';
+  return 'neutro';
 }
 
 function estimatedValue(event) {
@@ -341,10 +398,118 @@ function compareDateLabel() {
   return 0;
 }
 
-function formatCurrency(value) {
+export function formatCurrency(value) {
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(value || 0);
+}
+
+export async function loadTeamAgents(tenantSlug) {
+  if (!tenantSlug) return [];
+  const storageKey = `magia:team-agents:${tenantSlug}`;
+  try {
+    const supabase = getClient();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('team_agents')
+        .select('*')
+        .eq('tenant_slug', tenantSlug)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+      if (!error && Array.isArray(data)) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(data));
+        } catch (e) { }
+        return data;
+      }
+    }
+  } catch (e) {
+    console.warn('Falha ao carregar team_agents do Supabase:', e);
+  }
+  try {
+    const cached = localStorage.getItem(storageKey);
+    return cached ? JSON.parse(cached) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function saveTeamAgent(tenantSlug, agent) {
+  const storageKey = `magia:team-agents:${tenantSlug}`;
+  const newRecord = {
+    tenant_slug: tenantSlug,
+    name: agent.name,
+    role: agent.role || 'Atendente',
+    branch: agent.branch || 'Matriz',
+    shift: agent.shift || 'Integral',
+    status: agent.status || 'online',
+    is_active: true,
+  };
+  try {
+    const supabase = getClient();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('team_agents')
+        .insert([newRecord])
+        .select()
+        .single();
+      if (!error && data) {
+        return data;
+      }
+    }
+  } catch (e) {
+    console.warn('Falha ao salvar team_agent no Supabase:', e);
+  }
+  const localAgent = { id: `local-${Date.now()}`, ...newRecord, created_at: new Date().toISOString() };
+  try {
+    const current = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    localStorage.setItem(storageKey, JSON.stringify([localAgent, ...current]));
+  } catch (e) { }
+  return localAgent;
+}
+
+export async function updateTeamAgentStatus(agentId, newStatus, tenantSlug) {
+  try {
+    const supabase = getClient();
+    if (supabase && agentId && !String(agentId).startsWith('local-')) {
+      await supabase
+        .from('team_agents')
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', agentId);
+    }
+  } catch (e) {
+    console.warn('Falha ao atualizar status do team_agent no Supabase:', e);
+  }
+  if (tenantSlug) {
+    const storageKey = `magia:team-agents:${tenantSlug}`;
+    try {
+      const current = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      const updated = current.map((ag) => ag.id === agentId ? { ...ag, status: newStatus } : ag);
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    } catch (e) { }
+  }
+}
+
+export async function removeTeamAgent(agentId, tenantSlug) {
+  try {
+    const supabase = getClient();
+    if (supabase && agentId && !String(agentId).startsWith('local-')) {
+      await supabase
+        .from('team_agents')
+        .delete()
+        .eq('id', agentId);
+    }
+  } catch (e) {
+    console.warn('Falha ao remover team_agent do Supabase:', e);
+  }
+  if (tenantSlug) {
+    const storageKey = `magia:team-agents:${tenantSlug}`;
+    try {
+      const current = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      const updated = current.filter((ag) => ag.id !== agentId);
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    } catch (e) { }
+  }
 }
