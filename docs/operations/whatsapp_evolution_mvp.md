@@ -2,7 +2,7 @@
 
 **Data de inicio:** 2026-08-18  
 **Branch de trabalho:** `dev-whatsapp`  
-**Status:** fluxo base implementado; configuracao da instancia pendente
+**Status:** workflow visual implementado; configuracao das credenciais e da instancia pendente
 
 ## Objetivo
 
@@ -29,38 +29,57 @@ Arquivo para importar no n8n:
 n8n/workflows/magia_whatsapp_evolution_mvp.json
 ```
 
-O fluxo contem somente:
+O fluxo foi reorganizado para ficar legivel no canvas do n8n e contem somente
+os blocos necessarios para o MVP:
 
-- webhook `POST /webhook/magia-whatsapp`;
-- normalizacao e filtro de mensagens da Evolution API;
-- deduplicacao por `tenant_slug + channel_type + external_message_id`;
-- classificacao generalista da JIW sem IA, estoque de veiculos ou dados da Avvento;
-- persistencia no `channel_events`;
-- resposta opcional pelo endpoint `message/sendText` da Evolution API.
+- webhook `POST /webhook/magia-whatsapp` para receber a Evolution API;
+- normalizacao, filtro de grupos/status e deduplicacao no `channel_events`;
+- ramo visual de audio com conversao para arquivo e transcricao OpenAI;
+- contexto da JIW sem estoque de veiculos, vector store ou dados da Avvento;
+- agente `Assistente JIW (Gemini)` conectado ao no `Gemini Chat Model`;
+- registro dos eventos de entrada e saida no `channel_events`;
+- envio pelo no visual `Enviar Resposta pela Evolution`;
+- resposta JSON ao webhook para a Evolution API.
+
+O Gemini e o transcritor ficam visiveis e configuraveis no proprio n8n. O
+workflow vem desativado para permitir configurar as credenciais antes do
+primeiro teste.
 
 O `magia_command_router.json` tambem aceita `channel_type: "whatsapp"`, permitindo
 respostas manuais pela aba Conversas.
 
-Variaveis obrigatorias no n8n/EasyPanel:
+Variaveis usadas pelo fluxo no n8n/EasyPanel:
 
 ```text
 SUPABASE_URL=https://SEU-PROJETO.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=...
-EVOLUTION_API_URL=https://SEU-DOMINIO-EVOLUTION
-EVOLUTION_API_KEY=...
 EVOLUTION_INSTANCE_JIW=nome-da-instancia
 WHATSAPP_TENANT_SLUG=jiw
 ```
 
-Opcional:
+As chaves de API nao devem ser inseridas no JSON. Depois de importar o
+workflow, abra os nos e selecione/crie as credenciais no n8n:
 
-```text
-WHATSAPP_AUTOREPLY=true
-```
+1. `Gemini Chat Model`: credencial Google Gemini com a chave do Google AI
+   Studio.
+2. `Transcrever Audio (OpenAI)`: credencial OpenAI com acesso ao endpoint de
+   transcricao.
+3. `Buscar Mensagem Duplicada`, `Salvar Evento Recebido` e `Salvar Evento
+   Enviado`: credencial Supabase apontando para o projeto e para a tabela
+   `channel_events`.
+4. `Enviar Resposta pela Evolution`: credencial da Evolution API instalada no
+   n8n. O nome da instancia pode vir de `EVOLUTION_INSTANCE_JIW`.
 
-Depois de importar, configure o webhook da instancia Evolution para a URL
+Se a instalacao do n8n nao tiver o no `n8n-nodes-evolution-api`, substitua o
+no de envio por um `HTTP Request` para
+`/message/sendText/{EVOLUTION_INSTANCE_JIW}`, usando a chave da Evolution como
+credencial/header dentro do n8n.
+
+Depois de importar e configurar as credenciais, configure o webhook da
+instancia Evolution no EasyPanel para a URL
 `https://SEU-N8N/webhook/magia-whatsapp` e ative o workflow somente depois de
-validar as variaveis e o HTTPS.
+validar o HTTPS. A webhook fica na Evolution; nao e necessario colocar URL de
+webhook no frontend.
 
 ## Escopo do MVP
 
