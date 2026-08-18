@@ -22,11 +22,11 @@
       "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [-420, 260], "id": "magia-whatsapp-ignored", "name": "Responder Evento Ignorado"
     },
     {
-      "parameters": { "operation": "getAll", "tableId": "channel_events", "returnAll": false, "limit": 1, "filters": { "conditions": [ { "keyName": "tenant_slug", "condition": "eq", "keyValue": "={{ $json.tenant_slug }}" }, { "keyName": "channel_type", "condition": "eq", "keyValue": "whatsapp" }, { "keyName": "external_message_id", "condition": "eq", "keyValue": "={{ $json.messageId }}" } ] } },
-      "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [-420, 40], "id": "magia-whatsapp-dedup-query", "name": "Buscar Mensagem Duplicada", "alwaysOutputData": true, "onError": "continueRegularOutput"
+      "parameters": { "operation": "get", "key": "={{ 'magia:whatsapp:dedup:' + $json.tenant_slug + ':' + $json.messageId }}", "options": {} },
+      "type": "n8n-nodes-base.redis", "typeVersion": 1, "position": [-420, 40], "id": "magia-whatsapp-dedup-query", "name": "Consultar Deduplicacao no Redis"
     },
     {
-      "parameters": { "jsCode": "const original = $('Normalizar Entrada WhatsApp').item.json;\nconst duplicate = Boolean($json.id || $json.external_message_id || (Array.isArray($json) && $json.length));\nreturn { json: { ...original, isDuplicate: duplicate } };" },
+      "parameters": { "jsCode": "const original = $('Normalizar Entrada WhatsApp').item.json;\nconst duplicate = Boolean($json.propertyName || $json.value || $json.data);\nreturn { json: { ...original, isDuplicate: duplicate } };" },
       "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-180, 40], "id": "magia-whatsapp-dedup-check", "name": "Verificar Duplicidade"
     },
     {
@@ -36,6 +36,14 @@
     {
       "parameters": { "respondWith": "json", "responseBody": "={{ { ok: true, duplicate: true, external_message_id: $json.messageId } }}", "options": {} },
       "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [300, -100], "id": "magia-whatsapp-duplicate", "name": "Responder Duplicidade"
+    },
+    {
+      "parameters": { "operation": "set", "key": "={{ 'magia:whatsapp:dedup:' + $json.tenant_slug + ':' + $json.messageId }}", "value": "processing", "expire": true, "ttl": 86400 },
+      "type": "n8n-nodes-base.redis", "typeVersion": 1, "position": [300, 180], "id": "magia-whatsapp-dedup-mark", "name": "Marcar Mensagem no Redis"
+    },
+    {
+      "parameters": { "jsCode": "return { json: { ...$('Verificar Duplicidade').item.json, redis_marked: true } };" },
+      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [540, 180], "id": "magia-whatsapp-dedup-restore", "name": "Restaurar Contexto apos Redis"
     },
     {
       "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 }, "conditions": [{ "leftValue": "={{ $json.contentType }}", "rightValue": "audio", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "options": {} },
@@ -64,6 +72,10 @@
     {
       "parameters": { "modelName": "models/gemini-2.5-flash", "options": { "temperature": 0.3 } },
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini", "typeVersion": 1.1, "position": [1500, -140], "id": "magia-whatsapp-gemini", "name": "Gemini Chat Model"
+    },
+    {
+      "parameters": { "sessionIdType": "customKey", "sessionKey": "=magia:chat:{{ $json.tenant_slug }}:{{ $json.remoteJid }}", "sessionTTL": 86400, "contextWindowLength": 8 },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat", "typeVersion": 1.5, "position": [1740, -140], "id": "magia-whatsapp-memory", "name": "Memoria Redis da Conversa"
     },
     {
       "parameters": { "jsCode": "const base = $('Preparar Contexto JIW').item.json;\nconst raw = String($json.output || $json.text || '').trim();\nconst handoff = base.handoff || raw.includes('[HUMANO_SOLICITADO]');\nconst responseText = raw.replace(/\\[HUMANO_SOLICITADO\\]/gi, '').trim() || 'Recebi sua mensagem. Um especialista da JIW continuara o atendimento.';\nreturn { json: { ...base, responseText, handoff, direction: 'inbound', sender_type: 'contact', delivery_status: 'received' } };" },
@@ -97,16 +109,19 @@
   "connections": {
     "Webhook WhatsApp Evolution": { "main": [[{ "node": "Normalizar Entrada WhatsApp", "type": "main", "index": 0 }]] },
     "Normalizar Entrada WhatsApp": { "main": [[{ "node": "Mensagem valida?", "type": "main", "index": 0 }]] },
-    "Mensagem valida?": { "main": [[{ "node": "Buscar Mensagem Duplicada", "type": "main", "index": 0 }], [{ "node": "Responder Evento Ignorado", "type": "main", "index": 0 }]] },
-    "Buscar Mensagem Duplicada": { "main": [[{ "node": "Verificar Duplicidade", "type": "main", "index": 0 }]] },
+    "Mensagem valida?": { "main": [[{ "node": "Consultar Deduplicacao no Redis", "type": "main", "index": 0 }], [{ "node": "Responder Evento Ignorado", "type": "main", "index": 0 }]] },
+    "Consultar Deduplicacao no Redis": { "main": [[{ "node": "Verificar Duplicidade", "type": "main", "index": 0 }]] },
     "Verificar Duplicidade": { "main": [[{ "node": "Mensagem nova?", "type": "main", "index": 0 }]] },
-    "Mensagem nova?": { "main": [[{ "node": "E audio?", "type": "main", "index": 0 }], [{ "node": "Responder Duplicidade", "type": "main", "index": 0 }]] },
+    "Mensagem nova?": { "main": [[{ "node": "Marcar Mensagem no Redis", "type": "main", "index": 0 }], [{ "node": "Responder Duplicidade", "type": "main", "index": 0 }]] },
+    "Marcar Mensagem no Redis": { "main": [[{ "node": "Restaurar Contexto apos Redis", "type": "main", "index": 0 }]] },
+    "Restaurar Contexto apos Redis": { "main": [[{ "node": "E audio?", "type": "main", "index": 0 }]] },
     "E audio?": { "main": [[{ "node": "Converter Audio para Arquivo", "type": "main", "index": 0 }], [{ "node": "Preparar Contexto JIW", "type": "main", "index": 0 }]] },
     "Converter Audio para Arquivo": { "main": [[{ "node": "Transcrever Audio (OpenAI)", "type": "main", "index": 0 }]] },
     "Transcrever Audio (OpenAI)": { "main": [[{ "node": "Aplicar Transcricao", "type": "main", "index": 0 }]] },
     "Aplicar Transcricao": { "main": [[{ "node": "Preparar Contexto JIW", "type": "main", "index": 0 }]] },
     "Preparar Contexto JIW": { "main": [[{ "node": "Assistente JIW (Gemini)", "type": "main", "index": 0 }]] },
     "Gemini Chat Model": { "ai_languageModel": [[{ "node": "Assistente JIW (Gemini)", "type": "ai_languageModel", "index": 0 }]] },
+    "Memoria Redis da Conversa": { "ai_memory": [[{ "node": "Assistente JIW (Gemini)", "type": "ai_memory", "index": 0 }]] },
     "Assistente JIW (Gemini)": { "main": [[{ "node": "Preparar Resposta JIW", "type": "main", "index": 0 }]] },
     "Preparar Resposta JIW": { "main": [[{ "node": "Salvar Evento Recebido", "type": "main", "index": 0 }]] },
     "Salvar Evento Recebido": { "main": [[{ "node": "Restaurar Contexto para Envio", "type": "main", "index": 0 }]] },

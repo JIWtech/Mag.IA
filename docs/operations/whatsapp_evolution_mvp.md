@@ -33,7 +33,7 @@ O fluxo foi reorganizado para ficar legivel no canvas do n8n e contem somente
 os blocos necessarios para o MVP:
 
 - webhook `POST /webhook/magia-whatsapp` para receber a Evolution API;
-- normalizacao, filtro de grupos/status e deduplicacao no `channel_events`;
+- normalizacao, filtro de grupos/status e deduplicacao com TTL no Redis;
 - ramo visual de audio com conversao para arquivo e transcricao OpenAI;
 - contexto da JIW sem estoque de veiculos, vector store ou dados da Avvento;
 - agente `Assistente JIW (Gemini)` conectado ao no `Gemini Chat Model`;
@@ -64,16 +64,48 @@ workflow, abra os nos e selecione/crie as credenciais no n8n:
    Studio.
 2. `Transcrever Audio (OpenAI)`: credencial OpenAI com acesso ao endpoint de
    transcricao.
-3. `Buscar Mensagem Duplicada`, `Salvar Evento Recebido` e `Salvar Evento
-   Enviado`: credencial Supabase apontando para o projeto e para a tabela
+3. `Consultar Deduplicacao no Redis`, `Marcar Mensagem no Redis` e `Memoria
+   Redis da Conversa`: credencial Redis do servico do EasyPanel. As chaves de
+   deduplicacao usam o prefixo
+   `magia:whatsapp:dedup:` e expiram em 24 horas.
+4. `Salvar Evento Recebido` e `Salvar Evento Enviado`: credencial Supabase
+   apontando para o projeto e para a tabela
    `channel_events`.
-4. `Enviar Resposta pela Evolution`: credencial da Evolution API instalada no
+5. `Enviar Resposta pela Evolution`: credencial da Evolution API instalada no
    n8n. O nome da instancia pode vir de `EVOLUTION_INSTANCE_JIW`.
 
 Se a instalacao do n8n nao tiver o no `n8n-nodes-evolution-api`, substitua o
 no de envio por um `HTTP Request` para
 `/message/sendText/{EVOLUTION_INSTANCE_JIW}`, usando a chave da Evolution como
 credencial/header dentro do n8n.
+
+## Redis e memoria da IA
+
+Redis deve cuidar do estado rapido do fluxo: deduplicacao, locks de atendimento
+humano, filas curtas e TTL. Ele nao deve ser a base permanente do conhecimento
+da JIW. Os nos `Responder Evento Ignorado` e `Responder Duplicidade` continuam
+sendo `Respond to Webhook`, pois precisam confirmar o recebimento para a
+Evolution; o Redis fica nos nos de consulta e marcacao da duplicidade.
+
+Para conhecimento semantico, a escolha recomendada para este projeto e o
+`pgvector` no proprio Supabase, e nao um segundo banco como Qdrant ou Pinecone.
+O vector store serve para RAG (buscar contexto parecido antes da resposta),
+nao para treinar automaticamente o Gemini. A documentacao do Supabase trata o
+pgvector como extensao Postgres para armazenar embeddings e fazer busca por
+similaridade. [Supabase pgvector](https://supabase.com/docs/guides/database/extensions/pgvector)
+
+O desenho seguro da proxima fase sera:
+
+1. salvar conversas e respostas no `channel_events`;
+2. selecionar apenas respostas aprovadas ou corrigidas por um operador;
+3. resumir e anonimizar esse material;
+4. gerar embeddings e guardar em uma tabela de conhecimento por tenant;
+5. buscar os trechos relevantes antes do `Assistente JIW (Gemini)`;
+6. medir feedback e remover documentos que gerem respostas ruins.
+
+Nao vamos transformar todas as conversas brutas em conhecimento automaticamente:
+isso pode memorizar dados pessoais, erros do operador e informacoes de um tenant
+em outro.
 
 Depois de importar e configurar as credenciais, configure o webhook da
 instancia Evolution no EasyPanel para a URL
