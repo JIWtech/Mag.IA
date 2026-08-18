@@ -89,6 +89,7 @@ docs/operations/local_runbook.md
 
 - `docs/INDEX.md`
 - `docs/status/current_project_state.md`
+- `docs/operations/versioning_workflow.md`
 - `docs/operations/local_runbook.md`
 - `docs/operations/hosting_preparation.md`
 - `docs/operations/realtime_conversations_manual_replies.md`

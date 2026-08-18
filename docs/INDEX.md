@@ -11,6 +11,9 @@ desenvolvimento e preparar hospedagem.
 - `operations/local_runbook.md`  
   Passo a passo para rodar localmente como estamos rodando agora.
 
+- `operations/versioning_workflow.md`  
+  Padrao oficial de Git: desenvolver em `dev`, testar e promover para `prod`.
+
 - `operations/hosting_preparation.md`  
   Checklist para sair do ambiente local e hospedar o piloto JIW.
 
@@ -21,6 +24,9 @@ desenvolvimento e preparar hospedagem.
 
 - `operations/realtime_conversations_manual_replies.md`  
   Como funciona a aba Conversas em tempo quase real e envio manual.
+
+- `operations/versioning_workflow.md`  
+  Como versionar, testar e liberar alteracoes nas branches `dev` e `prod`.
 
 - `operations/gemini_jiw_setup.md`  
   Como ativar Gemini com controle de custo.
