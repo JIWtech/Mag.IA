@@ -19,7 +19,6 @@ import {
   MessageCircle,
   PauseCircle,
   PlayCircle,
-  Plus,
   RefreshCcw,
   Search,
   Send,
@@ -27,10 +26,14 @@ import {
   ShieldCheck,
   Sparkles,
   Tag,
+  Trash2,
+  UserCheck,
+  UserPlus,
   UserRound,
   UsersRound,
   Webhook,
   Workflow,
+  X,
   Zap,
 } from 'lucide-react';
 import {
@@ -53,7 +56,10 @@ import {
 } from './authService';
 import { getIntegrationStatus, integrationTargets, sendN8nCommand } from './integration';
 import {
+  emptyFunnel,
+  emptyKanban,
   getInitialTenantSlug,
+  hasSupabaseConfig,
   loadAvailableTenants,
   loadClientData,
   persistTenantSlug,
@@ -66,9 +72,9 @@ const menu = [
   { id: 'conversas', label: 'Conversas', icon: MessageCircle },
   { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
   { id: 'funil', label: 'Funil', icon: GitBranch },
-  { id: 'automacoes', label: 'Automacoes', icon: Workflow },
+  { id: 'automacoes', label: 'Automações', icon: Workflow },
   { id: 'ia', label: 'IA', icon: Brain },
-  { id: 'configuracoes', label: 'Configuracoes', icon: Settings },
+  { id: 'configuracoes', label: 'Configurações', icon: Settings },
 ];
 
 const statusLabels = {
@@ -76,7 +82,7 @@ const statusLabels = {
   atendimento_humano: 'Atendimento humano',
   aguardando_cliente: 'Aguardando cliente',
   finalizada: 'Finalizada',
-  erro: 'Atencao',
+  erro: 'Atenção',
   bloqueada: 'Bloqueada',
 };
 
@@ -95,16 +101,94 @@ function App() {
   const [session, setSession] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(isAuthRequired());
   const [loading, setLoading] = useState(false);
-  const [appData, setAppData] = useState({
-    conversations,
-    kanbanColumns,
-    funnelStages,
-    source: 'mock',
-    status: null,
+  const [appData, setAppData] = useState(() => {
+    if (hasSupabaseConfig()) {
+      return {
+        conversations: [],
+        kanbanColumns: emptyKanban(),
+        funnelStages: emptyFunnel(),
+        source: 'supabase',
+        status: {
+          source: 'supabase',
+          botUsername: '@clinica_nubia_bot',
+          channel: 'Telegram',
+          telegram: 'conectado',
+          supabase: true,
+          ai: 'Regras e automações',
+          latestAt: 'Sincronizando...',
+          humanQueue: 0,
+        },
+      };
+    }
+    return {
+      conversations,
+      kanbanColumns,
+      funnelStages,
+      source: 'mock',
+      status: null,
+    };
   });
+  const AGENTS_STORAGE_KEY = 'magia:team-agents';
+  const [agentsList, setAgentsList] = useState(() => {
+    try {
+      const stored = localStorage.getItem(AGENTS_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(agentsList));
+    } catch (e) {}
+  }, [agentsList]);
+
   const selectedTenant = availableTenants.find((tenant) => tenant.slug === tenantSlug) || availableTenants[0] || mockTenants[0];
   const activeTenantSlug = selectedTenant?.slug || tenantSlug || 'jiw';
   const integration = getIntegrationStatus(activeTenantSlug);
+
+  function handleAddAgent(newAgent) {
+    setAgentsList((prev) => [newAgent, ...prev]);
+  }
+
+  function handleToggleAgentStatus(agentId) {
+    setAgentsList((prev) => prev.map((ag) => ag.id === agentId ? { ...ag, status: ag.status === 'online' ? 'standby' : 'online' } : ag));
+  }
+
+  function handleDeleteAgent(agentId) {
+    setAgentsList((prev) => prev.filter((ag) => ag.id !== agentId));
+  }
+
+  function handleAssignAgent(conversationId, agent) {
+    setAppData((prev) => {
+      const nextConversations = prev.conversations.map((conv) => {
+        if (conv.id === conversationId) {
+          const newMessages = [
+            ...(conv.messages || []),
+            {
+              from: 'system',
+              text: `Conversa atribuída a ${agent.name}`,
+              at: 'Agora',
+            },
+          ];
+          return {
+            ...conv,
+            owner: agent.name,
+            status: 'atendimento_humano',
+            messages: newMessages,
+          };
+        }
+        return conv;
+      });
+      return {
+        ...prev,
+        conversations: nextConversations,
+      };
+    });
+
+    setAgentsList((prev) => prev.map((ag) => ag.id === agent.id ? { ...ag, load: (ag.load || 0) + 1 } : ag));
+  }
 
   useEffect(() => {
     if (!isAuthRequired()) return undefined;
@@ -125,8 +209,12 @@ function App() {
 
   async function refreshData() {
     setLoading(true);
+    const minWait = new Promise((resolve) => setTimeout(resolve, 550));
     try {
-      const data = await loadClientData({ conversations, kanbanColumns, funnelStages }, activeTenantSlug);
+      const [data] = await Promise.all([
+        loadClientData({ conversations, kanbanColumns, funnelStages }, activeTenantSlug),
+        minWait,
+      ]);
       setAppData(data);
     } finally {
       setLoading(false);
@@ -137,42 +225,27 @@ function App() {
     if (isAuthRequired() && !session) return;
     loadAvailableTenants(mockTenants).then((tenantsFromDb) => {
       setAvailableTenants(tenantsFromDb);
-      if (!tenantsFromDb.some((tenant) => tenant.slug === tenantSlug)) {
-        const nextSlug = tenantsFromDb[0]?.slug || tenantSlug;
-        setTenantSlug(nextSlug);
-        persistTenantSlug(nextSlug);
+      const exists = tenantsFromDb.some((tenant) => tenant.slug === activeTenantSlug);
+      if (!exists && tenantsFromDb[0]) {
+        setTenantSlug(tenantsFromDb[0].slug);
+        persistTenantSlug(tenantsFromDb[0].slug);
       }
     });
-  }, [session]);
+  }, [activeTenantSlug, session]);
 
   useEffect(() => {
-    if (isAuthRequired() && !session) return;
     persistTenantSlug(activeTenantSlug);
     refreshData();
-  }, [activeTenantSlug, session]);
-
-  useEffect(() => {
-    if (isAuthRequired() && !session) return undefined;
-    let timer = null;
-    const poller = setInterval(() => {
-      refreshData();
-    }, 5000);
     const unsubscribe = subscribeToClientEvents(() => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        refreshData();
-      }, 350);
-    });
-
+      refreshData();
+    }, activeTenantSlug);
     return () => {
-      clearTimeout(timer);
-      clearInterval(poller);
       unsubscribe();
     };
-  }, [activeTenantSlug, session]);
+  }, [activeTenantSlug]);
 
   if (checkingAuth) {
-    return <AuthShell title="Carregando acesso" />;
+    return <AuthShell title="Carregando painel..." />;
   }
 
   if (isAuthRequired() && !session) {
@@ -183,24 +256,23 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">
-            <Sparkles size={18} />
-          </div>
+          <div className="brand-mark"><Sparkles size={20} /></div>
           <div>
             <strong>Mag.ia</strong>
-            <span>Automacao que parece magia</span>
+            <span>Atendimento inteligente</span>
           </div>
         </div>
 
         <nav className="nav-list">
           {menu.map((item) => {
             const Icon = item.icon;
+            const isSelected = active === item.id;
             return (
               <button
                 key={item.id}
-                className={`nav-item ${active === item.id ? 'active' : ''}`}
-                onClick={() => setActive(item.id)}
                 type="button"
+                className={`nav-item ${isSelected ? 'active' : ''}`}
+                onClick={() => setActive(item.id)}
               >
                 <Icon size={18} />
                 <span>{item.label}</span>
@@ -211,14 +283,15 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="integration-pill">
-            <span className={`dot ${integration.mode === 'mock' ? 'warn' : 'ok'}`} />
-            <span>{integration.mode === 'mock' ? 'Modo mock' : 'Integravel'}</span>
+            <span className={`dot ${integration.supabase ? '' : 'warn'}`} />
+            <small>{integration.supabase ? 'Supabase conectado' : 'Modo local'}</small>
           </div>
           <small>Tenant: {integration.tenantSlug}</small>
         </div>
       </aside>
 
-      <main className="main">
+      <main className="main" style={{ position: 'relative' }}>
+        <div className={`refresh-progress-bar ${loading ? 'active' : ''}`} />
         <header className="topbar">
           <div>
             <h1>{menu.find((item) => item.id === active)?.label}</h1>
@@ -243,41 +316,66 @@ function App() {
                 Sair
               </button>
             )}
-            <button className="primary-button" type="button">
-              <Plus size={17} />
-              Novo item
-            </button>
+           
           </div>
         </header>
 
         {active === 'dashboard' && <Dashboard conversations={appData.conversations} dataSource={appData.source} status={appData.status} />}
-        {active === 'conversas' && <Conversations conversations={appData.conversations} tenantSlug={activeTenantSlug} onSent={refreshData} />}
+        {active === 'conversas' && (
+          <Conversations
+            conversations={appData.conversations}
+            tenantSlug={activeTenantSlug}
+            onSent={refreshData}
+            agentsList={agentsList}
+            onAssignAgent={handleAssignAgent}
+          />
+        )}
         {active === 'kanban' && <Kanban kanbanColumns={appData.kanbanColumns} tenantName={selectedTenant.name} />}
         {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} />}
         {active === 'automacoes' && <Automations />}
         {active === 'ia' && <AiSettings tenantName={selectedTenant.name} />}
-        {active === 'configuracoes' && <SettingsPage integration={integration} tenantName={selectedTenant.name} />}
+        {active === 'configuracoes' && (
+          <SettingsPage
+            agents={agentsList}
+            onAddAgent={handleAddAgent}
+            onToggleAgentStatus={handleToggleAgentStatus}
+            onDeleteAgent={handleDeleteAgent}
+            tenantName={selectedTenant.name}
+            integration={integration}
+          />
+        )}
       </main>
     </div>
   );
 }
 
 function Dashboard({ conversations, dataSource, status }) {
+  const [visibleCount, setVisibleCount] = useState(5);
+
   const stats = useMemo(() => {
     const activeBot = conversations.filter((item) => item.status === 'ia_ativa').length;
     const human = conversations.filter((item) => item.status === 'atendimento_humano').length;
-    const totalValue = conversations.reduce((sum, item) => sum + item.value, 0);
 
     return [
       { label: 'Conversas', value: conversations.length.toString(), change: dataSource === 'supabase' ? 'Supabase' : dataSource, icon: Inbox },
-      { label: 'Bot ativo', value: activeBot.toString(), change: status?.ai || 'Regras/fallback', icon: Bot },
-      { label: 'Humanas', value: human.toString(), change: 'fila', icon: UsersRound },
-      { label: 'Valor em funil', value: formatCurrency(totalValue), change: 'estimado', icon: CircleDollarSign },
+      { label: 'Bot ativo', value: activeBot.toString(), change: status?.ai || 'Regras e automações', icon: Bot },
+      { label: 'Humanas', value: human.toString(), change: 'Fila de espera', icon: UsersRound },
     ];
   }, [conversations, dataSource, status]);
 
+  function handleTableScroll(e) {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight < 30) {
+      setVisibleCount((prev) => Math.min(prev + 5, conversations.length));
+    }
+  }
+
+  const displayedConversations = useMemo(() => {
+    return conversations.slice(0, visibleCount);
+  }, [conversations, visibleCount]);
+
   return (
-    <section className="page-grid">
+    <section className="dashboard-page">
       <div className="stats-grid">
         {stats.map((stat) => {
           const Icon = stat.icon;
@@ -292,14 +390,14 @@ function Dashboard({ conversations, dataSource, status }) {
         })}
       </div>
 
-      <div className="content-grid two">
+      <div className="content-grid two dashboard-middle">
         <section className="panel">
-          <PanelTitle icon={Activity} title="Operacao atual" action={clientStatus.channel} />
+          <PanelTitle icon={Activity} title="Operação atual" action={status?.channel || 'Telegram'} />
           <div className="bar-list">
             {[
-              ['Telegram conectado', 100],
+              ['Telegram conectado', status?.telegram === 'conectado' ? 100 : 0],
               ['Webhook n8n ativo', 100],
-              [status?.ai === 'Gemini' ? 'Gemini ativo' : 'Regras/fallback', 100],
+              [status?.ai === 'Gemini' ? 'Gemini ativo' : 'Regras e automações', 100],
               ['Supabase real', status?.supabase ? 100 : 0],
             ].map(([label, value]) => (
               <div className="bar-row" key={label}>
@@ -314,44 +412,48 @@ function Dashboard({ conversations, dataSource, status }) {
         <section className="panel">
           <PanelTitle icon={Gauge} title="Sinais importantes" action="Tempo real" />
           <div className="signal-list">
-            <Signal icon={CheckCircle2} label="Bot Telegram conectado" value={clientStatus.botUsername} tone="ok" />
-            <Signal icon={Clock3} label="Ultimo evento" value={status?.latestAt || 'Sem eventos'} tone="info" />
+            <Signal icon={CheckCircle2} label="Bot Telegram conectado" value={status?.botUsername || '@clinica_nubia_bot'} tone="ok" />
+            <Signal icon={Clock3} label="Último evento" value={status?.latestAt || 'Sem eventos'} tone="info" />
             <Signal icon={PauseCircle} label="Conversas para humano" value={String(status?.humanQueue || 0)} tone="warn" />
-            <Signal icon={Zap} label="IA" value={status?.ai || 'Regras/fallback'} tone={status?.ai === 'Gemini' ? 'ok' : 'warn'} />
+            <Signal icon={Zap} label="IA" value={status?.ai || 'Regras e automações'} tone={status?.ai === 'Gemini' ? 'ok' : 'warn'} />
           </div>
         </section>
       </div>
 
-      <section className="panel">
-        <PanelTitle icon={MessageCircle} title="Conversas recentes" action="Ver todas" />
-        <div className="table">
+      <section className="panel dashboard-table-panel">
+        <PanelTitle icon={MessageCircle} title="Conversas recentes" action={`${displayedConversations.length} de ${conversations.length}`} />
+        <div className="table scrollable-table">
           <div className="table-head">
-            <span>Contato</span><span>Canal</span><span>Status</span><span>Etapa</span><span>Responsavel</span><span>Ultima mensagem</span>
+            <span>Contato</span><span>Canal</span><span>Status</span><span>Etapa</span><span>Responsável</span><span>Última mensagem</span>
           </div>
-          {conversations.map((item) => (
-            <div className="table-row" key={item.id}>
-              <strong>{item.contact}</strong>
-              <span>{item.channel}</span>
-              <Badge value={statusLabels[item.status]} status={item.status} />
-              <span>{item.stage}</span>
-              <span>{item.owner}</span>
-              <small>{item.lastMessage}</small>
-            </div>
-          ))}
-          {!conversations.length && <EmptyState title="Nenhuma conversa real ainda" text="Assim que o bot Telegram receber mensagens, elas aparecem aqui." />}
+          <div className="table-body" onScroll={handleTableScroll}>
+            {displayedConversations.map((item) => (
+              <div className="table-row" key={item.id}>
+                <strong>{item.contact}</strong>
+                <span>{item.channel}</span>
+                <Badge value={statusLabels[item.status]} status={item.status} />
+                <span>{item.stage}</span>
+                <span>{item.owner}</span>
+                <small>{item.lastMessage}</small>
+              </div>
+            ))}
+            {!conversations.length && <EmptyState title="Nenhuma conversa real ainda" text="Assim que o bot Telegram receber mensagens, elas aparecerão aqui." />}
+          </div>
         </div>
       </section>
     </section>
   );
 }
 
-function Conversations({ conversations, tenantSlug, onSent }) {
+function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onAssignAgent }) {
   const [selectedId, setSelectedId] = useState(conversations[0]?.id || null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('todas');
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignToast, setAssignToast] = useState('');
   const messagesEndRef = React.useRef(null);
 
   const filteredConversations = useMemo(() => {
@@ -403,7 +505,7 @@ function Conversations({ conversations, tenantSlug, onSent }) {
       setDraft('');
       await onSent?.();
     } catch (error) {
-      setSendError(error.message || 'Nao foi possivel enviar a resposta.');
+      setSendError(error.message || 'Não foi possível enviar a resposta.');
     } finally {
       setSending(false);
     }
@@ -412,7 +514,7 @@ function Conversations({ conversations, tenantSlug, onSent }) {
   if (!conversations.length) {
     return (
       <section className="panel">
-        <EmptyState title="Nenhuma conversa no Telegram" text="Envie uma mensagem para o bot da JIW e clique em atualizar para carregar o atendimento real." />
+        <EmptyState title="Nenhuma conversa no Telegram" text="Envie uma mensagem para o bot e clique em atualizar para carregar o atendimento real." />
       </section>
     );
   }
@@ -421,14 +523,14 @@ function Conversations({ conversations, tenantSlug, onSent }) {
     <section className="conversation-layout">
       <aside className="conversation-list panel">
         <div className="toolbar">
-          <div className="search-box"><Search size={16} /><input placeholder="Buscar conversa" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+          <div className="search-box"><Search size={16} /><input placeholder="Buscar conversa..." value={query} onChange={(event) => setQuery(event.target.value)} /></div>
           <button className="icon-button" title="Filtros" type="button"><Filter size={17} /></button>
         </div>
         <div className="chips">
           <button className={`chip ${filter === 'todas' ? 'active' : ''}`} type="button" onClick={() => setFilter('todas')}>Todas</button>
           <button className={`chip ${filter === 'ia' ? 'active' : ''}`} type="button" onClick={() => setFilter('ia')}>IA</button>
           <button className={`chip ${filter === 'humanas' ? 'active' : ''}`} type="button" onClick={() => setFilter('humanas')}>Humanas</button>
-          <button className={`chip ${filter === 'nao_lidas' ? 'active' : ''}`} type="button" onClick={() => setFilter('nao_lidas')}>Nao lidas</button>
+          <button className={`chip ${filter === 'nao_lidas' ? 'active' : ''}`} type="button" onClick={() => setFilter('nao_lidas')}>Não lidas</button>
         </div>
         <div className="conversation-items-scroll">
           {filteredConversations.map((conversation) => (
@@ -455,10 +557,12 @@ function Conversations({ conversations, tenantSlug, onSent }) {
           <div className="chat-header">
             <div>
               <strong>{selected.contact}</strong>
-              <span>{selected.channel} · {selected.stage}</span>
+              <span>{selected.channel} · {selected.stage} · Responsável: <strong>{selected.owner || 'Não atribuído'}</strong></span>
             </div>
             <div className="header-actions">
-              <button className="secondary-button" type="button"><UserRound size={16} /> Atribuir</button>
+              <button className="secondary-button" type="button" onClick={() => setShowAssignModal(true)}>
+                <UserRound size={16} /> Atribuir
+              </button>
             </div>
           </div>
           <div className="message-stream">
@@ -472,7 +576,7 @@ function Conversations({ conversations, tenantSlug, onSent }) {
           </div>
           <div className="composer">
             <input
-              placeholder="Responder manualmente pelo canal conectado"
+              placeholder="Responder manualmente pelo canal conectado..."
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
@@ -483,12 +587,77 @@ function Conversations({ conversations, tenantSlug, onSent }) {
               }}
             />
             <button className="primary-button" type="button" onClick={sendManualReply} disabled={!draft.trim() || sending}>
-              <Send size={17} /> {sending ? 'Enviando' : 'Enviar'}
+              <Send size={17} /> {sending ? 'Enviando...' : 'Enviar'}
             </button>
           </div>
         </> : <EmptyState title="Selecione uma conversa" text="Escolha um contato na lista para visualizar o histórico." />}
         {sendError && <div className="inline-error">{sendError}</div>}
       </section>
+
+      {showAssignModal && selected && (
+        <div className="modal-backdrop" onClick={() => setShowAssignModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3>Atribuir Atendimento</h3>
+                <p>Selecione o funcionário da equipe para assumir a conversa com <strong>{selected.contact}</strong></p>
+              </div>
+              <button className="icon-button compact-btn" type="button" onClick={() => setShowAssignModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="agent-selection-list">
+                {agentsList.map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={`agent-selection-item ${selected.owner === agent.name ? 'selected' : ''}`}
+                    onClick={() => {
+                      onAssignAgent?.(selected.id, agent);
+                      setShowAssignModal(false);
+                      setAssignToast(`Conversa atribuída a ${agent.name}!`);
+                      setTimeout(() => setAssignToast(''), 4000);
+                    }}
+                  >
+                    <div className="agent-avatar small">
+                      <UserRound size={18} />
+                    </div>
+                    <div className="agent-selection-meta">
+                      <div className="name-line">
+                        <strong>{agent.name}</strong>
+                        {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                      </div>
+                      <small>{agent.unit || 'Geral'} · {agent.shift || 'Horário comercial'} · {agent.status === 'online' ? 'Online' : 'Standby'}</small>
+                    </div>
+                    <div className="agent-selection-badge">
+                      {selected.owner === agent.name ? (
+                        <span className="current-owner-tag"><CheckCircle2 size={14} /> Atual</span>
+                      ) : (
+                        <span className="select-action-tag">Atribuir</span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+                {!agentsList.length && (
+                  <EmptyState
+                    title="Nenhum funcionário cadastrado"
+                    text="Acesse o menu Configurações para cadastrar os funcionários da equipe."
+                    compact
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {assignToast && (
+        <div className="toast-notification">
+          <CheckCircle2 size={18} color="#10b981" />
+          <span>{assignToast}</span>
+        </div>
+      )}
     </section>
   );
 }
@@ -503,7 +672,7 @@ function Kanban({ kanbanColumns, tenantName }) {
           <button className="chip" type="button">Suporte TI</button>
           <button className="chip" type="button">Marketing digital</button>
         </div>
-        <button className="secondary-button" type="button"><Plus size={16} /> Nova coluna</button>
+        <button className="secondary-button" type="button"><Sparkles size={16} /> Nova coluna</button>
       </div>
       <div className="kanban-board">
         {kanbanColumns.map((column) => (
@@ -536,7 +705,7 @@ function Funnel({ funnelStages, tenantName }) {
   return (
     <section className="content-grid">
       <section className="panel">
-        <PanelTitle icon={GitBranch} title="Funil comercial" action="Mes atual" />
+        <PanelTitle icon={GitBranch} title="Funil comercial" action="Mês atual" />
         <div className="funnel-list">
           {funnelStages.map((stage) => (
             <div className="funnel-row" key={stage.id}>
@@ -553,12 +722,12 @@ function Funnel({ funnelStages, tenantName }) {
         </div>
       </section>
       <section className="panel">
-        <PanelTitle icon={CalendarCheck} title="Proximas acoes" />
+        <PanelTitle icon={CalendarCheck} title="Próximas ações" />
         <div className="task-list">
           <Task title="Testar conversa real no Telegram" meta={`${tenantName} · webhook multi-tenant`} />
-          <Task title="Confirmar tenant no Supabase" meta="Banco multi-tenant" />
-          <Task title="Acompanhar mensagens reais" meta="channel_events + tempo real" />
-          <Task title="Monitorar IA paga" meta="Gemini com limite por dia" />
+          <Task title="Confirmar tenant no Supabase" meta="Banco de dados multi-tenant" />
+          <Task title="Acompanhar mensagens reais" meta="Eventos de canais em tempo real" />
+          <Task title="Monitorar IA paga" meta="Gemini com limite diário configurado" />
         </div>
       </section>
     </section>
@@ -569,7 +738,7 @@ function Automations() {
   return (
     <section className="content-grid">
       <section className="panel">
-        <PanelTitle icon={Workflow} title="Regras de automacao" action="Criar regra" />
+        <PanelTitle icon={Workflow} title="Regras de automação" action="Criar regra" />
         <div className="rule-list">
           {automationRules.map((rule) => (
             <article className="rule-card" key={rule.id}>
@@ -581,7 +750,7 @@ function Automations() {
                 {rule.actions.map((action) => <Badge key={action} value={action} status="channel" />)}
               </div>
               <div className="rule-footer">
-                <span>{rule.runs} execucoes</span>
+                <span>{rule.runs} execuções</span>
                 <label className="switch">
                   <input type="checkbox" defaultChecked={rule.active} />
                   <span />
@@ -592,11 +761,11 @@ function Automations() {
         </div>
       </section>
       <section className="panel">
-        <PanelTitle icon={Webhook} title="Builder rapido" />
+        <PanelTitle icon={Webhook} title="Builder rápido" />
         <div className="form-grid">
-          <label>Gatilho<select><option>Mensagem contem palavra-chave</option><option>IA detectou intencao</option><option>Status alterado</option></select></label>
-          <label>Condicao<input defaultValue="agendar, consulta, horario" /></label>
-          <label>Acao<select><option>Mover kanban</option><option>Transferir para humano</option><option>Criar oportunidade</option><option>Notificar equipe</option></select></label>
+          <label>Gatilho<select><option>Mensagem contém palavra-chave</option><option>IA detectou intenção</option><option>Status alterado</option></select></label>
+          <label>Condição<input defaultValue="agendar, consulta, horário" /></label>
+          <label>Ação<select><option>Mover kanban</option><option>Transferir para humano</option><option>Criar oportunidade</option><option>Notificar equipe</option></select></label>
           <label>Destino<input defaultValue="Consulta solicitada" /></label>
           <button className="primary-button wide" type="button"><PlayCircle size={17} /> Simular regra</button>
         </div>
@@ -612,7 +781,7 @@ function AiSettings({ tenantName }) {
         <PanelTitle icon={Brain} title={`Assistente ${tenantName}`} action={aiConfig.provider} />
         <div className="form-grid two-cols">
           <label>Nome da IA<input defaultValue={aiConfig.name} /></label>
-          <label>Provedor<select defaultValue={aiConfig.provider}><option>Regras MOCK</option><option>Gemini</option><option>OpenAI</option><option>Anthropic</option><option>Local</option></select></label>
+          <label>Provedor<select defaultValue={aiConfig.provider}><option>Regras de automação</option><option>Gemini</option><option>OpenAI</option><option>Anthropic</option><option>Local</option></select></label>
           <label>Modelo<input defaultValue={aiConfig.model} /></label>
           <label>Temperatura<input type="number" step="0.1" defaultValue={aiConfig.temperature} /></label>
         </div>
@@ -630,49 +799,183 @@ function AiSettings({ tenantName }) {
         </ul>
         <h3>Ferramentas</h3>
         <div className="tag-list">
-          {aiConfig.tools.map((tool) => <span key={tool}>{tool}</span>)}
+          {aiConfig.tools.map((tool) => <span key={tool}>{tool}</span>) }
         </div>
       </aside>
     </section>
   );
 }
 
-function SettingsPage({ integration, tenantName }) {
+function SettingsPage({ agents = [], onAddAgent, onToggleAgentStatus, onDeleteAgent, tenantName }) {
+  const [name, setName] = useState('');
+  const [role, setRole] = useState('');
+  const [phone, setPhone] = useState('');
+  const [unit, setUnit] = useState('Unidade 1');
+  const [shift, setShift] = useState('Integral (08:00 às 18:00)');
+  const [channel, setChannel] = useState('WhatsApp');
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    onAddAgent?.({
+      id: `ag-${Date.now()}`,
+      name: name.trim(),
+      role: role.trim() || 'Atendimento / Operador',
+      phone: phone.trim(),
+      unit: unit.trim() || 'Unidade Geral',
+      shift: shift.trim() || '08:00 às 18:00',
+      channel: channel.trim() || 'WhatsApp / Telegram',
+      status: 'online',
+      load: 0,
+    });
+    setName('');
+    setRole('');
+    setPhone('');
+  }
+
   return (
     <section className="content-grid two">
       <section className="panel">
-        <PanelTitle icon={MessageCircle} title={`Canais ${tenantName}`} action="Omnichannel" />
-        <div className="channel-list">
-          {channelAccounts.map((channel) => (
-            <article className="channel-card" key={channel.id}>
-              <div>
-                <strong>{channel.name}</strong>
-                <span>{channel.type} · {channel.tenant}</span>
-              </div>
-              <Badge value={channel.status} status={channel.status === 'conectado' ? 'ia_ativa' : 'channel'} />
-              <small>{channel.messages} mensagens</small>
-            </article>
-          ))}
+        <PanelTitle icon={UserCheck} title="Cadastrar Funcionário / Agente" />
+        <p style={{ margin: '4px 0 16px', color: 'var(--muted)', fontSize: '13px' }}>
+          Cadastre os funcionários humanos do estabelecimento para receberem atendimentos transferidos.
+        </p>
+
+        <form className="form-grid" onSubmit={handleSubmit}>
+          <label>
+            Nome Completo do Funcionário *
+            <input
+              placeholder="Ex: Núbia Santos, Camila Recepção..."
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </label>
+
+          <div className="form-row-two">
+            <label>
+              Cargo / Função
+              <input
+                placeholder="Ex: Responsável Geral, Recepcionista..."
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+              />
+            </label>
+            <label>
+              WhatsApp / Telefone
+              <input
+                placeholder="Ex: (11) 99999-9999"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="form-row-two">
+            <label>
+              Unidade / Filial
+              <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+                <option value="Unidade 1">Unidade 1</option>
+                <option value="Unidade 2">Unidade 2</option>
+                <option value="Todas as Unidades">Todas as Unidades (Geral)</option>
+              </select>
+            </label>
+            <label>
+              Turno / Horário de Trabalho
+              <select value={shift} onChange={(e) => setShift(e.target.value)}>
+                <option value="Integral (08:00 às 18:00)">Integral (08:00 às 18:00)</option>
+                <option value="Manhã (08:00 às 13:00)">Manhã (08:00 às 13:00)</option>
+                <option value="Tarde (13:00 às 18:00)">Tarde (13:00 às 18:00)</option>
+                <option value="Flexível / Plantão">Flexível / Plantão</option>
+              </select>
+            </label>
+          </div>
+
+          <label>
+            Canal de Atuação Principal
+            <select value={channel} onChange={(e) => setChannel(e.target.value)}>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Telegram">Telegram</option>
+              <option value="Instagram">Instagram</option>
+              <option value="Todos os canais">Todos os canais</option>
+            </select>
+          </label>
+
+          <button className="primary-button wide" type="submit" disabled={!name.trim()}>
+            <UserCheck size={17} /> Salvar Agente
+          </button>
+        </form>
+
+        <div style={{ marginTop: '22px', borderTop: '1px solid var(--line)', paddingTop: '18px' }}>
+          <PanelTitle icon={MessageCircle} title={`Canais Conectados (${tenantName})`} action="Omnichannel" />
+          <div className="channel-list" style={{ marginTop: '10px' }}>
+            {channelAccounts.map((ch) => (
+              <article className="channel-card" key={ch.id}>
+                <div>
+                  <strong>{ch.name}</strong>
+                  <span>{ch.type} · {ch.tenant}</span>
+                </div>
+                <Badge value={ch.status} status={ch.status === 'conectado' ? 'ia_ativa' : 'channel'} />
+                <small>{ch.messages} msgs</small>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
+
       <section className="panel">
-        <PanelTitle icon={Webhook} title="Mapa de integracao" />
-        <div className="integration-status">
-          <Signal icon={ShieldCheck} label="Telegram" value="conectado" tone="ok" />
-          <Signal icon={ShieldCheck} label="Instagram" value="preparado" tone="warn" />
-          <Signal icon={Webhook} label="n8n webhook" value="ativo" tone="ok" />
-          <Signal icon={Brain} label="IA paga" value="desativada" tone="warn" />
-          <Signal icon={ShieldCheck} label="Supabase" value={integration.supabase ? 'configurado' : 'pendente'} tone={integration.supabase ? 'ok' : 'warn'} />
-        </div>
-        <div className="table compact">
-          <div className="table-head"><span>Area</span><span>Tabelas</span><span>Webhook</span></div>
-          {integrationTargets.map((target) => (
-            <div className="table-row" key={target.area}>
-              <strong>{target.area}</strong>
-              <small>{target.table}</small>
-              <small>{target.webhook}</small>
-            </div>
+        <PanelTitle icon={UsersRound} title="Equipe de Atendimento Cadastrada" />
+        <p style={{ margin: '4px 0 16px', color: 'var(--muted)', fontSize: '13px' }}>
+          Funcionários ativos disponíveis para transferência no botão <strong>Atribuir</strong> do chat.
+        </p>
+
+        <div className="agents-list">
+          {agents.map((agent) => (
+            <article className="agent-card" key={agent.id}>
+              <div className="agent-avatar small">
+                <UserRound size={20} />
+              </div>
+              <div className="agent-info">
+                <div className="agent-name-row">
+                  <strong>{agent.name}</strong>
+                  {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                  <span className={`status-dot-badge ${agent.status}`}>
+                    <span className="pulse-dot" />
+                    {agent.status === 'online' ? 'Online' : 'Standby'}
+                  </span>
+                </div>
+                <span className="agent-role">
+                  {agent.unit || 'Geral'} · {agent.shift || '08:00 às 18:00'} {agent.phone ? `· ${agent.phone}` : ''}
+                </span>
+              </div>
+              <div className="agent-actions">
+                <span className="agent-load-badge">{agent.load || 0} conversas</span>
+                <button
+                  className="secondary-button compact-btn"
+                  type="button"
+                  title="Alternar status de disponibilidade"
+                  onClick={() => onToggleAgentStatus?.(agent.id)}
+                >
+                  {agent.status === 'online' ? 'Pausar' : 'Ativar'}
+                </button>
+                <button
+                  className="icon-button compact-btn text-danger"
+                  type="button"
+                  title="Remover funcionário"
+                  onClick={() => onDeleteAgent?.(agent.id)}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            </article>
           ))}
+          {!agents.length && (
+            <EmptyState
+              title="Nenhum funcionário cadastrado"
+              text="Cadastre os atendentes e operadores da equipe no formulário ao lado para poder atribuir conversas a eles."
+              compact
+            />
+          )}
         </div>
       </section>
     </section>
@@ -696,15 +999,6 @@ function Signal({ icon: Icon, label, value, tone }) {
   return (
     <div className={`signal ${tone}`}>
       <Icon size={18} />
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function Detail({ label, value }) {
-  return (
-    <div className="detail">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
@@ -738,7 +1032,7 @@ function AuthShell({ title }) {
           <div className="brand-mark"><Sparkles size={18} /></div>
           <div>
             <strong>Mag.ia</strong>
-            <span>Automacao que parece magia</span>
+            <span>Automação que parece magia</span>
           </div>
         </div>
         <h1>{title}</h1>
@@ -760,7 +1054,7 @@ function LoginPage() {
     try {
       await signInWithPassword(email.trim(), password);
     } catch (loginError) {
-      setError(loginError.message || 'Nao foi possivel entrar.');
+      setError(loginError.message || 'Não foi possível entrar.');
     } finally {
       setLoading(false);
     }
@@ -773,7 +1067,7 @@ function LoginPage() {
           <div className="brand-mark"><Sparkles size={18} /></div>
           <div>
             <strong>Mag.ia</strong>
-            <span>Automacao que parece magia</span>
+            <span>Automação que parece magia</span>
           </div>
         </div>
         <h1>Acessar painel</h1>
@@ -788,7 +1082,7 @@ function LoginPage() {
         {error && <div className="inline-error">{error}</div>}
         <button className="primary-button wide" type="submit" disabled={loading}>
           <ShieldCheck size={16} />
-          {loading ? 'Entrando' : 'Entrar'}
+          {loading ? 'Entrando...' : 'Entrar'}
         </button>
       </form>
     </main>

@@ -153,7 +153,7 @@ function eventsToConversations(events) {
         channel: channelType.label,
         channelType: channelType.type,
         status: statusFromEvent(event),
-        stage: event.stage || 'Qualificacao',
+        stage: event.stage || 'Qualificação',
         owner: event.handoff ? 'Equipe JIW' : 'Assistente JIW',
         unread: 0,
         lastMessage: event.message_text || '',
@@ -187,19 +187,19 @@ function eventsToConversations(events) {
     if (event.direction !== 'outbound' && event.response_text) {
       conversation.messages.push({ from: 'ai', text: event.response_text, at: formatDate(event.created_at) });
     }
-    conversation.events.push(`Servico: ${event.service || 'geral'} - Etapa: ${event.stage || 'Qualificacao'}`);
+    conversation.events.push(`Serviço: ${event.service || 'geral'} - Etapa: ${event.stage || 'Qualificação'}`);
   }
 
   return Array.from(byChat.values()).sort((a, b) => compareDateLabel(b.lastAt, a.lastAt));
 }
 
-function emptyKanban() {
+export function emptyKanban() {
   return [
     { id: 'novo', title: 'Novo contato', cards: [] },
-    { id: 'qualificacao', title: 'Qualificacao', cards: [] },
-    { id: 'briefing', title: 'Briefing necessario', cards: [] },
-    { id: 'suporte', title: 'Suporte tecnico', cards: [] },
-    { id: 'orcamento', title: 'Orcamento solicitado', cards: [] },
+    { id: 'qualificacao', title: 'Qualificação', cards: [] },
+    { id: 'briefing', title: 'Briefing necessário', cards: [] },
+    { id: 'suporte', title: 'Suporte técnico', cards: [] },
+    { id: 'orcamento', title: 'Orçamento solicitado', cards: [] },
     { id: 'humano', title: 'Atendimento humano', cards: [] },
   ];
 }
@@ -230,12 +230,12 @@ function eventsToKanban(events) {
   return columns;
 }
 
-function emptyFunnel() {
+export function emptyFunnel() {
   return [
     { id: 'lead', name: 'Lead recebido', count: 0, value: 0, conversion: 0 },
-    { id: 'diagnostico', name: 'Diagnostico', count: 0, value: 0, conversion: 0 },
+    { id: 'diagnostico', name: 'Diagnóstico', count: 0, value: 0, conversion: 0 },
     { id: 'proposta', name: 'Proposta', count: 0, value: 0, conversion: 0 },
-    { id: 'negociacao', name: 'Negociacao', count: 0, value: 0, conversion: 0 },
+    { id: 'negociacao', name: 'Negociação', count: 0, value: 0, conversion: 0 },
     { id: 'fechado', name: 'Cliente fechado', count: 0, value: 0, conversion: 0 },
   ];
 }
@@ -250,7 +250,7 @@ function eventsToFunnel(events) {
   }
 
   for (const event of latestByChat.values()) {
-    const index = event.stage === 'Orcamento solicitado' ? 2 : event.stage === 'Briefing necessario' || event.stage === 'Suporte tecnico' ? 1 : 0;
+    const index = event.stage === 'Orçamento solicitado' || event.stage === 'Orcamento solicitado' ? 2 : event.stage === 'Briefing necessário' || event.stage === 'Briefing necessario' || event.stage === 'Suporte técnico' || event.stage === 'Suporte tecnico' ? 1 : 0;
     const value = estimatedValue(event);
     stages[index].count += 1;
     stages[index].value += value;
@@ -262,9 +262,9 @@ function eventsToFunnel(events) {
 
 function pickColumn(stage, handoff) {
   if (handoff || stage === 'Atendimento humano') return 'humano';
-  if (stage === 'Briefing necessario') return 'briefing';
-  if (stage === 'Suporte tecnico') return 'suporte';
-  if (stage === 'Orcamento solicitado') return 'orcamento';
+  if (stage === 'Briefing necessário' || stage === 'Briefing necessario') return 'briefing';
+  if (stage === 'Suporte técnico' || stage === 'Suporte tecnico') return 'suporte';
+  if (stage === 'Orçamento solicitado' || stage === 'Orcamento solicitado') return 'orcamento';
   if (stage === 'Fora de contexto') return 'novo';
   return 'qualificacao';
 }
@@ -277,12 +277,12 @@ function statusFromEvent(event) {
 
 function sentimentFromEvent(event) {
   if (event.stage === 'Fora de contexto') return 'neutro';
-  if (event.handoff || event.stage === 'Suporte tecnico') return 'urgente';
+  if (event.handoff || event.stage === 'Suporte técnico' || event.stage === 'Suporte tecnico') return 'urgente';
   return 'positivo';
 }
 
 function estimatedValue(event) {
-  if (event.stage === 'Orcamento solicitado') return 2500;
+  if (event.stage === 'Orçamento solicitado' || event.stage === 'Orcamento solicitado') return 2500;
   if (event.service === 'software_house') return 18000;
   if (event.service === 'trafego_pago' || event.service === 'social_media') return 3200;
   if (event.service === 'suporte_ti') return 450;
@@ -295,14 +295,20 @@ function buildStatus({ source, events, error, tenantSlug }) {
   const latestProvider = latest?.ai_provider || (source === 'supabase' ? 'regras/n8n' : 'mock');
   const channels = Array.from(new Set((events || []).map((event) => normalizeChannel(event.channel_type).label)));
 
+  const rawBot = events?.find((e) => e.raw_payload?.sent?.raw?.result?.from?.username)?.raw_payload?.sent?.raw?.result?.from?.username
+    || (tenantSlug === 'clinica_nubia' ? 'clinica_nubia_bot' : `${tenantSlug}_bot`);
+  const botUsername = `@${rawBot.replace(/^@/, '')}`;
+
   return {
     source,
     error,
+    botUsername,
+    channel: channels.length ? channels.join(', ') : 'Telegram',
     telegram: channels.includes('Telegram') ? 'conectado' : 'sem eventos',
     instagram: channels.includes('Instagram') ? 'conectado' : 'preparado',
-    webhook: channels.includes('Instagram') ? `telegram/${tenantSlug} + instagram` : `telegram/${tenantSlug}`,
+    webhook: channels.includes('Instagram') ? `telegram/${tenantSlug} / instagram` : `telegram/${tenantSlug}`,
     supabase: source === 'supabase' || source === 'supabase_empty',
-    ai: latestProvider.includes('gemini') ? 'Gemini' : 'Regras/fallback',
+    ai: latestProvider.includes('gemini') ? 'Gemini' : 'Regras e automações',
     latestAt: latest ? formatDate(latest.created_at) : 'Sem eventos',
     totalEvents: events?.length || 0,
     humanQueue: human,
