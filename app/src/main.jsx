@@ -8,11 +8,15 @@ import {
   Building2,
   CalendarCheck,
   CalendarDays,
+  Check,
+  CheckCheck,
   CheckCircle2,
   ChevronDown,
   CircleDollarSign,
   Clock3,
   FileSpreadsheet,
+  Copy,
+  ExternalLink,
   Filter,
   Gauge,
   GitBranch,
@@ -67,15 +71,20 @@ import {
   emptyFunnel,
   emptyKanban,
   getInitialTenantSlug,
+  getTenantSchedulingLink,
   hasSupabaseConfig,
   loadAvailableTenants,
   loadClientData,
+  loadTeamAgents,
   persistTenantSlug,
   saveAppointment,
   subscribeToClientEvents,
   updateBroadcastCampaign,
   updateBroadcastRecipient,
   upsertBroadcastContacts,
+  removeTeamAgent,
+  saveTeamAgent,
+  updateTeamAgentStatus,
 } from './dataService';
 import './styles.css';
 
@@ -148,36 +157,44 @@ function App() {
       broadcastCampaigns: [],
     };
   });
-  const AGENTS_STORAGE_KEY = 'magia:team-agents';
-  const [agentsList, setAgentsList] = useState(() => {
-    try {
-      const stored = localStorage.getItem(AGENTS_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch (e) {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(agentsList));
-    } catch (e) {}
-  }, [agentsList]);
 
   const selectedTenant = availableTenants.find((tenant) => tenant.slug === tenantSlug) || availableTenants[0] || mockTenants[0];
   const activeTenantSlug = selectedTenant?.slug || tenantSlug || 'jiw';
   const integration = getIntegrationStatus(activeTenantSlug);
 
-  function handleAddAgent(newAgent) {
-    setAgentsList((prev) => [newAgent, ...prev]);
+  const [agentsList, setAgentsList] = useState([]);
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem('magia:team-agents');
+    } catch (e) { }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    loadTeamAgents(activeTenantSlug).then((list) => {
+      if (active) setAgentsList(list);
+    });
+    return () => {
+      active = false;
+    };
+  }, [activeTenantSlug]);
+
+  async function handleAddAgent(newAgent) {
+    const saved = await saveTeamAgent(activeTenantSlug, newAgent);
+    setAgentsList((prev) => [saved, ...prev.filter((a) => a.id !== saved.id)]);
   }
 
-  function handleToggleAgentStatus(agentId) {
-    setAgentsList((prev) => prev.map((ag) => ag.id === agentId ? { ...ag, status: ag.status === 'online' ? 'standby' : 'online' } : ag));
+  async function handleToggleAgentStatus(agentId) {
+    const agent = agentsList.find((ag) => ag.id === agentId);
+    const newStatus = agent?.status === 'online' ? 'standby' : 'online';
+    setAgentsList((prev) => prev.map((ag) => ag.id === agentId ? { ...ag, status: newStatus } : ag));
+    await updateTeamAgentStatus(agentId, newStatus, activeTenantSlug);
   }
 
-  function handleDeleteAgent(agentId) {
+  async function handleDeleteAgent(agentId) {
     setAgentsList((prev) => prev.filter((ag) => ag.id !== agentId));
+    await removeTeamAgent(agentId, activeTenantSlug);
   }
 
   function handleAssignAgent(conversationId, agent) {
@@ -343,7 +360,7 @@ function App() {
                 Sair
               </button>
             )}
-           
+
           </div>
         </header>
 
@@ -357,7 +374,14 @@ function App() {
             onAssignAgent={handleAssignAgent}
           />
         )}
-        {active === 'kanban' && <Kanban kanbanColumns={appData.kanbanColumns} tenantName={selectedTenant.name} />}
+        {active === 'kanban' && (
+          <Kanban
+            kanbanColumns={appData.kanbanColumns}
+            tenantName={selectedTenant.name}
+            agentsList={agentsList}
+            tenantSlug={activeTenantSlug}
+          />
+        )}
         {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} />}
         {active === 'disparos' && (
           <Broadcasts
@@ -508,6 +532,15 @@ function ChannelIcon({ channel, size = 14 }) {
   return <Globe size={size} />;
 }
 
+function getInitials(name) {
+  if (!name) return 'C';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 function getChannelClass(channel) {
   const type = String(channel || '').toLowerCase();
   if (type.includes('whats') || type.includes('zap')) return 'channel-whatsapp';
@@ -541,7 +574,7 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   }, [conversations]);
 
   const unreadCount = useMemo(() => {
-    return conversations.filter((c) => c.unread > 0).length;
+    return conversations.filter((c) => (c.unread || 0) > 0).length;
   }, [conversations]);
 
   const filteredConversations = useMemo(() => {
@@ -552,14 +585,14 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
         conversation.company,
         conversation.lastMessage,
         conversation.stage,
-        ...conversation.tags,
-      ].join(' ').toLowerCase().includes(normalizedQuery);
+        ...(conversation.tags || []),
+      ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
 
       const matchesFilter =
         filter === 'todas' ||
         (filter === 'ia' && conversation.status === 'ia_ativa') ||
         (filter === 'humanas' && conversation.status === 'atendimento_humano') ||
-        (filter === 'nao_lidas' && conversation.unread > 0);
+        (filter === 'nao_lidas' && (conversation.unread || 0) > 0);
 
       const channelType = String(conversation.channelType || conversation.channel || '').toLowerCase();
       const matchesChannel =
@@ -694,7 +727,7 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
           <button className={`chip ${filter === 'todas' ? 'active' : ''}`} type="button" onClick={() => setFilter('todas')}>Todas</button>
           <button className={`chip ${filter === 'nao_lidas' ? 'active' : ''}`} type="button" onClick={() => setFilter('nao_lidas')}>
             Não lidas
-            {unreadCount > 0 && <span className="chip-unread-count">{unreadCount}</span>}
+            {(unreadCount || 0) > 0 && <span className="chip-unread-count">{unreadCount}</span>}
           </button>
           <button className={`chip ${filter === 'ia' ? 'active' : ''}`} type="button" onClick={() => setFilter('ia')}>IA</button>
           <button className={`chip ${filter === 'humanas' ? 'active' : ''}`} type="button" onClick={() => setFilter('humanas')}>Humanas</button>
@@ -718,22 +751,33 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
             <button
               key={conversation.id}
               type="button"
-              className={`conversation-item ${selected?.id === conversation.id ? 'active' : ''}`}
+              className={`conversation-item ${getChannelClass(conversation.channelType || conversation.channel)} ${selected?.id === conversation.id ? 'active' : ''}`}
               onClick={() => setSelectedId(conversation.id)}
             >
+              <div className="conversation-avatar-wrapper">
+                <div className="conversation-avatar">
+                  {getInitials(conversation.contact)}
+                </div>
+                <span className={`channel-avatar-badge ${getChannelClass(conversation.channelType || conversation.channel)}`}>
+                  <ChannelIcon channel={conversation.channelType || conversation.channel} size={10} />
+                </span>
+              </div>
+
               <div className="conversation-item-main">
                 <div className="conversation-item-top">
-                  <div className="contact-channel-line">
-                    <span className={`channel-indicator-icon ${getChannelClass(conversation.channelType || conversation.channel)}`}>
-                      <ChannelIcon channel={conversation.channelType || conversation.channel} size={12} />
-                    </span>
-                    <strong>{conversation.contact}</strong>
-                  </div>
-                  <small>{conversation.lastAt}</small>
+                  <strong className="contact-name">{conversation.contact}</strong>
+                  <small className="timestamp">{conversation.lastAt}</small>
                 </div>
-                <span>{conversation.lastMessage}</span>
+                <div className="conversation-item-middle">
+                  <span className="last-message">{conversation.lastMessage}</span>
+                </div>
+                <div className="conversation-item-bottom">
+                  <span className={`stage-tag ${conversation.status === 'atendimento_humano' ? 'human' : 'normal'}`}>
+                    {conversation.stage}
+                  </span>
+                  {(conversation.unread || 0) > 0 && <span className="item-unread-badge">{conversation.unread}</span>}
+                </div>
               </div>
-              {conversation.unread > 0 && <em>{conversation.unread}</em>}
             </button>
           ))}
           {!filteredConversations.length && <EmptyState title="Nenhum resultado" text="Ajuste a busca ou os filtros para ver outras conversas." compact />}
@@ -760,12 +804,26 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
             </div>
           </div>
           <div className="message-stream">
-            {selected.messages.map((message, index) => (
-              <div key={`${message.at}-${index}`} className={`bubble ${message.from}`}>
-                <p>{message.text}</p>
-                <span>{message.at}</span>
-              </div>
-            ))}
+            {(selected.messages || []).map((message, index) => {
+              const isAi = message.from === 'ai' || message.sender_type === 'bot';
+              const isAgent = message.from === 'agent' || message.sender_type === 'agent';
+              const isContact = !isAi && !isAgent;
+
+              let senderLabel = selected.contact;
+              if (isAi) senderLabel = 'Assistente IA';
+              else if (isAgent) senderLabel = message.sent_by || selected.owner || 'Operador';
+
+              return (
+                <div key={`${message.at}-${index}`} className={`bubble ${isAi ? 'ai' : isAgent ? 'agent' : 'contact'}`}>
+                  <div className="bubble-sender">{senderLabel}</div>
+                  <p className="bubble-text">{message.text}</p>
+                  <div className="bubble-meta">
+                    <span className="bubble-time">{message.at}</span>
+                    {(isAi || isAgent) && <CheckCheck size={13} className="bubble-check" />}
+                  </div>
+                </div>
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
           <div className="composer">
@@ -780,45 +838,47 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
                 }
               }}
             />
-            <button className="primary-button" type="button" onClick={sendManualReply} disabled={!draft.trim() || sending}>
-              <Send size={17} /> {sending ? 'Enviando...' : 'Enviar'}
+            <button className="primary-button" type="button" onClick={sendManualReply} disabled={sending || !draft.trim()}>
+              <Send size={16} />
+              {sending ? 'Enviando...' : 'Enviar'}
             </button>
           </div>
-        </> : <EmptyState title="Selecione uma conversa" text="Escolha um contato na lista para visualizar o histórico." />}
-        {sendError && <div className="inline-error">{sendError}</div>}
+          {sendError && <div className="inline-error">{sendError}</div>}
+        </> : <EmptyState title="Selecione uma conversa" text="Escolha um atendimento na lista lateral para visualizar as mensagens." />}
       </section>
 
       {showAssignModal && selected && (
         <div className="modal-backdrop" onClick={() => setShowAssignModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <h3>Atribuir Atendimento</h3>
-                <p>Selecione o funcionário da equipe para assumir a conversa com <strong>{selected.contact}</strong></p>
+                <h3>Atribuir conversa</h3>
+                <p>Selecione um funcionário para assumir o atendimento de <strong>{selected.contact}</strong></p>
               </div>
-              <button className="icon-button compact-btn" type="button" onClick={() => setShowAssignModal(false)}>
-                <X size={18} />
+              <button className="icon-button" type="button" onClick={() => setShowAssignModal(false)}>
+                <X size={16} />
               </button>
             </div>
+
             <div className="modal-body">
               <div className="agent-selection-list">
                 {agentsList.map((agent) => (
                   <button
                     key={agent.id}
                     type="button"
-                    className={`agent-selection-item ${selected.owner === agent.name ? 'selected' : ''}`}
+                    className={`agent-selection-card ${selected.owner === agent.name ? 'selected' : ''}`}
                     onClick={() => {
                       onAssignAgent?.(selected.id, agent);
                       setShowAssignModal(false);
-                      setAssignToast(`Conversa atribuída a ${agent.name}!`);
-                      setTimeout(() => setAssignToast(''), 4000);
+                      setAssignToast(`Conversa atribuída a ${agent.name}`);
+                      setTimeout(() => setAssignToast(''), 3000);
                     }}
                   >
-                    <div className="agent-avatar small">
-                      <UserRound size={18} />
+                    <div className="agent-avatar-circle">
+                      {getInitials(agent.name)}
                     </div>
-                    <div className="agent-selection-meta">
-                      <div className="name-line">
+                    <div className="agent-selection-info">
+                      <div className="agent-name-row">
                         <strong>{agent.name}</strong>
                         {agent.role && <span className="agent-badge-role">{agent.role}</span>}
                       </div>
@@ -845,7 +905,6 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
           </div>
         </div>
       )}
-
       {assignToast && (
         <div className="toast-notification">
           <CheckCircle2 size={18} color="#10b981" />
@@ -856,37 +915,217 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   );
 }
 
-function Kanban({ kanbanColumns, tenantName }) {
+function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenantSlug }) {
+  const [agentFilter, setAgentFilter] = useState('todos');
+  const [channelFilter, setChannelFilter] = useState('todos');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [copiedCardId, setCopiedCardId] = useState(null);
+
+  const schedulingUrl = getTenantSchedulingLink(tenantSlug);
+
+  function copySchedulingLink(cardId, link) {
+    navigator.clipboard.writeText(link || schedulingUrl);
+    setCopiedCardId(cardId);
+    setTimeout(() => setCopiedCardId(null), 2500);
+  }
+
+  const filteredColumns = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return (kanbanColumns || []).map((col) => {
+      const cards = (col?.cards || []).filter((card) => {
+        const ownerStr = String(card?.owner || '');
+        const channelStr = String(card?.channelType || card?.channel || '').toLowerCase();
+        const matchesQuery =
+          !query ||
+          [card?.title, card?.subtitle, ownerStr, card?.channel, card?.aiReason]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(query);
+        const matchesAgent =
+          agentFilter === 'todos' ||
+          card?.owner === agentFilter ||
+          (agentFilter === 'ia' && ownerStr.includes('IA')) ||
+          (agentFilter === 'humano' && !ownerStr.includes('IA'));
+        const matchesChannel =
+          channelFilter === 'todos' || channelStr.includes(channelFilter);
+        return matchesQuery && matchesAgent && matchesChannel;
+      });
+      return { ...col, cards };
+    });
+  }, [kanbanColumns, agentFilter, channelFilter, searchQuery]);
+
   return (
     <section className="kanban-page">
-      <div className="section-toolbar">
-        <div className="chips">
-          <button className="chip active" type="button">Atendimento {tenantName}</button>
-          <button className="chip" type="button">Software</button>
-          <button className="chip" type="button">Suporte TI</button>
-          <button className="chip" type="button">Marketing digital</button>
+      <div className="kanban-toolbar">
+        <div className="kanban-toolbar-search-row">
+          <div className="search-box">
+            <Search size={16} />
+            <input
+              placeholder="Buscar por contato, mensagem ou intenção..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="chips">
+            <button
+              type="button"
+              className={`chip ${channelFilter === 'todos' ? 'active' : ''}`}
+              onClick={() => setChannelFilter('todos')}
+            >
+              Todos os canais
+            </button>
+            <button
+              type="button"
+              className={`chip ${channelFilter === 'whatsapp' ? 'active channel-whatsapp' : ''}`}
+              onClick={() => setChannelFilter(channelFilter === 'whatsapp' ? 'todos' : 'whatsapp')}
+            >
+              <ChannelIcon channel="whatsapp" size={13} /> WhatsApp
+            </button>
+            <button
+              type="button"
+              className={`chip ${channelFilter === 'telegram' ? 'active channel-telegram' : ''}`}
+              onClick={() => setChannelFilter(channelFilter === 'telegram' ? 'todos' : 'telegram')}
+            >
+              <ChannelIcon channel="telegram" size={13} /> Telegram
+            </button>
+            <button
+              type="button"
+              className={`chip ${channelFilter === 'instagram' ? 'active channel-instagram' : ''}`}
+              onClick={() => setChannelFilter(channelFilter === 'instagram' ? 'todos' : 'instagram')}
+            >
+              <ChannelIcon channel="instagram" size={13} /> Instagram
+            </button>
+          </div>
         </div>
-        <button className="secondary-button" type="button"><Sparkles size={16} /> Nova coluna</button>
+
+        <div className="kanban-toolbar-agents-row">
+          <span className="filter-label">Responsável:</span>
+          <div className="chips">
+            <button
+              type="button"
+              className={`chip ${agentFilter === 'todos' ? 'active' : ''}`}
+              onClick={() => setAgentFilter('todos')}
+            >
+              Todos
+            </button>
+            <button
+              type="button"
+              className={`chip ${agentFilter === 'ia' ? 'active' : ''}`}
+              onClick={() => setAgentFilter('ia')}
+            >
+              <Bot size={13} /> Assistente IA
+            </button>
+            {agentsList.map((agent) => (
+              <button
+                key={agent.id}
+                type="button"
+                className={`chip ${agentFilter === agent.name ? 'active' : ''}`}
+                onClick={() => setAgentFilter(agent.name)}
+              >
+                <UserRound size={13} /> {agent.name}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
+
       <div className="kanban-board">
-        {kanbanColumns.map((column) => (
+        {filteredColumns.map((column) => (
           <div className="kanban-column" key={column.id}>
             <div className="column-header">
-              <strong>{column.title}</strong>
-              <span>{column.cards.length}</span>
+              <strong className="column-title">{column.title}</strong>
+              <span className="column-count-badge">{column.cards.length}</span>
             </div>
-            {column.cards.map((card) => (
-              <article className="kanban-card" key={card.id}>
-                <strong>{card.title}</strong>
-                <p>{card.subtitle}</p>
-                <div>
-                  <Badge value={card.channel} status="channel" />
-                  <span>{card.value}</span>
-                </div>
-                <small>{card.owner}</small>
-              </article>
-            ))}
-            {!column.cards.length && <div className="column-empty">Sem conversas nesta etapa</div>}
+
+            <div className="column-cards-container">
+              {column.cards.map((card) => {
+                const channelClass = getChannelClass(card.channelType || card.channel);
+                return (
+                  <article className={`kanban-card ${channelClass}`} key={card.id}>
+                    <div className="kanban-card-header">
+                      <div className="contact-title-line">
+                        <span className={`channel-indicator-icon ${channelClass}`}>
+                          <ChannelIcon channel={card.channelType || card.channel} size={12} />
+                        </span>
+                        <strong className="contact-name">{card.title}</strong>
+                      </div>
+                      <small className="card-time">{card.lastAt}</small>
+                    </div>
+
+                    <p className="card-subtitle">{card.subtitle}</p>
+
+                    {card.aiReason && (
+                      <div className="ai-verification-badge">
+                        <Sparkles size={12} className="ai-sparkle-icon" />
+                        <span>{card.aiReason}</span>
+                      </div>
+                    )}
+
+                    {card.hasSchedulingLink && (
+                      <div className="scheduling-link-box">
+                        <div className="link-info">
+                          <CalendarCheck size={14} className="calendar-icon" />
+                          <span className="link-text" title={card.schedulingLink || schedulingUrl}>
+                            nbbronze.tuaagenda.app
+                          </span>
+                        </div>
+                        <div className="link-actions">
+                          <button
+                            type="button"
+                            className="link-copy-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copySchedulingLink(card.id, card.schedulingLink);
+                            }}
+                            title="Copiar link de agendamento"
+                          >
+                            {copiedCardId === card.id ? (
+                              <>
+                                <Check size={12} color="#10b981" /> Copiado!
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={12} /> Copiar
+                              </>
+                            )}
+                          </button>
+                          <a
+                            href={card.schedulingLink || schedulingUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="link-external-btn"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Abrir página de agendamento"
+                          >
+                            <ExternalLink size={12} />
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="kanban-card-footer">
+                      <div className="card-owner-info">
+                        <UserRound size={12} />
+                        <span>{card.owner}</span>
+                      </div>
+                      {onOpenChat && (
+                        <button
+                          type="button"
+                          className="open-chat-action-btn"
+                          onClick={() => onOpenChat(card.externalConversationId || card.id)}
+                          title="Abrir conversa no chat"
+                        >
+                          <MessageCircle size={12} /> Abrir chat
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+              {!column.cards.length && <div className="column-empty">Sem conversas nesta etapa</div>}
+            </div>
           </div>
         ))}
       </div>
@@ -1303,7 +1542,7 @@ function AiSettings({ tenantName }) {
         </ul>
         <h3>Ferramentas</h3>
         <div className="tag-list">
-          {aiConfig.tools.map((tool) => <span key={tool}>{tool}</span>) }
+          {aiConfig.tools.map((tool) => <span key={tool}>{tool}</span>)}
         </div>
       </aside>
     </section>
