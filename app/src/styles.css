@@ -718,6 +718,128 @@ button {
   padding-right: 4px;
 }
 
+.filter-dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.icon-button.active-filter {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: #34d399;
+}
+
+.filter-indicator-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.filter-indicator-dot.channel-telegram {
+  background: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.6);
+}
+
+.filter-indicator-dot.channel-whatsapp {
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+}
+
+.filter-indicator-dot.channel-instagram {
+  background: #f472b6;
+  box-shadow: 0 0 6px rgba(244, 114, 182, 0.6);
+}
+
+.dropdown-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.filter-popover-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+  padding: 6px;
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  animation: smoothPageFadeIn 180ms ease;
+}
+
+.filter-popover-header {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+.filter-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.filter-menu-item:hover {
+  background: var(--surface-soft);
+}
+
+.filter-menu-item.selected {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+}
+
+.filter-item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-menu-item .count-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.filter-menu-item .count-badge.telegram {
+  background: rgba(34, 158, 217, 0.15);
+  color: #38bdf8;
+}
+
+.filter-menu-item .count-badge.whatsapp {
+  background: rgba(37, 211, 102, 0.15);
+  color: #4ade80;
+}
+
+.filter-menu-item .count-badge.instagram {
+  background: rgba(225, 48, 108, 0.15);
+  color: #f472b6;
+}
+
 .chips {
   display: flex;
   align-items: center;
@@ -729,13 +851,62 @@ button {
 .chip {
   border: 1px solid var(--line);
   background: var(--surface-soft);
-  height: 30px;
+  height: 28px;
   border-radius: 999px;
-  padding: 0 12px;
+  padding: 0 10px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   transition: all 120ms ease;
+}
+
+.chip:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.chip.active {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.chip-unread-count {
+  background: var(--brand);
+  color: #022c22;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 999px;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.channel-filter-active-chip {
+  cursor: pointer;
+}
+
+.channel-filter-active-chip.channel-telegram {
+  background: rgba(34, 158, 217, 0.16) !important;
+  color: #38bdf8 !important;
+  border-color: rgba(34, 158, 217, 0.4) !important;
+}
+
+.channel-filter-active-chip.channel-whatsapp {
+  background: rgba(37, 211, 102, 0.16) !important;
+  color: #4ade80 !important;
+  border-color: rgba(37, 211, 102, 0.4) !important;
+}
+
+.channel-filter-active-chip.channel-instagram {
+  background: rgba(225, 48, 108, 0.16) !important;
+  color: #f472b6 !important;
+  border-color: rgba(225, 48, 108, 0.4) !important;
 }
 
 .chip:hover {
@@ -755,9 +926,10 @@ button {
   background: var(--surface-soft);
   border-radius: 8px;
   padding: 12px 14px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 6px 10px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   text-align: left;
   position: relative;
   flex-shrink: 0;
@@ -775,27 +947,100 @@ button {
   box-shadow: inset 3px 0 0 var(--brand);
 }
 
-.conversation-item strong {
-  color: var(--text);
+.conversation-item-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
 }
 
-.conversation-item strong,
-.conversation-item span {
-  display: block;
+.conversation-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.conversation-item span {
-  margin-top: 4px;
+.contact-channel-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.contact-channel-line strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 210px;
+}
+
+.channel-indicator-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.channel-indicator-icon.channel-telegram,
+.channel-pill-tag.channel-telegram {
+  background: rgba(34, 158, 217, 0.16);
+  color: #38bdf8;
+  border: 1px solid rgba(34, 158, 217, 0.35);
+}
+
+.channel-indicator-icon.channel-whatsapp,
+.channel-pill-tag.channel-whatsapp {
+  background: rgba(37, 211, 102, 0.16);
+  color: #4ade80;
+  border: 1px solid rgba(37, 211, 102, 0.35);
+}
+
+.channel-indicator-icon.channel-instagram,
+.channel-pill-tag.channel-instagram {
+  background: rgba(225, 48, 108, 0.16);
+  color: #f472b6;
+  border: 1px solid rgba(225, 48, 108, 0.35);
+}
+
+.channel-indicator-icon.channel-webchat,
+.channel-pill-tag.channel-webchat {
+  background: rgba(99, 102, 241, 0.16);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+}
+
+.channel-pill-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.chat-header-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 3px;
+}
+
+.conversation-item-main span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
+  font-size: 13px;
 }
 
 .conversation-item small {
   color: var(--muted);
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 .conversation-item em {

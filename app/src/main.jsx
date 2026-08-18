@@ -13,7 +13,9 @@ import {
   Filter,
   Gauge,
   GitBranch,
+  Globe,
   Inbox,
+  Instagram,
   KanbanSquare,
   LayoutDashboard,
   MessageCircle,
@@ -445,16 +447,60 @@ function Dashboard({ conversations, dataSource, status }) {
   );
 }
 
+function ChannelIcon({ channel, size = 14 }) {
+  const type = String(channel || '').toLowerCase();
+  if (type.includes('insta')) {
+    return <Instagram size={size} />;
+  }
+  if (type.includes('whats') || type.includes('zap')) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 21l1.65-3.8a9 9 0 1 1 3.4 2.9L3 21" />
+        <path d="M9 10a.5.5 0 0 0 1 0V9a.5.5 0 0 0-1 0v1a5 5 0 0 0 5 5h1a.5.5 0 0 0 0-1h-1a.5.5 0 0 0 0 1" />
+      </svg>
+    );
+  }
+  if (type.includes('telegram')) {
+    return <Send size={size} />;
+  }
+  return <Globe size={size} />;
+}
+
+function getChannelClass(channel) {
+  const type = String(channel || '').toLowerCase();
+  if (type.includes('whats') || type.includes('zap')) return 'channel-whatsapp';
+  if (type.includes('insta')) return 'channel-instagram';
+  if (type.includes('telegram')) return 'channel-telegram';
+  return 'channel-webchat';
+}
+
 function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onAssignAgent }) {
   const [selectedId, setSelectedId] = useState(conversations[0]?.id || null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('todas');
+  const [channelFilter, setChannelFilter] = useState('todos');
+  const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignToast, setAssignToast] = useState('');
   const messagesEndRef = React.useRef(null);
+
+  const channelCounts = useMemo(() => {
+    const counts = { todos: conversations.length, telegram: 0, whatsapp: 0, instagram: 0 };
+    for (const c of conversations) {
+      const type = String(c.channelType || c.channel || '').toLowerCase();
+      if (type.includes('telegram')) counts.telegram++;
+      else if (type.includes('whats') || type.includes('zap')) counts.whatsapp++;
+      else if (type.includes('insta')) counts.instagram++;
+    }
+    return counts;
+  }, [conversations]);
+
+  const unreadCount = useMemo(() => {
+    return conversations.filter((c) => c.unread > 0).length;
+  }, [conversations]);
 
   const filteredConversations = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -473,9 +519,16 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
         (filter === 'humanas' && conversation.status === 'atendimento_humano') ||
         (filter === 'nao_lidas' && conversation.unread > 0);
 
-      return matchesQuery && matchesFilter;
+      const channelType = String(conversation.channelType || conversation.channel || '').toLowerCase();
+      const matchesChannel =
+        channelFilter === 'todos' ||
+        (channelFilter === 'telegram' && channelType.includes('telegram')) ||
+        (channelFilter === 'whatsapp' && (channelType.includes('whats') || channelType.includes('zap'))) ||
+        (channelFilter === 'instagram' && channelType.includes('insta'));
+
+      return matchesQuery && matchesFilter && matchesChannel;
     });
-  }, [conversations, filter, query]);
+  }, [conversations, filter, channelFilter, query]);
 
   const selected = useMemo(() => {
     if (!filteredConversations.length) return null;
@@ -514,7 +567,7 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   if (!conversations.length) {
     return (
       <section className="panel">
-        <EmptyState title="Nenhuma conversa no Telegram" text="Envie uma mensagem para o bot e clique em atualizar para carregar o atendimento real." />
+        <EmptyState title="Nenhuma conversa registrada" text="Envie uma mensagem pelo canal conectado e atualize para visualizar o atendimento em tempo real." />
       </section>
     );
   }
@@ -522,16 +575,102 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   return (
     <section className="conversation-layout">
       <aside className="conversation-list panel">
-        <div className="toolbar">
-          <div className="search-box"><Search size={16} /><input placeholder="Buscar conversa..." value={query} onChange={(event) => setQuery(event.target.value)} /></div>
-          <button className="icon-button" title="Filtros" type="button"><Filter size={17} /></button>
+        <div className="toolbar" style={{ position: 'relative' }}>
+          <div className="search-box">
+            <Search size={16} />
+            <input placeholder="Buscar conversa..." value={query} onChange={(event) => setQuery(event.target.value)} />
+          </div>
+          <div className="filter-dropdown-wrapper">
+            <button
+              className={`icon-button ${channelFilter !== 'todos' ? 'active-filter' : ''}`}
+              title="Filtrar por canal"
+              type="button"
+              onClick={() => setShowFilterMenu((prev) => !prev)}
+            >
+              <Filter size={17} />
+              {channelFilter !== 'todos' && <span className={`filter-indicator-dot ${getChannelClass(channelFilter)}`} />}
+            </button>
+
+            {showFilterMenu && (
+              <>
+                <div className="dropdown-overlay" onClick={() => setShowFilterMenu(false)} />
+                <div className="filter-popover-menu">
+                  <div className="filter-popover-header">
+                    <span>Filtrar por canal</span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`filter-menu-item ${channelFilter === 'todos' ? 'selected' : ''}`}
+                    onClick={() => { setChannelFilter('todos'); setShowFilterMenu(false); }}
+                  >
+                    <div className="filter-item-left">
+                      <span className="channel-indicator-icon channel-webchat"><Sparkles size={12} /></span>
+                      <span>Todos os canais</span>
+                    </div>
+                    <span className="count-badge">{channelCounts.todos}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-menu-item ${channelFilter === 'telegram' ? 'selected' : ''}`}
+                    onClick={() => { setChannelFilter('telegram'); setShowFilterMenu(false); }}
+                  >
+                    <div className="filter-item-left">
+                      <span className="channel-indicator-icon channel-telegram"><ChannelIcon channel="telegram" size={12} /></span>
+                      <span>Telegram</span>
+                    </div>
+                    <span className="count-badge telegram">{channelCounts.telegram}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-menu-item ${channelFilter === 'whatsapp' ? 'selected' : ''}`}
+                    onClick={() => { setChannelFilter('whatsapp'); setShowFilterMenu(false); }}
+                  >
+                    <div className="filter-item-left">
+                      <span className="channel-indicator-icon channel-whatsapp"><ChannelIcon channel="whatsapp" size={12} /></span>
+                      <span>WhatsApp</span>
+                    </div>
+                    <span className="count-badge whatsapp">{channelCounts.whatsapp}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-menu-item ${channelFilter === 'instagram' ? 'selected' : ''}`}
+                    onClick={() => { setChannelFilter('instagram'); setShowFilterMenu(false); }}
+                  >
+                    <div className="filter-item-left">
+                      <span className="channel-indicator-icon channel-instagram"><ChannelIcon channel="instagram" size={12} /></span>
+                      <span>Instagram</span>
+                    </div>
+                    <span className="count-badge instagram">{channelCounts.instagram}</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
+
         <div className="chips">
           <button className={`chip ${filter === 'todas' ? 'active' : ''}`} type="button" onClick={() => setFilter('todas')}>Todas</button>
+          <button className={`chip ${filter === 'nao_lidas' ? 'active' : ''}`} type="button" onClick={() => setFilter('nao_lidas')}>
+            Não lidas
+            {unreadCount > 0 && <span className="chip-unread-count">{unreadCount}</span>}
+          </button>
           <button className={`chip ${filter === 'ia' ? 'active' : ''}`} type="button" onClick={() => setFilter('ia')}>IA</button>
           <button className={`chip ${filter === 'humanas' ? 'active' : ''}`} type="button" onClick={() => setFilter('humanas')}>Humanas</button>
-          <button className={`chip ${filter === 'nao_lidas' ? 'active' : ''}`} type="button" onClick={() => setFilter('nao_lidas')}>Não lidas</button>
+
+          {channelFilter !== 'todos' && (
+            <button
+              className={`chip active channel-filter-active-chip ${getChannelClass(channelFilter)}`}
+              type="button"
+              onClick={() => setChannelFilter('todos')}
+              title="Remover filtro de canal"
+            >
+              <ChannelIcon channel={channelFilter} size={12} />
+              <span>{channelFilter === 'telegram' ? 'Telegram' : channelFilter === 'whatsapp' ? 'WhatsApp' : 'Instagram'}</span>
+              <X size={12} />
+            </button>
+          )}
         </div>
+
         <div className="conversation-items-scroll">
           {filteredConversations.map((conversation) => (
             <button
@@ -540,11 +679,18 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
               className={`conversation-item ${selected?.id === conversation.id ? 'active' : ''}`}
               onClick={() => setSelectedId(conversation.id)}
             >
-              <div>
-                <strong>{conversation.contact}</strong>
+              <div className="conversation-item-main">
+                <div className="conversation-item-top">
+                  <div className="contact-channel-line">
+                    <span className={`channel-indicator-icon ${getChannelClass(conversation.channelType || conversation.channel)}`}>
+                      <ChannelIcon channel={conversation.channelType || conversation.channel} size={12} />
+                    </span>
+                    <strong>{conversation.contact}</strong>
+                  </div>
+                  <small>{conversation.lastAt}</small>
+                </div>
                 <span>{conversation.lastMessage}</span>
               </div>
-              <small>{conversation.lastAt}</small>
               {conversation.unread > 0 && <em>{conversation.unread}</em>}
             </button>
           ))}
@@ -556,8 +702,14 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
         {selected ? <>
           <div className="chat-header">
             <div>
-              <strong>{selected.contact}</strong>
-              <span>{selected.channel} · {selected.stage} · Responsável: <strong>{selected.owner || 'Não atribuído'}</strong></span>
+              <div className="chat-header-name-row">
+                <strong>{selected.contact}</strong>
+                <span className={`channel-pill-tag ${getChannelClass(selected.channelType || selected.channel)}`}>
+                  <ChannelIcon channel={selected.channelType || selected.channel} size={12} />
+                  {selected.channel}
+                </span>
+              </div>
+              <span>{selected.stage} · Responsável: <strong>{selected.owner || 'Não atribuído'}</strong></span>
             </div>
             <div className="header-actions">
               <button className="secondary-button" type="button" onClick={() => setShowAssignModal(true)}>
@@ -576,7 +728,7 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
           </div>
           <div className="composer">
             <input
-              placeholder="Responder manualmente pelo canal conectado..."
+              placeholder="Responder..."
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
