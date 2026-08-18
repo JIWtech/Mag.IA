@@ -21,6 +21,11 @@
   box-sizing: border-box;
 }
 
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -41,7 +46,8 @@ button {
 .app-shell {
   display: grid;
   grid-template-columns: 260px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -53,6 +59,7 @@ button {
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
 }
 
 .brand {
@@ -143,15 +150,21 @@ button {
 
 .main {
   min-width: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
   padding: 22px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .topbar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 22px;
+  margin-bottom: 18px;
 }
 
 .topbar h1 {
@@ -232,7 +245,14 @@ button {
 
 .page-grid,
 .content-grid,
-.ai-layout {
+.ai-layout,
+.kanban-page,
+.funnel-page,
+.settings-grid,
+.audit-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: grid;
   gap: 18px;
 }
@@ -457,16 +477,20 @@ button {
 }
 
 .conversation-layout {
+  flex: 1;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 310px;
+  grid-template-columns: 340px minmax(0, 1fr);
   gap: 18px;
-  min-height: calc(100vh - 118px);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .conversation-list,
-.chat-panel,
-.details-panel {
+.chat-panel {
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .conversation-list {
@@ -475,11 +499,22 @@ button {
   gap: 10px;
 }
 
+.conversation-items-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+
 .chips {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .chip {
@@ -507,6 +542,7 @@ button {
   gap: 6px 10px;
   text-align: left;
   position: relative;
+  flex-shrink: 0;
 }
 
 .conversation-item.active {
@@ -546,7 +582,11 @@ button {
   display: grid;
   grid-template-rows: auto 1fr auto;
   padding: 0;
-  overflow: hidden;
+  background: var(--surface);
+}
+
+.chat-header {
+  flex-shrink: 0;
 }
 
 .chat-header,
@@ -560,6 +600,7 @@ button {
 }
 
 .composer {
+  flex-shrink: 0;
   border-top: 1px solid var(--line);
   border-bottom: 0;
 }
@@ -574,7 +615,9 @@ button {
 
 .message-stream {
   padding: 18px;
-  overflow: auto;
+  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
   background: #f8fafc;
 }
 

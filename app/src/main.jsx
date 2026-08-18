@@ -346,12 +346,13 @@ function Dashboard({ conversations, dataSource, status }) {
 }
 
 function Conversations({ conversations, tenantSlug, onSent }) {
-  const [selected, setSelected] = useState(conversations[0]);
+  const [selectedId, setSelectedId] = useState(conversations[0]?.id || null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('todas');
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
+  const messagesEndRef = React.useRef(null);
 
   const filteredConversations = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -374,9 +375,16 @@ function Conversations({ conversations, tenantSlug, onSent }) {
     });
   }, [conversations, filter, query]);
 
+  const selected = useMemo(() => {
+    if (!filteredConversations.length) return null;
+    return filteredConversations.find((c) => c.id === selectedId) || filteredConversations[0];
+  }, [filteredConversations, selectedId]);
+
   useEffect(() => {
-    setSelected(filteredConversations[0] || null);
-  }, [filteredConversations]);
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [selected?.id, selected?.messages?.length]);
 
   async function sendManualReply() {
     const text = draft.trim();
@@ -422,78 +430,65 @@ function Conversations({ conversations, tenantSlug, onSent }) {
           <button className={`chip ${filter === 'humanas' ? 'active' : ''}`} type="button" onClick={() => setFilter('humanas')}>Humanas</button>
           <button className={`chip ${filter === 'nao_lidas' ? 'active' : ''}`} type="button" onClick={() => setFilter('nao_lidas')}>Nao lidas</button>
         </div>
-        {filteredConversations.map((conversation) => (
-          <button
-            key={conversation.id}
-            type="button"
-            className={`conversation-item ${selected?.id === conversation.id ? 'active' : ''}`}
-            onClick={() => setSelected(conversation)}
-          >
-            <div>
-              <strong>{conversation.contact}</strong>
-              <span>{conversation.lastMessage}</span>
-            </div>
-            <small>{conversation.lastAt}</small>
-            {conversation.unread > 0 && <em>{conversation.unread}</em>}
-          </button>
-        ))}
-        {!filteredConversations.length && <EmptyState title="Nenhum resultado" text="Ajuste a busca ou os filtros para ver outras conversas." compact />}
+        <div className="conversation-items-scroll">
+          {filteredConversations.map((conversation) => (
+            <button
+              key={conversation.id}
+              type="button"
+              className={`conversation-item ${selected?.id === conversation.id ? 'active' : ''}`}
+              onClick={() => setSelectedId(conversation.id)}
+            >
+              <div>
+                <strong>{conversation.contact}</strong>
+                <span>{conversation.lastMessage}</span>
+              </div>
+              <small>{conversation.lastAt}</small>
+              {conversation.unread > 0 && <em>{conversation.unread}</em>}
+            </button>
+          ))}
+          {!filteredConversations.length && <EmptyState title="Nenhum resultado" text="Ajuste a busca ou os filtros para ver outras conversas." compact />}
+        </div>
       </aside>
 
       <section className="chat-panel panel">
-        {selected ? <><div className="chat-header">
-          <div>
-            <strong>{selected.contact}</strong>
-            <span>{selected.channel} · {selected.stage}</span>
-          </div>
-          <div className="header-actions">
-            <button className="secondary-button" type="button"><PauseCircle size={16} /> Pausar IA</button>
-            <button className="secondary-button" type="button"><UserRound size={16} /> Atribuir</button>
-          </div>
-        </div>
-        <div className="message-stream">
-          {selected.messages.map((message, index) => (
-            <div key={`${message.at}-${index}`} className={`bubble ${message.from}`}>
-              <p>{message.text}</p>
-              <span>{message.at}</span>
+        {selected ? <>
+          <div className="chat-header">
+            <div>
+              <strong>{selected.contact}</strong>
+              <span>{selected.channel} · {selected.stage}</span>
             </div>
-          ))}
-        </div>
-        <div className="composer">
-          <input
-            placeholder="Responder manualmente pelo canal conectado"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                sendManualReply();
-              }
-            }}
-          />
-          <button className="primary-button" type="button" onClick={sendManualReply} disabled={!draft.trim() || sending}>
-            <Send size={17} /> {sending ? 'Enviando' : 'Enviar'}
-          </button>
-        </div></> : <EmptyState title="Selecione uma conversa" text="Escolha um contato na lista para visualizar o histórico." />}
+            <div className="header-actions">
+              <button className="secondary-button" type="button"><UserRound size={16} /> Atribuir</button>
+            </div>
+          </div>
+          <div className="message-stream">
+            {selected.messages.map((message, index) => (
+              <div key={`${message.at}-${index}`} className={`bubble ${message.from}`}>
+                <p>{message.text}</p>
+                <span>{message.at}</span>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+          <div className="composer">
+            <input
+              placeholder="Responder manualmente pelo canal conectado"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  sendManualReply();
+                }
+              }}
+            />
+            <button className="primary-button" type="button" onClick={sendManualReply} disabled={!draft.trim() || sending}>
+              <Send size={17} /> {sending ? 'Enviando' : 'Enviar'}
+            </button>
+          </div>
+        </> : <EmptyState title="Selecione uma conversa" text="Escolha um contato na lista para visualizar o histórico." />}
         {sendError && <div className="inline-error">{sendError}</div>}
       </section>
-
-      <aside className="details-panel panel">
-        {selected ? <>
-        <PanelTitle icon={Tag} title="Dados do contato" />
-        <Detail label="Status" value={statusLabels[selected.status]} />
-        <Detail label="Responsavel" value={selected.owner} />
-        <Detail label="Valor" value={formatCurrency(selected.value)} />
-        <Detail label="Sentimento" value={selected.sentiment} />
-        <div className="tag-list">
-          {selected.tags.map((tag) => <span key={tag}>{tag}</span>)}
-        </div>
-        <h3>Eventos</h3>
-        <ul className="event-list">
-          {selected.events.map((event) => <li key={event}>{event}</li>)}
-        </ul>
-        </> : <EmptyState title="Sem contato selecionado" text="Os detalhes aparecem quando uma conversa estiver selecionada." compact />}
-      </aside>
     </section>
   );
 }
@@ -601,7 +596,7 @@ function Automations() {
         <div className="form-grid">
           <label>Gatilho<select><option>Mensagem contem palavra-chave</option><option>IA detectou intencao</option><option>Status alterado</option></select></label>
           <label>Condicao<input defaultValue="agendar, consulta, horario" /></label>
-          <label>Acao<select><option>Mover kanban</option><option>Pausar IA</option><option>Criar oportunidade</option><option>Notificar equipe</option></select></label>
+          <label>Acao<select><option>Mover kanban</option><option>Transferir para humano</option><option>Criar oportunidade</option><option>Notificar equipe</option></select></label>
           <label>Destino<input defaultValue="Consulta solicitada" /></label>
           <button className="primary-button wide" type="button"><PlayCircle size={17} /> Simular regra</button>
         </div>
