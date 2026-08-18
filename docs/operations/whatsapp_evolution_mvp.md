@@ -2,7 +2,8 @@
 
 **Data de inicio:** 2026-08-18  
 **Branch de trabalho:** `dev-whatsapp`  
-**Status:** workflow visual implementado; configuracao das credenciais e da instancia pendente
+**Status:** workflow visual e RAG implementados; configuracao das credenciais,
+ingestao inicial e da instancia pendentes
 
 ## Objetivo
 
@@ -35,8 +36,10 @@ os blocos necessarios para o MVP:
 - webhook `POST /webhook/magia-whatsapp` para receber a Evolution API;
 - normalizacao, filtro de grupos/status e deduplicacao com TTL no Redis;
 - ramo visual de audio com conversao para arquivo e transcricao OpenAI;
-- contexto da JIW sem estoque de veiculos, vector store ou dados da Avvento;
+- contexto da JIW sem estoque de veiculos ou dados da Avvento;
 - agente `Assistente JIW (Gemini)` conectado ao no `Gemini Chat Model`;
+- ferramenta `Base de Conhecimento JIW (RAG)` com embeddings `text-embedding-3-small`
+  e filtro canonico por `tenant_slug`;
 - registro dos eventos de entrada e saida no `channel_events`;
 - envio pelo no visual `Enviar Resposta pela Evolution`;
 - resposta JSON ao webhook para a Evolution API.
@@ -73,6 +76,27 @@ workflow, abra os nos e selecione/crie as credenciais no n8n:
    `channel_events`.
 5. `Enviar Resposta pela Evolution`: credencial da Evolution API instalada no
    n8n. O nome da instancia pode vir de `EVOLUTION_INSTANCE_JIW`.
+6. `Base de Conhecimento JIW (RAG)`: credencial Supabase com acesso ao projeto,
+   tabela `ai_knowledge_documents` e funcao `match_ai_knowledge`.
+7. `Embeddings da Base JIW`: credencial OpenAI com o modelo
+   `text-embedding-3-small` (1536 dimensoes).
+
+### Alimentar a base RAG
+
+Foi incluido o fluxo visual
+`n8n/workflows/magia_ai_knowledge_ingest.json`. Ele carrega textos aprovados,
+gera embeddings e insere os documentos no pgvector do Supabase. Antes de
+executar:
+
+1. aplique `supabase/migrations/011_ai_knowledge_pgvector.sql`;
+2. importe o fluxo de ingestao no n8n;
+3. selecione as credenciais Supabase e OpenAI nos nos correspondentes;
+4. revise o no `Documentos aprovados JIW` e execute uma vez por tenant.
+
+O fluxo principal consulta os quatro trechos mais relevantes antes do Gemini.
+Redis continua reservado para deduplicacao e memoria curta da conversa. RAG
+nao treina automaticamente o modelo: para incorporar uma conversa, um operador
+deve aprovar, anonimizar e publicar o conteudo na base.
 
 Se a instalacao do n8n nao tiver o no `n8n-nodes-evolution-api`, substitua o
 no de envio por um `HTTP Request` para
@@ -168,6 +192,8 @@ webhook no frontend.
 
 - [x] Implementar fluxo de entrada WhatsApp -> normalizacao -> Supabase.
 - [x] Implementar fluxo de saida manual Supabase/n8n -> Evolution API.
+- [x] Conectar memoria curta Redis e busca RAG no Supabase pgvector.
+- [x] Criar fluxo visual de ingestao de conteudo aprovado.
 - [ ] Adicionar logs, retries e caminho de erro sem duplicar mensagens.
 
 ### Fase 4 — Frontend e aceite

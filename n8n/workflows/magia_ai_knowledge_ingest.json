@@ -1,0 +1,165 @@
+{
+  "name": "Mag.IA - Ingestao aprovada da base RAG",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ],
+      "id": "magia-rag-manual-trigger",
+      "name": "Executar ingestao manual"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Substitua ou amplie estes documentos somente depois de revisar o conteudo.\n// Uma execucao representa um tenant: mantenha o mesmo tenant_slug em todos os itens.\nconst tenant_slug = 'jiw';\nconst docs = [\n  { title: 'Sobre a JIW', content: 'A JIW - Solucoes Tecnologicas oferece software sob medida, sites institucionais, dashboards, integracoes, automacoes, suporte de TI, trafego pago e social media. O atendimento deve entender o objetivo do cliente antes de prometer uma solucao.' },\n  { title: 'Tom de atendimento', content: 'Responda em portugues do Brasil, com tom profissional, acolhedor e objetivo. Faca uma pergunta por vez. Explique o proximo passo com clareza e nao use linguagem tecnica sem explicar.' },\n  { title: 'Orcamentos e prazos', content: 'Nao informe preco, prazo fechado ou resultado garantido sem briefing e validacao de um especialista. Quando o cliente pedir orcamento, colete o contexto essencial e encaminhe para atendimento humano.' },\n  { title: 'Suporte e urgencias', content: 'Pedidos de suporte urgente, acesso a sistemas, incidentes ou agendamentos devem ser encaminhados para um especialista humano. Inclua a marcacao [HUMANO_SOLICITADO] na resposta interna do fluxo.' },\n  { title: 'Privacidade', content: 'Nao solicite senhas, tokens ou dados pessoais desnecessarios pelo WhatsApp. Nunca revele informacoes de outro cliente ou tenant. Em caso de duvida, pare e encaminhe para um operador.' },\n  { title: 'Limite de conhecimento', content: 'Se a informacao nao estiver nesta base aprovada ou no contexto da conversa, diga que precisa confirmar com a equipe. Nunca invente politicas, funcionalidades, integracoes, precos ou prazos.' }\n];\nreturn docs.map((doc) => ({ json: { ...doc, tenant_slug, source_type: 'approved_seed', approved: true } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "id": "magia-rag-approved-documents",
+      "name": "Documentos aprovados JIW"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "ai_knowledge_documents",
+          "mode": "list",
+          "cachedResultName": "ai_knowledge_documents"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        980,
+        300
+      ],
+      "id": "magia-rag-vector-insert",
+      "name": "Inserir documentos no Supabase"
+    },
+    {
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.content }}",
+        "textSplittingMode": "simple",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "tenant_slug",
+                "value": "={{ $json.tenant_slug }}"
+              },
+              {
+                "name": "source_type",
+                "value": "={{ $json.source_type }}"
+              },
+              {
+                "name": "approved",
+                "value": "={{ $json.approved }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        460
+      ],
+      "id": "magia-rag-document-loader",
+      "name": "Carregar texto e metadados"
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1,
+      "position": [
+        980,
+        520
+      ],
+      "id": "magia-rag-embeddings",
+      "name": "Gerar embeddings OpenAI"
+    },
+    {
+      "parameters": {
+        "content": "## Como usar\n\n1. Execute a migration `011_ai_knowledge_pgvector.sql` no Supabase.\n2. Selecione as credenciais Supabase e OpenAI nos tres nos de IA.\n3. Revise os textos do no `Documentos aprovados JIW`.\n4. Execute este fluxo uma vez por tenant.\n\nNao conecte conversas brutas aqui: somente conteudo aprovado e anonimizado deve virar conhecimento.",
+        "height": 320,
+        "width": 360,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        40
+      ],
+      "id": "magia-rag-ingest-note",
+      "name": "Nota de operacao RAG"
+    }
+  ],
+  "connections": {
+    "Executar ingestao manual": {
+      "main": [
+        [
+          {
+            "node": "Documentos aprovados JIW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Documentos aprovados JIW": {
+      "main": [
+        [
+          {
+            "node": "Inserir documentos no Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carregar texto e metadados": {
+      "ai_document": [
+        [
+          {
+            "node": "Inserir documentos no Supabase",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Inserir documentos no Supabase",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
