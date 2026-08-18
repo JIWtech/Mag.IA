@@ -1,0 +1,1792 @@
+{
+  "name": "Instagram Direct - Fluxo Principal",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook-instagram",
+        "options": {
+          "responseMode": "responseNode"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1600,
+        160
+      ],
+      "id": "ig-001",
+      "name": "Webhook (Instagram)",
+      "webhookId": "instagram-dm-wh-001"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "webhook-instagram",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1600,
+        320
+      ],
+      "id": "ig-002",
+      "name": "Webhook Verificacao (Meta)",
+      "webhookId": "instagram-dm-wh-001"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -1392,
+        320
+      ],
+      "id": "ig-003",
+      "name": "Responder Verificacao Meta"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nconst body = data.body || data;\nif (!body.object || body.object !== 'instagram') return [];\nconst entries = body.entry || [];\nif (entries.length === 0) return [];\nconst entry = entries[0];\nconst messaging = (entry.messaging || [])[0];\nif (!messaging) return [];\nconst isEcho = messaging.message?.is_echo || false;\nif (isEcho) return [];\nconst senderId = messaging.sender?.id || '';\nconst messageId = messaging.message?.mid || 'msg_' + Date.now();\nconst messageText = messaging.message?.text || '';\nconst attachments = messaging.message?.attachments || [];\nlet messageType = 'text';\nlet attachmentUrl = '';\nif (attachments.length > 0) {\n  const att = attachments[0];\n  if (att.type === 'audio') { messageType = 'audio'; attachmentUrl = att.payload?.url || ''; }\n  else if (att.type === 'image') { messageType = 'image'; attachmentUrl = att.payload?.url || ''; }\n  else if (att.type === 'video') { messageType = 'video'; attachmentUrl = att.payload?.url || ''; }\n  else if (att.type === 'story_mention') { messageType = 'story_mention'; }\n}\nif (!senderId) return [];\nreturn { json: { senderId, messageId, messageText, messageType, attachmentUrl, isFromMe: false } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        160
+      ],
+      "id": "ig-004",
+      "name": "Extrair Dados Instagram"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ 'dedup_insta:' + $json.messageId }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -1200,
+        160
+      ],
+      "id": "ig-005",
+      "name": "Verificar Duplicidade",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json == null || $json.propertyName == null }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -992,
+        160
+      ],
+      "id": "ig-006",
+      "name": "E Mensagem Nova?"
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{ 'dedup_insta:' + $('Extrair Dados Instagram').item.json.messageId }}",
+        "value": "processed",
+        "expire": true,
+        "ttl": 86400
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -800,
+        160
+      ],
+      "id": "ig-007",
+      "name": "Marcar Processada",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $('Extrair Dados Instagram').item.json;\nlet nd = { timestamp: new Date().toISOString(), timestamp_ms: Date.now(), senderId: payload.senderId, message: '', type: 'text', attachmentUrl: payload.attachmentUrl || '', isFromMe: payload.isFromMe };\nconst mt = payload.messageType || 'text';\nif (mt === 'text') { nd.message = payload.messageText || ''; }\nelse if (mt === 'audio') { nd.type = 'audio'; nd.message = '[Audio]'; }\nelse if (mt === 'image') { nd.type = 'image'; nd.message = '[Imagem]'; }\nelse if (mt === 'video') { nd.type = 'video'; nd.message = '[Video enviado pelo cliente]'; }\nelse if (mt === 'story_mention') { nd.type = 'text'; nd.message = '[O cliente mencionou a loja nos stories]'; }\nif (!nd.message) nd.message = 'Oi';\nreturn { json: nd };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        160
+      ],
+      "id": "ig-008",
+      "name": "Normalizar Dados"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ 'bot_msg_insta:' + $json.senderId }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        160
+      ],
+      "id": "ig-009",
+      "name": "Verificar Sinal do Bot",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ 'lock_ia_insta:' + $('Normalizar Dados').first().json.senderId }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -192,
+        160
+      ],
+      "id": "ig-010",
+      "name": "Verificar Trava IA",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ JSON.stringify($json).includes('true') }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "id": "ig-011",
+      "name": "A Trava Esta Ativa?"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        208,
+        48
+      ],
+      "id": "ig-012",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {
+        "jsCode": "return { json: $('Normalizar Dados').first().json };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        272
+      ],
+      "id": "ig-013",
+      "name": "Restaurar Dados (Anti-Bug)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Normalizar Dados').first().json.type }}",
+              "value2": "audio"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        400,
+        272
+      ],
+      "id": "ig-014",
+      "name": "E Audio?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Normalizar Dados').first().json.type }}",
+              "value2": "image"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        400,
+        480
+      ],
+      "id": "ig-015",
+      "name": "E Imagem?"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Normalizar Dados').first().json.attachmentUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        608,
+        192
+      ],
+      "id": "ig-016",
+      "name": "Baixar Audio"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Normalizar Dados').first().json.attachmentUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        608,
+        480
+      ],
+      "id": "ig-017",
+      "name": "Baixar Imagem"
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        816,
+        192
+      ],
+      "id": "ig-018",
+      "name": "Transcrever Audio",
+      "credentials": {
+        "openAiApi": {
+          "id": "ZqQkVKax1xDaOFyB",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "chatgpt-image-latest",
+          "mode": "list"
+        },
+        "responses": {
+          "values": [
+            {}
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        816,
+        480
+      ],
+      "id": "ig-019",
+      "name": "Analisar Imagem",
+      "credentials": {
+        "openAiApi": {
+          "id": "ZqQkVKax1xDaOFyB",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inp = $input.item.json;\nconst orig = $('Normalizar Dados').first().json;\nconst cd = { ...orig };\ndelete cd.attachmentUrl;\nconst t = inp.text || '';\nreturn { json: { ...cd, message: t.trim(), type: 'text', originalType: 'audio', isTranscribed: true } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        192
+      ],
+      "id": "ig-020",
+      "name": "Definir Texto (Audio)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inp = $input.item.json;\nconst orig = $('Normalizar Dados').first().json;\nconst cd = { ...orig };\ndelete cd.attachmentUrl;\nlet t = '';\nif (inp.content && inp.content.parts && inp.content.parts.length > 0) { t = inp.content.parts[0].text; } else { t = inp.text || inp.output || ''; }\nlet leg = cd.message;\nif (leg === '[Imagem]') leg = '';\ncd.message = leg + '\\n\\n[IMAGEM DO CLIENTE - IA: ' + t.trim() + ']';\nreturn { json: { ...cd, type: 'text', originalType: 'image', isTranscribed: true } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        480
+      ],
+      "id": "ig-021",
+      "name": "Definir Texto (Imagem)"
+    },
+    {
+      "parameters": {
+        "operation": "push",
+        "list": "={{ 'buffer_insta:' + $('Normalizar Dados').first().json.senderId }}",
+        "messageData": "={{ $json.message }}"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1232,
+        336
+      ],
+      "id": "ig-022",
+      "name": "Add to Buffer",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        336
+      ],
+      "id": "ig-023",
+      "name": "Aguardar (Juntar)",
+      "webhookId": "instagram-wait-ig001"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ 'buffer_insta:' + $('Normalizar Dados').first().json.senderId }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1648,
+        336
+      ],
+      "id": "ig-024",
+      "name": "Ler Buffer",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msgs = $input.item.json.data || $input.item.json.propertyName || [];\nif (!msgs || msgs.length === 0) return [];\nconst full = Array.isArray(msgs) ? msgs.join(' . ') : msgs;\nconst src = $('Normalizar Dados').first().json;\nreturn { json: { senderId: src.senderId, message: full, timestamp: new Date().toISOString() } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        336
+      ],
+      "id": "ig-025",
+      "name": "Mesclar Textos"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ 'buffer_insta:' + $('Normalizar Dados').first().json.senderId }}"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2064,
+        336
+      ],
+      "id": "ig-026",
+      "name": "Limpar Buffer",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "leads_instagram",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "instagram_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Normalizar Dados').first().json.senderId }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2272,
+        336
+      ],
+      "id": "ig-027",
+      "name": "Buscar Lead",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRh9WZ1gc9CbPvZg",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cur = $('Mesclar Textos').first().json;\nconst rows = $input.all();\nlet lead = {};\nlet isNew = false;\nif (rows.length > 0 && rows[0].json && rows[0].json.created_at) { lead = rows[0].json; isNew = false; }\nelse { isNew = true; lead = { instagram_id: cur.senderId, created_at: new Date().toISOString(), status: 'novo', canal: 'instagram_direct' }; }\nlead.lastMessage = cur.message;\nlead.isNew = isNew;\nif (lead.status === 'atendimento_humano') { lead.status = 'atendimento_ia'; }\nreturn { json: lead };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        336
+      ],
+      "id": "ig-028",
+      "name": "Preparar Contexto"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.lastMessage || $json.message || 'Ola' }}",
+        "options": {
+          "systemMessage": "=========CONTEXTO TEMPORAL:\nAgora: {{ $now.setZone('America/Sao_Paulo').toFormat('HH:mm') }} de {{ $now.setZone('America/Sao_Paulo').toFormat('dd/MM/yyyy') }}\nDia: {{ $now.setZone('America/Sao_Paulo').setLocale('pt-BR').toFormat('EEEE') }}\n\nIDENTIDADE: Victor, consultor da Loja do Will (Carros e Motos) em Marica-RJ. Canal: Instagram Direct.\nTOM: Natural, direto, curto (max 20 palavras exceto listas). Use emojis com moderacao.\n\nREGRAS:\n1. 1o contato: \"Ola! Sou o Victor, consultor da Loja do Will. Como posso te ajudar?\". Nunca repita.\n2. Nunca invente carros, links ou precos.\n3. Nunca duas perguntas na mesma mensagem.\n4. CARROS: Use SEMPRE consultar_estoque. Nunca responda de memoria!\n5. VISITA/TEST DRIVE: Pergunte dia e horario. Nao use ferramenta de estoque.\n6. SEM ESTOQUE: \"No momento nao temos. Quer ver outras opcoes?\"\n7. COR/BLINDADO: Use ler_detalhes_veiculo para validar.\n\nFORMATO VEICULOS (max 3):\n[MODELO] [ANO]\nValor: R$ XX.XXX\nLink: [URL]\nSempre pergunte algo no final.\n\nFINANCIAMENTO/FIPE: Peca CNH, CEP, Email, Telefone + [HUMANO_SOLICITADO]\n\nHORARIOS: Seg-Sex 09-18h | Sab 09-14h | Dom FECHADO\nVISITA CONFIRMADA - coloque ao final:\nAGENDAMENTO_CONFIRMADO\nData: DD/MM\nHorario: HH:MM\nVeiculo: [Modelo]",
+          "maxIterations": 15
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [
+        2688,
+        336
+      ],
+      "id": "ig-029",
+      "name": "Agente IA (Instagram)",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.output }}",
+              "operation": "contains",
+              "value2": "[HUMANO_SOLICITADO]"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2992,
+        320
+      ],
+      "id": "ig-030",
+      "name": "Pediu Humano?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = $('Agente IA (Instagram)').item.json.output?.response || $('Agente IA (Instagram)').item.json.output || '';\nlet tc = out.replace(/\\[HUMANO_SOLICITADO\\]/gi, '').trim();\nif (tc === '') tc = 'Um consultor entrara em contato em breve!';\nelse tc += '\\nUm consultor vai falar com voce em breve.';\nconst ctx = $('Preparar Contexto').first().json;\nreturn { json: { ...$input.item.json, texto_cliente: tc, instagram_id: ctx.instagram_id, created_at: ctx.created_at, isNew: ctx.isNew } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3104,
+        128
+      ],
+      "id": "ig-031",
+      "name": "Preparar Handoff"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Preparar Handoff').first().json.isNew }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        3312,
+        128
+      ],
+      "id": "ig-032",
+      "name": "E Cliente Novo (Humano)?"
+    },
+    {
+      "parameters": {
+        "tableId": "leads_instagram",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "instagram_id",
+              "fieldValue": "={{ $('Preparar Handoff').first().json.instagram_id }}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $('Preparar Handoff').first().json.created_at }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "aguardando_humano"
+            },
+            {
+              "fieldId": "canal",
+              "fieldValue": "instagram_direct"
+            },
+            {
+              "fieldId": "last_contact",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        32
+      ],
+      "id": "ig-033",
+      "name": "Criar Lead (Humano)",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRh9WZ1gc9CbPvZg",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads_instagram",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "instagram_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Preparar Handoff').first().json.instagram_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "aguardando_humano"
+            },
+            {
+              "fieldId": "last_contact",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        240
+      ],
+      "id": "ig-034",
+      "name": "Atualizar Lead (Humano)",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRh9WZ1gc9CbPvZg",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "teste",
+        "remoteJid": "5521998052668@s.whatsapp.net",
+        "messageText": "=INSTAGRAM - PEDIDO DE HUMANO\nCliente ID: {{ $('Preparar Handoff').first().json.instagram_id }}\nLink: https://www.instagram.com/direct/t/{{ $('Preparar Handoff').first().json.instagram_id }}\nMensagem: {{ $('Mesclar Textos').first().json.message }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        3760,
+        128
+      ],
+      "id": "ig-035",
+      "name": "Avisar Equipe (WhatsApp)",
+      "credentials": {
+        "evolutionApi": {
+          "id": "LOwaY3yyppArgUtx",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{ 'lock_ia_insta:' + $('Preparar Handoff').first().json.instagram_id }}",
+        "value": "true",
+        "expire": true,
+        "ttl": 86400
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3968,
+        128
+      ],
+      "id": "ig-036",
+      "name": "Ativar Trava IA (Handoff)",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/me/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.INSTAGRAM_PAGE_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify({ recipient: { id: $('Preparar Handoff').first().json.instagram_id }, message: { text: $('Preparar Handoff').first().json.texto_cliente } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4176,
+        128
+      ],
+      "id": "ig-037",
+      "name": "Enviar DM (Handoff)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = $('Agente IA (Instagram)').item.json.output?.response || $('Agente IA (Instagram)').item.json.output || '';\nlet tl = out.replace(/\\[HUMANO_SOLICITADO\\]/gi, '').trim();\nif (!tl) tl = 'Desculpe a instabilidade. Pode repetir?';\nconst re = /AGENDAMENTO_CONFIRMADO[\\s\\S]*?Data:\\s*([\\d\\/]+)[\\s\\S]*?Horario:\\s*([\\d:]+)/i;\nconst m = out.match(re);\nlet r = { visita_agendada: false, texto_para_cliente: tl };\nif (m) {\n  r.visita_agendada = true; r.data_visita = m[1]; r.hora_visita = m[2];\n  r.veiculo_interesse = 'Interesse Geral';\n  const vm = out.match(/Veiculo:\\s*([^\\n]+)/i);\n  if (vm) r.veiculo_interesse = vm[1].trim();\n  r.texto_para_cliente = 'Agendamento confirmado! Visita: ' + r.veiculo_interesse + ' - ' + r.data_visita + ' as ' + r.hora_visita + '. Local: Av. das Americas 3.301, Barra da Tijuca.';\n}\nconst ctx = $('Preparar Contexto').first().json;\nr.instagram_id = ctx.instagram_id; r.created_at = ctx.created_at; r.isNew = ctx.isNew;\nreturn { json: { ...$input.item.json, ...r } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3104,
+        512
+      ],
+      "id": "ig-038",
+      "name": "Detectar Agendamento"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Detectar Agendamento').first().json.isNew }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        3312,
+        512
+      ],
+      "id": "ig-039",
+      "name": "E Cliente Novo?"
+    },
+    {
+      "parameters": {
+        "tableId": "leads_instagram",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "instagram_id",
+              "fieldValue": "={{ $('Detectar Agendamento').first().json.instagram_id }}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $('Detectar Agendamento').first().json.created_at }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $('Detectar Agendamento').first().json.visita_agendada ? 'visita_agendada' : 'atendimento_ia' }}"
+            },
+            {
+              "fieldId": "canal",
+              "fieldValue": "instagram_direct"
+            },
+            {
+              "fieldId": "last_contact",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        416
+      ],
+      "id": "ig-040",
+      "name": "Criar Lead (IA)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRh9WZ1gc9CbPvZg",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads_instagram",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "instagram_id",
+              "condition": "eq",
+              "keyValue": "={{ $('Detectar Agendamento').first().json.instagram_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $('Detectar Agendamento').first().json.visita_agendada ? 'visita_agendada' : 'atendimento_ia' }}"
+            },
+            {
+              "fieldId": "last_contact",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        624
+      ],
+      "id": "ig-041",
+      "name": "Atualizar Lead (IA)",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRh9WZ1gc9CbPvZg",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Detectar Agendamento').first().json.visita_agendada }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        3760,
+        512
+      ],
+      "id": "ig-042",
+      "name": "Visita Confirmada?"
+    },
+    {
+      "parameters": {
+        "tableId": "visitas_agendadas",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "instagram_id",
+              "fieldValue": "={{ $('Detectar Agendamento').first().json.instagram_id }}"
+            },
+            {
+              "fieldId": "data_visita",
+              "fieldValue": "={{ $('Detectar Agendamento').first().json.data_visita }}"
+            },
+            {
+              "fieldId": "hora_visita",
+              "fieldValue": "={{ $('Detectar Agendamento').first().json.hora_visita }}"
+            },
+            {
+              "fieldId": "veiculo",
+              "fieldValue": "={{ $('Detectar Agendamento').first().json.veiculo_interesse }}"
+            },
+            {
+              "fieldId": "canal",
+              "fieldValue": "instagram_direct"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3968,
+        416
+      ],
+      "id": "ig-043",
+      "name": "Salvar Visita",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRh9WZ1gc9CbPvZg",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "teste",
+        "remoteJid": "5521998052668@s.whatsapp.net",
+        "messageText": "=INSTAGRAM - VISITA AGENDADA!\nID: {{ $('Detectar Agendamento').first().json.instagram_id }}\nData: {{ $('Detectar Agendamento').first().json.data_visita }} as {{ $('Detectar Agendamento').first().json.hora_visita }}\nCarro: {{ $('Detectar Agendamento').first().json.veiculo_interesse }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        4176,
+        416
+      ],
+      "id": "ig-044",
+      "name": "Avisar Equipe (Visita)",
+      "credentials": {
+        "evolutionApi": {
+          "id": "LOwaY3yyppArgUtx",
+          "name": "Evolution account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{ 'bot_msg_insta:' + $('Detectar Agendamento').first().json.instagram_id }}",
+        "value": "true",
+        "expire": true,
+        "ttl": 8
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        4176,
+        624
+      ],
+      "id": "ig-045",
+      "name": "Sinal Bot (IA normal)",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/me/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.INSTAGRAM_PAGE_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify({ recipient: { id: $('Detectar Agendamento').first().json.instagram_id }, message: { text: $('Detectar Agendamento').first().json.texto_para_cliente } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4384,
+        512
+      ],
+      "id": "ig-046",
+      "name": "Enviar DM (IA)"
+    },
+    {
+      "parameters": {
+        "name": "consultar_estoque",
+        "description": "BUSCA DE ESTOQUE. Envie APENAS a marca/modelo. Nunca cores, precos ou anos. Se pediu cor/blindado use ler_detalhes_veiculo primeiro.",
+        "workflowId": "h7bSyiwiI3aJUcwF",
+        "fields": {
+          "values": []
+        },
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\",\"description\":\"Marca ou modelo do carro.\"}}}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        2752,
+        544
+      ],
+      "id": "ig-047",
+      "name": "Tool: Estoque"
+    },
+    {
+      "parameters": {
+        "description": "Use para verificar BLINDAGEM, CORES ou detalhes especificos. Forneca a URL do carro.",
+        "workflowId": {
+          "__rl": true,
+          "value": "OOrBZhH4GGub97tE",
+          "mode": "id",
+          "cachedResultUrl": "/workflow/OOrBZhH4GGub97tE"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "url": "={{ $fromAI('url') || $json.query }}"
+          },
+          "matchingColumns": [
+            "url"
+          ],
+          "schema": [
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        2832,
+        544
+      ],
+      "id": "ig-048",
+      "name": "ler_detalhes_veiculo"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Use para pesquisar regras da loja, laudos, taxas, garantias, retoma e financiamento.",
+        "tableName": {
+          "__rl": true,
+          "value": "base_conhecimento",
+          "mode": "list"
+        },
+        "useReranker": true,
+        "options": {
+          "queryName": "buscar_regras"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        2896,
+        656
+      ],
+      "id": "ig-049",
+      "name": "Supabase Vector Store",
+      "credentials": {
+        "supabaseApi": {
+          "id": "CRh9WZ1gc9CbPvZg",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1,
+      "position": [
+        2800,
+        896
+      ],
+      "id": "ig-050",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "ZqQkVKax1xDaOFyB",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "topN": 5
+      },
+      "type": "@n8n/n8n-nodes-langchain.rerankerCohere",
+      "typeVersion": 1,
+      "position": [
+        2912,
+        864
+      ],
+      "id": "ig-051",
+      "name": "Reranker Cohere",
+      "credentials": {
+        "cohereApi": {
+          "id": "DUxQ1dBq4A2EIQxJ",
+          "name": "Cohere account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=chat_insta_v1:{{ $('Preparar Contexto').first().json.instagram_id }}",
+        "sessionTTL": 86400,
+        "contextWindowLength": 8
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.5,
+      "position": [
+        2656,
+        544
+      ],
+      "id": "ig-052",
+      "name": "Redis Chat Memory",
+      "credentials": {
+        "redis": {
+          "id": "RDQ166W1MGOgj6km",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        2464,
+        560
+      ],
+      "id": "ig-053",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "BuQqHrcF3UkQFFu6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook (Instagram)": {
+      "main": [
+        [
+          {
+            "node": "Extrair Dados Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Verificacao (Meta)": {
+      "main": [
+        [
+          {
+            "node": "Responder Verificacao Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Dados Instagram": {
+      "main": [
+        [
+          {
+            "node": "Verificar Duplicidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Duplicidade": {
+      "main": [
+        [
+          {
+            "node": "E Mensagem Nova?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E Mensagem Nova?": {
+      "main": [
+        [
+          {
+            "node": "Marcar Processada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar Processada": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Dados": {
+      "main": [
+        [
+          {
+            "node": "Verificar Sinal do Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Sinal do Bot": {
+      "main": [
+        [
+          {
+            "node": "Verificar Trava IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Trava IA": {
+      "main": [
+        [
+          {
+            "node": "A Trava Esta Ativa?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A Trava Esta Ativa?": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Restaurar Dados (Anti-Bug)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurar Dados (Anti-Bug)": {
+      "main": [
+        [
+          {
+            "node": "E Audio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E Audio?": {
+      "main": [
+        [
+          {
+            "node": "Baixar Audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "E Imagem?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar Audio": {
+      "main": [
+        [
+          {
+            "node": "Transcrever Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcrever Audio": {
+      "main": [
+        [
+          {
+            "node": "Definir Texto (Audio)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir Texto (Audio)": {
+      "main": [
+        [
+          {
+            "node": "Add to Buffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E Imagem?": {
+      "main": [
+        [
+          {
+            "node": "Baixar Imagem",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add to Buffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar Imagem": {
+      "main": [
+        [
+          {
+            "node": "Analisar Imagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analisar Imagem": {
+      "main": [
+        [
+          {
+            "node": "Definir Texto (Imagem)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir Texto (Imagem)": {
+      "main": [
+        [
+          {
+            "node": "Add to Buffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Buffer": {
+      "main": [
+        [
+          {
+            "node": "Aguardar (Juntar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar (Juntar)": {
+      "main": [
+        [
+          {
+            "node": "Ler Buffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Buffer": {
+      "main": [
+        [
+          {
+            "node": "Mesclar Textos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesclar Textos": {
+      "main": [
+        [
+          {
+            "node": "Limpar Buffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpar Buffer": {
+      "main": [
+        [
+          {
+            "node": "Buscar Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Lead": {
+      "main": [
+        [
+          {
+            "node": "Preparar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Contexto": {
+      "main": [
+        [
+          {
+            "node": "Agente IA (Instagram)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente IA (Instagram)": {
+      "main": [
+        [
+          {
+            "node": "Pediu Humano?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pediu Humano?": {
+      "main": [
+        [
+          {
+            "node": "Preparar Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Detectar Agendamento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Handoff": {
+      "main": [
+        [
+          {
+            "node": "E Cliente Novo (Humano)?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E Cliente Novo (Humano)?": {
+      "main": [
+        [
+          {
+            "node": "Criar Lead (Humano)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Atualizar Lead (Humano)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Lead (Humano)": {
+      "main": [
+        [
+          {
+            "node": "Avisar Equipe (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atualizar Lead (Humano)": {
+      "main": [
+        [
+          {
+            "node": "Avisar Equipe (WhatsApp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avisar Equipe (WhatsApp)": {
+      "main": [
+        [
+          {
+            "node": "Ativar Trava IA (Handoff)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ativar Trava IA (Handoff)": {
+      "main": [
+        [
+          {
+            "node": "Enviar DM (Handoff)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar Agendamento": {
+      "main": [
+        [
+          {
+            "node": "E Cliente Novo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E Cliente Novo?": {
+      "main": [
+        [
+          {
+            "node": "Criar Lead (IA)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Atualizar Lead (IA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar Lead (IA)": {
+      "main": [
+        [
+          {
+            "node": "Visita Confirmada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atualizar Lead (IA)": {
+      "main": [
+        [
+          {
+            "node": "Visita Confirmada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Visita Confirmada?": {
+      "main": [
+        [
+          {
+            "node": "Salvar Visita",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sinal Bot (IA normal)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salvar Visita": {
+      "main": [
+        [
+          {
+            "node": "Avisar Equipe (Visita)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avisar Equipe (Visita)": {
+      "main": [
+        [
+          {
+            "node": "Sinal Bot (IA normal)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sinal Bot (IA normal)": {
+      "main": [
+        [
+          {
+            "node": "Enviar DM (IA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Estoque": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agente IA (Instagram)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ler_detalhes_veiculo": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agente IA (Instagram)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reranker Cohere": {
+      "ai_reranker": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_reranker",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Vector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agente IA (Instagram)",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Agente IA (Instagram)",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente IA (Instagram)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "instagram-dm-v1-001",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "c9b29b36e2f445194620403226b37ca673a5522cce75173cf9fe81ad2059cb86"
+  },
+  "id": "instagram-direct-flow-001",
+  "tags": [
+    "instagram",
+    "direct",
+    "ia"
+  ]
+}

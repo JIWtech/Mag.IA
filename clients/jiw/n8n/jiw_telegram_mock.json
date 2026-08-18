@@ -1,0 +1,89 @@
+{
+  "id": "jiwTelegramMock01",
+  "name": "Mag.ia/JIW - Telegram Atendimento MOCK",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-jiw",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "55fb2831-7c8c-4ee6-b29e-9dfb32d1a021",
+      "name": "Webhook Telegram JIW",
+      "webhookId": "telegram-jiw-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const update = $json.body || $json;\nconst message = update.message || update.edited_message || update.channel_post || {};\nconst chat = message.chat || {};\nconst from = message.from || {};\nconst chatId = chat.id;\nconst rawText = String(message.text || '').trim();\nconst firstName = from.first_name || chat.first_name || 'tudo bem';\nconst normalized = rawText.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n\nfunction hasAny(words) {\n  return words.some((word) => normalized.includes(word));\n}\n\nfunction serviceLabel() {\n  if (hasAny(['sistema', 'software', 'app', 'aplicativo', 'site', 'landing page', 'automacao', 'integracao', 'api', 'crm', 'dashboard'])) return 'software_house';\n  if (hasAny(['suporte', 'erro', 'computador', 'notebook', 'internet', 'rede', 'servidor', 'email', 'impressora', 'ti', 'manutencao'])) return 'suporte_ti';\n  if (hasAny(['trafego', 'anuncio', 'google ads', 'meta ads', 'facebook ads', 'campanha', 'leads', 'vendas online'])) return 'trafego_pago';\n  if (hasAny(['social media', 'instagram', 'conteudo', 'post', 'reels', 'criativo', 'identidade visual'])) return 'social_media';\n  if (hasAny(['consultoria', 'digital', 'processo', 'tecnologia para empresa'])) return 'consultoria_digital';\n  return 'geral';\n}\n\nlet response = '';\nlet stage = 'Qualificacao';\nlet handoff = false;\nconst service = serviceLabel();\n\nif (!chatId) {\n  return { json: { ok: false, error: 'missing_chat_id' } };\n}\n\nif (!rawText) {\n  response = 'Ola! No momento eu consigo te atender melhor por texto. Me envie o que sua empresa precisa: software, suporte de TI, trafego pago, social media, site, automacao ou consultoria digital.';\n} else if (hasAny(['/start', 'oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'teste'])) {\n  response = `Ola, ${firstName}! Sou o assistente da JIW - Solucoes tecnologicas.\\n\\nA JIW ajuda empresas com desenvolvimento de sistemas, sites, automacoes, suporte de TI, trafego pago, social media e consultoria digital.\\n\\nMe diga em poucas palavras o que voce precisa.`;\n} else if (hasAny(['orcamento', 'orcamento', 'quanto custa', 'preco', 'valor', 'proposta', 'contrato'])) {\n  stage = 'Orcamento solicitado';\n  handoff = true;\n  response = 'Perfeito. Para preparar um orcamento, preciso entender melhor o escopo.\\n\\nMe envie, por favor:\\n1. Nome da empresa\\n2. Servico desejado\\n3. Objetivo principal\\n4. Prazo desejado\\n5. Melhor contato\\n\\nVou sinalizar para um especialista da JIW continuar com voce. [HUMANO_SOLICITADO]';\n} else if (service === 'software_house') {\n  stage = 'Briefing necessario';\n  response = 'Entendi. A JIW pode ajudar com sistemas, apps, sites, landing pages, dashboards, integracoes e automacoes.\\n\\nPara direcionar corretamente, me diga:\\n1. O que voce quer construir ou automatizar?\\n2. Ja existe algum sistema hoje?\\n3. Qual problema principal precisa resolver?\\n4. Existe prazo ou urgencia?';\n} else if (service === 'suporte_ti') {\n  stage = 'Suporte tecnico';\n  handoff = hasAny(['urgente', 'fora do ar', 'parado', 'caiu', 'sem internet', 'nao funciona']);\n  response = 'Certo. Para suporte de TI, me envie:\\n1. Qual equipamento, sistema ou servico esta com problema?\\n2. O erro impacta quantas pessoas?\\n3. E urgente ou pode ser agendado?\\n4. Nome da empresa e contato.\\n\\nSe for caso critico, vou encaminhar para atendimento humano. ' + (handoff ? '[HUMANO_SOLICITADO]' : '');\n} else if (service === 'trafego_pago') {\n  stage = 'Briefing necessario';\n  response = 'A JIW pode ajudar com campanhas de trafego pago para geracao de leads, vendas e posicionamento.\\n\\nPara avaliar, me diga:\\n1. Qual produto ou servico voce vende?\\n2. Ja anuncia hoje?\\n3. Qual cidade/regiao atende?\\n4. Qual objetivo: leads, vendas, agenda ou reconhecimento?';\n} else if (service === 'social_media') {\n  stage = 'Briefing necessario';\n  response = 'A JIW pode apoiar sua empresa com social media, conteudo, criativos e organizacao de presenca digital.\\n\\nMe diga:\\n1. Qual e o segmento da empresa?\\n2. Quais redes usa hoje?\\n3. Precisa de estrategia, criacao de posts, reels ou gestao completa?';\n} else if (hasAny(['humano', 'atendente', 'especialista', 'reuniao', 'ligar', 'whatsapp'])) {\n  stage = 'Atendimento humano';\n  handoff = true;\n  response = 'Claro. Vou encaminhar seu atendimento para um especialista da JIW continuar com voce. [HUMANO_SOLICITADO]';\n} else if (hasAny(['receita', 'bolo', 'piada', 'musica', 'filme', 'jogo'])) {\n  stage = 'Fora de contexto';\n  response = 'Nao consegui relacionar sua mensagem aos servicos da JIW. Posso ajudar com software, suporte de TI, trafego pago, social media, sites, automacoes ou consultoria digital. Pode reformular seu pedido nesse contexto?';\n} else {\n  response = 'Entendi. Para eu direcionar melhor: sua necessidade esta mais ligada a software/site/automacao, suporte de TI, trafego pago, social media ou consultoria digital?';\n}\n\nconst telegramResponse = {\n  method: 'sendMessage',\n  chat_id: chatId,\n  text: response,\n  disable_web_page_preview: true\n};\n\nreturn {\n  json: {\n    ok: true,\n    tenant_slug: 'jiw',\n    channel: 'telegram',\n    chat_id: chatId,\n    contact_name: [from.first_name, from.last_name].filter(Boolean).join(' ') || chat.title || 'Contato Telegram',\n    username: from.username || '',\n    message: rawText,\n    service,\n    stage,\n    handoff,\n    response,\n    telegram_response: telegramResponse,\n    raw_update: update\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "id": "c3ca7fbf-dd6c-44b5-94e5-4998fb9110c4",
+      "name": "Gerar Resposta MOCK JIW"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.telegram_response }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        520,
+        0
+      ],
+      "id": "c7333f0f-d878-4065-8396-c9fbb2d896cc",
+      "name": "Responder Telegram"
+    }
+  ],
+  "connections": {
+    "Webhook Telegram JIW": {
+      "main": [
+        [
+          {
+            "node": "Gerar Resposta MOCK JIW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar Resposta MOCK JIW": {
+      "main": [
+        [
+          {
+            "node": "Responder Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "0c378a8d-83f2-4d84-a4a3-9c05cda9ef56",
+  "activeVersionId": "0c378a8d-83f2-4d84-a4a3-9c05cda9ef56",
+  "versionCounter": 1,
+  "triggerCount": 0,
+  "tags": []
+}

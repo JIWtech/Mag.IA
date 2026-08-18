@@ -1,0 +1,170 @@
+{
+  "id": "jiwTelegramReal01",
+  "name": "Mag.IA/JIW - Telegram Atendimento REAL",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-jiw-real",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e53bf7a8-44ff-4698-8887-049c5abbac6a",
+      "name": "Webhook Telegram JIW REAL",
+      "webhookId": "telegram-jiw-real-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const update = $json.body || $json;\n  const message = update.message || update.edited_message || update.channel_post || {};\n  const chat = message.chat || {};\n  const from = message.from || {};\n  const chatId = chat.id;\n  const rawText = String(message.text || '').trim();\n  const firstName = from.first_name || chat.first_name || 'tudo bem';\n  const normalized = rawText.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n\n  function hasAny(words) {\n    return words.some((word) => normalized.includes(word));\n  }\n\n  function serviceLabel() {\n    if (hasAny(['sistema', 'software', 'app', 'aplicativo', 'site', 'landing page', 'automacao', 'integracao', 'api', 'crm', 'dashboard'])) return 'software_house';\n    if (hasAny(['suporte', 'erro', 'computador', 'notebook', 'internet', 'rede', 'servidor', 'email', 'impressora', 'ti', 'manutencao'])) return 'suporte_ti';\n    if (hasAny(['trafego', 'anuncio', 'google ads', 'meta ads', 'facebook ads', 'campanha', 'leads', 'vendas online'])) return 'trafego_pago';\n    if (hasAny(['social media', 'instagram', 'conteudo', 'post', 'reels', 'criativo', 'identidade visual'])) return 'social_media';\n    if (hasAny(['consultoria', 'digital', 'processo', 'tecnologia para empresa'])) return 'consultoria_digital';\n    return 'geral';\n  }\n\n  function fallbackAnswer() {\n    let response = '';\n    let stage = 'Qualificacao';\n    let handoff = false;\n    const service = serviceLabel();\n\n    if (!rawText) {\n      response = 'Ola! No momento eu consigo te atender melhor por texto. Me envie o que sua empresa precisa: software, suporte de TI, trafego pago, social media, site, automacao ou consultoria digital.';\n    } else if (hasAny(['/start', 'oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'teste'])) {\n      response = `Ola, ${firstName}! Sou o assistente da JIW - Solucoes tecnologicas.\\n\\nA JIW ajuda empresas com desenvolvimento de sistemas, sites, automacoes, suporte de TI, trafego pago, social media e consultoria digital.\\n\\nMe diga em poucas palavras o que voce precisa.`;\n    } else if (hasAny(['orcamento', 'quanto custa', 'preco', 'valor', 'proposta', 'contrato'])) {\n      stage = 'Orcamento solicitado';\n      handoff = true;\n      response = 'Perfeito. Para preparar um orcamento, preciso entender melhor o escopo.\\n\\nMe envie, por favor:\\n1. Nome da empresa\\n2. Servico desejado\\n3. Objetivo principal\\n4. Prazo desejado\\n5. Melhor contato\\n\\nVou sinalizar para um especialista da JIW continuar com voce. [HUMANO_SOLICITADO]';\n    } else if (service === 'software_house') {\n      stage = 'Briefing necessario';\n      response = 'Entendi. A JIW pode ajudar com sistemas, apps, sites, landing pages, dashboards, integracoes e automacoes.\\n\\nPara direcionar corretamente, me diga:\\n1. O que voce quer construir ou automatizar?\\n2. Ja existe algum sistema hoje?\\n3. Qual problema principal precisa resolver?\\n4. Existe prazo ou urgencia?';\n    } else if (service === 'suporte_ti') {\n      stage = 'Suporte tecnico';\n      handoff = hasAny(['urgente', 'fora do ar', 'parado', 'caiu', 'sem internet', 'nao funciona']);\n      response = 'Certo. Para suporte de TI, me envie:\\n1. Qual equipamento, sistema ou servico esta com problema?\\n2. O erro impacta quantas pessoas?\\n3. E urgente ou pode ser agendado?\\n4. Nome da empresa e contato.\\n\\nSe for caso critico, vou encaminhar para atendimento humano. ' + (handoff ? '[HUMANO_SOLICITADO]' : '');\n    } else if (service === 'trafego_pago') {\n      stage = 'Briefing necessario';\n      response = 'A JIW pode ajudar com campanhas de trafego pago para geracao de leads, vendas e posicionamento.\\n\\nPara avaliar, me diga:\\n1. Qual produto ou servico voce vende?\\n2. Ja anuncia hoje?\\n3. Qual cidade/regiao atende?\\n4. Qual objetivo: leads, vendas, agenda ou reconhecimento?';\n    } else if (service === 'social_media') {\n      stage = 'Briefing necessario';\n      response = 'A JIW pode apoiar sua empresa com social media, conteudo, criativos e organizacao de presenca digital.\\n\\nMe diga:\\n1. Qual e o segmento da empresa?\\n2. Quais redes usa hoje?\\n3. Precisa de estrategia, criacao de posts, reels ou gestao completa?';\n    } else if (hasAny(['humano', 'atendente', 'especialista', 'reuniao', 'ligar', 'whatsapp'])) {\n      stage = 'Atendimento humano';\n      handoff = true;\n      response = 'Claro. Vou encaminhar seu atendimento para um especialista da JIW continuar com voce. [HUMANO_SOLICITADO]';\n    } else if (hasAny(['receita', 'bolo', 'piada', 'musica', 'filme', 'jogo'])) {\n      stage = 'Fora de contexto';\n      response = 'Nao consegui relacionar sua mensagem aos servicos da JIW. Posso ajudar com software, suporte de TI, trafego pago, social media, sites, automacoes ou consultoria digital. Pode reformular seu pedido nesse contexto?';\n    } else {\n      response = 'Entendi. Para eu direcionar melhor: sua necessidade esta mais ligada a software/site/automacao, suporte de TI, trafego pago, social media ou consultoria digital?';\n    }\n    return { response, stage, handoff, service };\n  }\n\n  function todayKey() {\n    return new Date().toISOString().slice(0, 10);\n  }\n\n  function safeEnv(name, fallback = '') {\n    try {\n      return $env[name] || fallback;\n    } catch (error) {\n      return fallback;\n    }\n  }\n\n  function getUsageGate() {\n    const enabled = String(safeEnv('GEMINI_ENABLED', 'false')).toLowerCase() === 'true';\n    const hasKey = Boolean(safeEnv('GEMINI_API_KEY'));\n    const dailyLimit = Number(safeEnv('GEMINI_DAILY_LIMIT', 20));\n    let usedToday = 0;\n    try {\n      const data = $getWorkflowStaticData('global');\n      usedToday = Number(data[`gemini_jiw_${todayKey()}`] || 0);\n    } catch (error) {}\n    return { enabled, hasKey, dailyLimit, usedToday, allowed: enabled && hasKey && usedToday < dailyLimit };\n  }\n\n  function markUsage() {\n    try {\n      const data = $getWorkflowStaticData('global');\n      const key = `gemini_jiw_${todayKey()}`;\n      data[key] = Number(data[key] || 0) + 1;\n      return data[key];\n    } catch (error) {\n      return null;\n    }\n  }\n\n  async function callGemini(context) {\n    const model = safeEnv('GEMINI_MODEL', 'gemini-2.5-flash-lite');\n    const maxOutputTokens = Math.min(Number(safeEnv('GEMINI_MAX_OUTPUT_TOKENS', 220)), 300);\n    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;\n    const prompt = `Voce e o assistente da JIW - Solucoes tecnologicas.\\n\\nContexto da empresa:\\nA JIW atende empresas com desenvolvimento de sistemas, apps, sites, landing pages, automacoes, dashboards, integracoes, suporte de TI, infraestrutura, trafego pago, social media e consultoria digital.\\n\\nBase consultada no banco de dados:\\n${context.catalogContext || 'Nenhum item especifico encontrado na base para esta mensagem.'}\\n\\nRegras:\\n- Responda em portugues do Brasil, com acentos corretos.\\n- Seja objetivo, consultivo e profissional.\\n- Maximo de 900 caracteres.\\n- Nao invente precos, prazos fechados ou garantias de resultado.\\n- Use valores apenas quando vierem da base consultada acima.\\n- Ao informar preco, trate como referencia inicial/a partir de, pois o escopo pode alterar o valor final.\\n- Quando houver pedido de orcamento, proposta, contrato, suporte critico ou atendimento humano, colete dados minimos e sinalize [HUMANO_SOLICITADO].\\n- Se fugir do contexto da JIW, informe que nao compete ao atendimento e peca para reformular dentro dos servicos digitais.\\n\\nMensagem do cliente (${firstName}): ${rawText}\\n\\nClassificacao previa: ${context.service}\\nEtapa sugerida: ${context.stage}`;\n\n    const response = await fetch(url, {\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/json',\n        'x-goog-api-key': safeEnv('GEMINI_API_KEY'),\n      },\n      body: JSON.stringify({\n        contents: [{ role: 'user', parts: [{ text: prompt }] }],\n        generationConfig: {\n          temperature: 0.35,\n          maxOutputTokens,\n          candidateCount: 1,\n        },\n      }),\n    });\n\n    const body = await response.json().catch(() => ({}));\n    if (!response.ok) {\n      throw new Error(body?.error?.message || `Gemini HTTP ${response.status}`);\n    }\n    const text = body?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim();\n    if (!text) throw new Error('Gemini sem texto de resposta');\n    return { text, usage: body.usageMetadata || {} };\n  }\n\n  async function queryCatalog() {\n    const enabled = String(safeEnv('TENANT_CATALOG_ENABLED', 'false')).toLowerCase() === 'true';\n    const supabaseUrl = safeEnv('SUPABASE_URL', '').replace(/\\/$/, '');\n    const serviceKey = safeEnv('SUPABASE_SERVICE_ROLE_KEY', '');\n    if (!enabled || !supabaseUrl || !serviceKey || !rawText) {\n      return { matches: [], context: '', error: '' };\n    }\n\n    try {\n      const response = await fetch(`${supabaseUrl}/rest/v1/rpc/search_tenant_service_catalog`, {\n        method: 'POST',\n        headers: {\n          'Content-Type': 'application/json',\n          apikey: serviceKey,\n          Authorization: `Bearer ${serviceKey}`,\n        },\n        body: JSON.stringify({\n          p_tenant_slug: 'jiw',\n          p_query: rawText,\n          p_limit: 5,\n        }),\n      });\n      const body = await response.json().catch(() => []);\n      if (!response.ok) {\n        throw new Error(body?.message || body?.error || `Supabase HTTP ${response.status}`);\n      }\n      const matches = Array.isArray(body) ? body : [];\n      const context = matches.map((item, index) => {\n        const price = item.price === null || item.price === undefined ? 'preco sob consulta' : `R$ ${Number(item.price).toFixed(2).replace('.', ',')}`;\n        const hours = item.estimated_hours === null || item.estimated_hours === undefined ? '' : ` Tempo estimado: ${item.estimated_hours}h.`;\n        const notes = item.notes ? ` Observacoes: ${item.notes}.` : '';\n        return `${index + 1}. ${item.name} (${item.category || 'categoria geral'}): ${item.description || 'sem descricao'}. Unidade: ${item.billing_unit || 'sob consulta'}. Valor: ${price}.${hours}${notes}`;\n      }).join('\\n');\n      return { matches, context, error: '' };\n    } catch (error) {\n      return { matches: [], context: '', error: error.message || String(error) };\n    }\n  }\n\n  function buildCatalogFallback(matches) {\n    if (!matches.length) return '';\n    const lines = matches.slice(0, 3).map((item, index) => {\n      const price = item.price === null || item.price === undefined ? 'preco sob consulta' : `R$ ${Number(item.price).toFixed(2).replace('.', ',')}`;\n      const unit = item.billing_unit ? ` (${item.billing_unit})` : '';\n      const notes = item.notes ? ` Obs.: ${item.notes}` : '';\n      return `${index + 1}. ${item.name}${unit}: ${price}.${notes}`;\n    });\n    return `Encontrei estes itens na base da JIW:\\n\\n${lines.join('\\n')}\\n\\nEsses valores sao referencias iniciais e podem mudar conforme o escopo. Para fechar um orcamento, me envie nome da empresa, servico desejado, objetivo, prazo e melhor contato. [HUMANO_SOLICITADO]`;\n  }\n\n  if (!chatId) return { json: { ok: false, error: 'missing_chat_id' } };\n\n  const fallback = fallbackAnswer();\n  const catalog = await queryCatalog();\n  const gate = getUsageGate();\n  let response = fallback.response;\n  let aiProvider = 'fallback_rules';\n  let aiModel = safeEnv('GEMINI_MODEL', 'gemini-2.5-flash-lite');\n  let aiError = '';\n  let aiUsage = {};\n\n  if (rawText && gate.allowed) {\n    try {\n    const gemini = await callGemini({ ...fallback, catalogContext: catalog.context });\n      response = gemini.text;\n      aiUsage = gemini.usage;\n      aiProvider = 'gemini';\n      markUsage();\n    } catch (error) {\n      aiError = error.message || String(error);\n      aiProvider = 'fallback_gemini_error';\n    }\n  } else if (!gate.enabled) {\n    aiProvider = 'fallback_gemini_disabled';\n  } else if (!gate.hasKey) {\n    aiProvider = 'fallback_no_gemini_key';\n  } else if (gate.usedToday >= gate.dailyLimit) {\n    aiProvider = 'fallback_daily_limit';\n  }\n\n  if (aiProvider !== 'gemini' && catalog.matches.length && hasAny(['preco', 'valor', 'quanto custa', 'custa', 'orcamento', 'cobranca'])) {\n    response = buildCatalogFallback(catalog.matches);\n  }\n\n  const handoff = fallback.handoff || response.includes('[HUMANO_SOLICITADO]');\n  const contactName = [from.first_name, from.last_name].filter(Boolean).join(' ') || chat.title || 'Contato Telegram';\n  const externalConversationId = String(chatId);\n  const externalMessageId = message.message_id ? String(message.message_id) : `${chatId}:${Date.now()}`;\n\n  return { json: {\n    ok: true,\n    tenant_slug: 'jiw',\n    channel_type: 'telegram',\n    external_conversation_id: externalConversationId,\n    external_message_id: externalMessageId,\n    direction: 'inbound',\n    chat_id: chatId,\n    contact_name: contactName,\n    contact_handle: from.username || '',\n    message_text: rawText,\n    service: fallback.service,\n    stage: fallback.stage,\n    handoff,\n    response_text: response,\n    ai_provider: aiProvider,\n    ai_model: aiModel,\n    ai_error: aiError,\n    ai_usage: aiUsage,\n    catalog_matches: catalog.matches,\n    catalog_error: catalog.error,\n    gemini_daily_limit: gate.dailyLimit,\n    gemini_used_today_before_request: gate.usedToday,\n    raw_payload: update,\n    telegram_response: { method: 'sendMessage', chat_id: chatId, text: response, disable_web_page_preview: true }\n  } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "id": "b814dc41-226b-4146-bf4c-b24435220718",
+      "name": "Classificar e Responder"
+    },
+    {
+      "parameters": {
+        "tableId": "channel_events",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "tenant_slug",
+              "fieldValue": "={{ $json.tenant_slug }}"
+            },
+            {
+              "fieldId": "channel_type",
+              "fieldValue": "={{ $json.channel_type }}"
+            },
+            {
+              "fieldId": "external_conversation_id",
+              "fieldValue": "={{ $json.external_conversation_id }}"
+            },
+            {
+              "fieldId": "external_message_id",
+              "fieldValue": "={{ $json.external_message_id }}"
+            },
+            {
+              "fieldId": "direction",
+              "fieldValue": "={{ $json.direction }}"
+            },
+            {
+              "fieldId": "contact_name",
+              "fieldValue": "={{ $json.contact_name }}"
+            },
+            {
+              "fieldId": "contact_handle",
+              "fieldValue": "={{ $json.contact_handle }}"
+            },
+            {
+              "fieldId": "message_text",
+              "fieldValue": "={{ $json.message_text }}"
+            },
+            {
+              "fieldId": "service",
+              "fieldValue": "={{ $json.service }}"
+            },
+            {
+              "fieldId": "stage",
+              "fieldValue": "={{ $json.stage }}"
+            },
+            {
+              "fieldId": "handoff",
+              "fieldValue": "={{ $json.handoff }}"
+            },
+            {
+              "fieldId": "response_text",
+              "fieldValue": "={{ $json.response_text }}"
+            },
+            {
+              "fieldId": "raw_payload",
+              "fieldValue": "={{ JSON.stringify($json.raw_payload) }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        540,
+        -140
+      ],
+      "id": "a43c85e2-3931-4a60-9841-c3711e47a7c7",
+      "name": "Salvar Evento Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "ELkVYWePMRuMaQb3",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.telegram_response }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        540,
+        120
+      ],
+      "id": "a694700d-edcd-4ca4-a0ce-269cc63c8ab5",
+      "name": "Responder Telegram"
+    }
+  ],
+  "connections": {
+    "Webhook Telegram JIW REAL": {
+      "main": [
+        [
+          {
+            "node": "Classificar e Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classificar e Responder": {
+      "main": [
+        [
+          {
+            "node": "Salvar Evento Supabase",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Responder Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "gemini-cost-control-v1",
+  "activeVersionId": "gemini-cost-control-v1",
+  "versionCounter": 2,
+  "triggerCount": 0,
+  "tags": []
+}

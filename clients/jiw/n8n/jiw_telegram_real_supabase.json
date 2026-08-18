@@ -1,0 +1,97 @@
+{
+  "id": "jiwTelegramReal01",
+  "name": "Mag.IA/JIW - Telegram Atendimento REAL",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-jiw-real",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "id": "e53bf7a8-44ff-4698-8887-049c5abbac6a",
+      "name": "Webhook Telegram JIW REAL",
+      "webhookId": "telegram-jiw-real-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const update = $json.body || $json;\nconst message = update.message || update.edited_message || update.channel_post || {};\nconst chat = message.chat || {};\nconst from = message.from || {};\nconst chatId = chat.id;\nconst rawText = String(message.text || '').trim();\nconst firstName = from.first_name || chat.first_name || 'tudo bem';\nconst normalized = rawText.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\nfunction hasAny(words) { return words.some((word) => normalized.includes(word)); }\nfunction serviceLabel() {\n  if (hasAny(['sistema','software','app','aplicativo','site','landing page','automacao','integracao','api','crm','dashboard'])) return 'software_house';\n  if (hasAny(['suporte','erro','computador','notebook','internet','rede','servidor','email','impressora','ti','manutencao'])) return 'suporte_ti';\n  if (hasAny(['trafego','anuncio','google ads','meta ads','facebook ads','campanha','leads','vendas online'])) return 'trafego_pago';\n  if (hasAny(['social media','instagram','conteudo','post','reels','criativo','identidade visual'])) return 'social_media';\n  if (hasAny(['consultoria','digital','processo','tecnologia para empresa'])) return 'consultoria_digital';\n  return 'geral';\n}\nlet response = '';\nlet stage = 'Qualificacao';\nlet handoff = false;\nconst service = serviceLabel();\nif (!chatId) return { json: { ok: false, error: 'missing_chat_id' } };\nif (!rawText) {\n  response = 'Ola! No momento eu consigo te atender melhor por texto. Me envie o que sua empresa precisa: software, suporte de TI, trafego pago, social media, site, automacao ou consultoria digital.';\n} else if (hasAny(['/start','oi','ola','bom dia','boa tarde','boa noite','teste'])) {\n  response = `Ola, ${firstName}! Sou o assistente da JIW - Solucoes tecnologicas.\\n\\nA JIW ajuda empresas com desenvolvimento de sistemas, sites, automacoes, suporte de TI, trafego pago, social media e consultoria digital.\\n\\nMe diga em poucas palavras o que voce precisa.`;\n} else if (hasAny(['orcamento','quanto custa','preco','valor','proposta','contrato'])) {\n  stage = 'Orcamento solicitado'; handoff = true;\n  response = 'Perfeito. Para preparar um orcamento, preciso entender melhor o escopo.\\n\\nMe envie, por favor:\\n1. Nome da empresa\\n2. Servico desejado\\n3. Objetivo principal\\n4. Prazo desejado\\n5. Melhor contato\\n\\nVou sinalizar para um especialista da JIW continuar com voce. [HUMANO_SOLICITADO]';\n} else if (service === 'software_house') {\n  stage = 'Briefing necessario';\n  response = 'Entendi. A JIW pode ajudar com sistemas, apps, sites, landing pages, dashboards, integracoes e automacoes.\\n\\nPara direcionar corretamente, me diga:\\n1. O que voce quer construir ou automatizar?\\n2. Ja existe algum sistema hoje?\\n3. Qual problema principal precisa resolver?\\n4. Existe prazo ou urgencia?';\n} else if (service === 'suporte_ti') {\n  stage = 'Suporte tecnico'; handoff = hasAny(['urgente','fora do ar','parado','caiu','sem internet','nao funciona']);\n  response = 'Certo. Para suporte de TI, me envie:\\n1. Qual equipamento, sistema ou servico esta com problema?\\n2. O erro impacta quantas pessoas?\\n3. E urgente ou pode ser agendado?\\n4. Nome da empresa e contato.\\n\\nSe for caso critico, vou encaminhar para atendimento humano. ' + (handoff ? '[HUMANO_SOLICITADO]' : '');\n} else if (service === 'trafego_pago') {\n  stage = 'Briefing necessario';\n  response = 'A JIW pode ajudar com campanhas de trafego pago para geracao de leads, vendas e posicionamento.\\n\\nPara avaliar, me diga:\\n1. Qual produto ou servico voce vende?\\n2. Ja anuncia hoje?\\n3. Qual cidade/regiao atende?\\n4. Qual objetivo: leads, vendas, agenda ou reconhecimento?';\n} else if (service === 'social_media') {\n  stage = 'Briefing necessario';\n  response = 'A JIW pode apoiar sua empresa com social media, conteudo, criativos e organizacao de presenca digital.\\n\\nMe diga:\\n1. Qual e o segmento da empresa?\\n2. Quais redes usa hoje?\\n3. Precisa de estrategia, criacao de posts, reels ou gestao completa?';\n} else if (hasAny(['humano','atendente','especialista','reuniao','ligar','whatsapp'])) {\n  stage = 'Atendimento humano'; handoff = true;\n  response = 'Claro. Vou encaminhar seu atendimento para um especialista da JIW continuar com voce. [HUMANO_SOLICITADO]';\n} else if (hasAny(['receita','bolo','piada','musica','filme','jogo'])) {\n  stage = 'Fora de contexto';\n  response = 'Nao consegui relacionar sua mensagem aos servicos da JIW. Posso ajudar com software, suporte de TI, trafego pago, social media, sites, automacoes ou consultoria digital. Pode reformular seu pedido nesse contexto?';\n} else {\n  response = 'Entendi. Para eu direcionar melhor: sua necessidade esta mais ligada a software/site/automacao, suporte de TI, trafego pago, social media ou consultoria digital?';\n}\nconst contactName = [from.first_name, from.last_name].filter(Boolean).join(' ') || chat.title || 'Contato Telegram';\nconst externalConversationId = String(chatId);\nconst externalMessageId = message.message_id ? String(message.message_id) : `${chatId}:${Date.now()}`;\nreturn { json: {\n  ok: true,\n  tenant_slug: 'jiw',\n  channel_type: 'telegram',\n  external_conversation_id: externalConversationId,\n  external_message_id: externalMessageId,\n  direction: 'inbound',\n  chat_id: chatId,\n  contact_name: contactName,\n  contact_handle: from.username || '',\n  message_text: rawText,\n  service,\n  stage,\n  handoff,\n  response_text: response,\n  raw_payload: update,\n  telegram_response: { method: 'sendMessage', chat_id: chatId, text: response, disable_web_page_preview: true }\n} };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0],
+      "id": "b814dc41-226b-4146-bf4c-b24435220718",
+      "name": "Classificar e Responder"
+    },
+    {
+      "parameters": {
+        "tableId": "channel_events",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "tenant_slug", "fieldValue": "={{ $json.tenant_slug }}" },
+            { "fieldId": "channel_type", "fieldValue": "={{ $json.channel_type }}" },
+            { "fieldId": "external_conversation_id", "fieldValue": "={{ $json.external_conversation_id }}" },
+            { "fieldId": "external_message_id", "fieldValue": "={{ $json.external_message_id }}" },
+            { "fieldId": "direction", "fieldValue": "={{ $json.direction }}" },
+            { "fieldId": "contact_name", "fieldValue": "={{ $json.contact_name }}" },
+            { "fieldId": "contact_handle", "fieldValue": "={{ $json.contact_handle }}" },
+            { "fieldId": "message_text", "fieldValue": "={{ $json.message_text }}" },
+            { "fieldId": "service", "fieldValue": "={{ $json.service }}" },
+            { "fieldId": "stage", "fieldValue": "={{ $json.stage }}" },
+            { "fieldId": "handoff", "fieldValue": "={{ $json.handoff }}" },
+            { "fieldId": "response_text", "fieldValue": "={{ $json.response_text }}" },
+            { "fieldId": "raw_payload", "fieldValue": "={{ JSON.stringify($json.raw_payload) }}" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [540, -140],
+      "id": "a43c85e2-3931-4a60-9841-c3711e47a7c7",
+      "name": "Salvar Evento Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "ELkVYWePMRuMaQb3",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.telegram_response }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [540, 120],
+      "id": "a694700d-edcd-4ca4-a0ce-269cc63c8ab5",
+      "name": "Responder Telegram"
+    }
+  ],
+  "connections": {
+    "Webhook Telegram JIW REAL": {
+      "main": [[{ "node": "Classificar e Responder", "type": "main", "index": 0 }]]
+    },
+    "Classificar e Responder": {
+      "main": [[
+        { "node": "Salvar Evento Supabase", "type": "main", "index": 0 },
+        { "node": "Responder Telegram", "type": "main", "index": 0 }
+      ]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": { "templateCredsSetupCompleted": true },
+  "pinData": {},
+  "versionId": "d45c1a5c-c0df-48f4-81b3-2b2e8e53f904",
+  "activeVersionId": "d45c1a5c-c0df-48f4-81b3-2b2e8e53f904",
+  "versionCounter": 1,
+  "triggerCount": 0,
+  "tags": []
+}

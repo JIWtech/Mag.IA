@@ -1,0 +1,100 @@
+{
+  "id": "magiaCommandRouter01",
+  "name": "Mag.IA/Core - Command Router",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "magia-command",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "9655d9a3-cf8e-4cb1-a81f-34e7d3a66a51",
+      "name": "Webhook MagIA Command",
+      "webhookId": "magia-command-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "async function main(helpers) {\n  const input = typeof $json.body === 'string' ? JSON.parse($json.body || '{}') : ($json.body || $json);\n\n  function env(name, fallback = '') {\n    let envValue = '';\n    let varsValue = '';\n    try { envValue = $env[name] || ''; } catch (error) {}\n    try { varsValue = $vars?.[name] || ''; } catch (error) {}\n    return envValue || varsValue || fallback;\n  }\n\n  function required(value, label) {\n    if (value === undefined || value === null || String(value).trim() === '') {\n      throw new Error(label + ' obrigatorio');\n    }\n    return String(value).trim();\n  }\n\n  function envSuffix(tenantSlug) {\n    return String(tenantSlug || '').toUpperCase().replace(/[^A-Z0-9]/g, '_');\n  }\n\n  function tokenFor(tenantSlug, channelType) {\n    const suffix = envSuffix(tenantSlug);\n    if (channelType === 'telegram') return env('TELEGRAM_BOT_TOKEN_' + suffix) || env('TELEGRAM_BOT_TOKEN_JIW');\n    if (channelType === 'instagram' || channelType === 'instagram_direct') return env('INSTAGRAM_PAGE_ACCESS_TOKEN_' + suffix) || env('INSTAGRAM_PAGE_ACCESS_TOKEN_JIW');\n    return '';\n  }\n\n  async function insertEvent(event) {\n    const supabaseUrl = env('SUPABASE_URL').replace(/\\/$/, '');\n    const serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');\n    if (!supabaseUrl || !serviceKey) throw new Error('SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar configurados no n8n');\n\n    return await helpers.httpRequest({\n      method: 'POST',\n      url: supabaseUrl + '/rest/v1/channel_events',\n      headers: {\n        'Content-Type': 'application/json',\n        apikey: serviceKey,\n        Authorization: 'Bearer ' + serviceKey,\n        Prefer: 'return=representation',\n      },\n      body: event,\n      json: true,\n    });\n  }\n\n  async function sendTelegram(token, chatId, text) {\n    const body = await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://api.telegram.org/bot' + token + '/sendMessage',\n      headers: { 'Content-Type': 'application/json' },\n      body: { chat_id: chatId, text, disable_web_page_preview: true },\n      json: true,\n    });\n    if (!body || body.ok === false) throw new Error(body?.description || 'Falha ao enviar mensagem no Telegram');\n    return { provider: 'telegram', raw: body, messageId: body?.result?.message_id ? String(body.result.message_id) : '' };\n  }\n\n  async function sendInstagram(token, recipientId, text) {\n    const body = await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://graph.facebook.com/v18.0/me/messages',\n      qs: { access_token: token },\n      headers: { 'Content-Type': 'application/json' },\n      body: { recipient: { id: recipientId }, message: { text } },\n      json: true,\n    });\n    if (!body || body.error) throw new Error(body?.error?.message || 'Falha ao enviar DM no Instagram');\n    return { provider: 'instagram', raw: body, messageId: body?.message_id || '' };\n  }\n\n  const command = required(input.command, 'command');\n  const tenantSlug = required(input.tenant_slug, 'tenant_slug').toLowerCase();\n  const payload = input.payload || {};\n\n  if (command !== 'manual_reply') throw new Error('command nao suportado: ' + command);\n\n  const channelType = required(payload.channel_type, 'payload.channel_type').toLowerCase();\n  const externalConversationId = required(payload.external_conversation_id, 'payload.external_conversation_id');\n  const messageText = required(payload.message_text, 'payload.message_text');\n  const token = tokenFor(tenantSlug, channelType);\n  const commandId = payload.command_id || tenantSlug + ':' + channelType + ':' + externalConversationId + ':' + Date.now();\n\n  if (!['telegram', 'instagram', 'instagram_direct'].includes(channelType)) throw new Error('channel_type ainda nao suportado para envio manual: ' + channelType);\n  if (!token) throw new Error('token nao configurado para tenant=' + tenantSlug + ' channel=' + channelType);\n\n  const normalizedChannel = channelType === 'instagram_direct' ? 'instagram' : channelType;\n  const sent = normalizedChannel === 'telegram'\n    ? await sendTelegram(token, externalConversationId, messageText)\n    : await sendInstagram(token, externalConversationId, messageText);\n\n  const event = {\n    tenant_slug: tenantSlug,\n    channel_type: normalizedChannel,\n    external_conversation_id: externalConversationId,\n    external_message_id: sent.messageId || commandId,\n    direction: 'outbound',\n    sender_type: 'agent',\n    contact_name: payload.contact_name || 'Contato',\n    message_text: messageText,\n    service: payload.service || 'manual_reply',\n    stage: payload.stage || 'Atendimento humano',\n    handoff: true,\n    response_text: null,\n    sent_by_user: payload.sent_by_user || 'Operador Mag.IA',\n    delivery_status: 'sent',\n    command_id: commandId,\n    raw_payload: { command, payload, sent },\n  };\n\n  const saved = await insertEvent(event);\n  return { ok: true, command, tenant_slug: tenantSlug, channel_type: normalizedChannel, command_id: commandId, external_message_id: event.external_message_id, saved };\n}\n\ntry {\n  return { json: await main(this.helpers) };\n} catch (error) {\n  return { json: { ok: false, error: error.message || String(error) } };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "id": "7e24c48f-6389-4e08-a987-a75312254c14",
+      "name": "Executar Comando"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "content-type"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        520,
+        0
+      ],
+      "id": "2d730961-29d8-424e-a9f6-264dd351fe02",
+      "name": "Responder Interface"
+    }
+  ],
+  "connections": {
+    "Webhook MagIA Command": {
+      "main": [
+        [
+          {
+            "node": "Executar Comando",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executar Comando": {
+      "main": [
+        [
+          {
+            "node": "Responder Interface",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {},
+  "pinData": {},
+  "versionId": "manual-reply-v2-instagram",
+  "activeVersionId": "manual-reply-v2-instagram",
+  "versionCounter": 2,
+  "triggerCount": 0,
+  "tags": []
+}

@@ -1,0 +1,158 @@
+{
+  "id": "jiwInstagramReal01",
+  "name": "Mag.IA/JIW - Instagram Atendimento REAL",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "instagram-jiw",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        180
+      ],
+      "id": "ig-jiw-get",
+      "name": "Webhook Verificacao Instagram",
+      "webhookId": "instagram-jiw-verify"
+    },
+    {
+      "parameters": {
+        "jsCode": "function env(name, fallback = '') {\n  try { return $env[name] || fallback; } catch (error) { return fallback; }\n}\nconst query = $json.query || {};\nconst expected = env('INSTAGRAM_VERIFY_TOKEN_JIW');\nconst mode = query['hub.mode'] || query.hub_mode;\nconst token = query['hub.verify_token'] || query.hub_verify_token;\nconst challenge = query['hub.challenge'] || query.hub_challenge || '';\nif (expected && token !== expected) {\n  return { json: { ok: false, statusCode: 403, challenge: 'invalid_verify_token' } };\n}\nreturn { json: { ok: true, statusCode: mode === 'subscribe' ? 200 : 400, challenge } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        180
+      ],
+      "id": "ig-jiw-verify-code",
+      "name": "Validar Verificacao Meta"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.challenge }}",
+        "options": {
+          "responseCode": "={{ $json.statusCode }}"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        180
+      ],
+      "id": "ig-jiw-verify-response",
+      "name": "Responder Verificacao Meta"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "instagram-jiw",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -80
+      ],
+      "id": "ig-jiw-post",
+      "name": "Webhook Instagram DM",
+      "webhookId": "instagram-jiw-events"
+    },
+    {
+      "parameters": {
+        "jsCode": "async function main(helpers) {\n  const input = typeof $json.body === 'string' ? JSON.parse($json.body || '{}') : ($json.body || $json);\n\n  function env(name, fallback = '') {\n    try { return $env[name] || fallback; } catch (error) { return fallback; }\n  }\n\n  function firstMessaging(body) {\n    const entries = body.entry || [];\n    for (const entry of entries) {\n      for (const messaging of entry.messaging || []) {\n        if (messaging?.message?.is_echo) continue;\n        if (messaging?.sender?.id) return { entry, messaging };\n      }\n    }\n    return { entry: null, messaging: null };\n  }\n\n  function normalizeText(message) {\n    const text = String(message?.text || '').trim();\n    const attachments = message?.attachments || [];\n    if (text) return { text, contentType: 'text', unsupported: false };\n    const type = attachments[0]?.type || 'unsupported';\n    if (type === 'image') return { text: '[Imagem recebida pelo Instagram]', contentType: 'image', unsupported: true };\n    if (type === 'audio') return { text: '[Audio recebido pelo Instagram]', contentType: 'audio', unsupported: true };\n    if (type === 'video') return { text: '[Video recebido pelo Instagram]', contentType: 'video', unsupported: true };\n    return { text: '[Mensagem sem texto recebida pelo Instagram]', contentType: 'unknown', unsupported: true };\n  }\n\n  function classify(rawText) {\n    const normalized = rawText.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n    const hasAny = (words) => words.some((word) => normalized.includes(word));\n    let service = 'geral';\n    let stage = 'Qualificacao';\n    let handoff = false;\n    let response = '';\n\n    if (hasAny(['sistema','software','app','aplicativo','site','landing page','automacao','integracao','api','crm','dashboard'])) service = 'software_house';\n    else if (hasAny(['suporte','erro','computador','notebook','internet','rede','servidor','email','impressora','ti','manutencao'])) service = 'suporte_ti';\n    else if (hasAny(['trafego','anuncio','google ads','meta ads','facebook ads','campanha','leads','vendas online'])) service = 'trafego_pago';\n    else if (hasAny(['social media','instagram','conteudo','post','reels','criativo','identidade visual'])) service = 'social_media';\n    else if (hasAny(['consultoria','digital','processo','tecnologia para empresa'])) service = 'consultoria_digital';\n\n    if (!rawText || rawText.startsWith('[')) {\n      response = 'Recebi sua mensagem. No momento consigo atender melhor por texto. Me envie o que sua empresa precisa: software, suporte de TI, trafego pago, social media, site, automacao ou consultoria digital.';\n    } else if (hasAny(['orcamento','quanto custa','preco','valor','proposta','contrato'])) {\n      stage = 'Orcamento solicitado';\n      handoff = true;\n      response = 'Perfeito. Para preparar um orcamento, me envie nome da empresa, servico desejado, objetivo principal, prazo desejado e melhor contato. Vou sinalizar um especialista da JIW. [HUMANO_SOLICITADO]';\n    } else if (service === 'software_house') {\n      stage = 'Briefing necessario';\n      response = 'Entendi. A JIW pode ajudar com sistemas, apps, sites, landing pages, dashboards, integracoes e automacoes. O que voce quer construir ou automatizar?';\n    } else if (service === 'suporte_ti') {\n      stage = 'Suporte tecnico';\n      handoff = hasAny(['urgente','fora do ar','parado','caiu','sem internet','nao funciona']);\n      response = 'Certo. Para suporte de TI, me envie qual equipamento, sistema ou servico esta com problema, quantas pessoas foram impactadas e se e urgente.' + (handoff ? ' [HUMANO_SOLICITADO]' : '');\n    } else if (service === 'trafego_pago') {\n      stage = 'Briefing necessario';\n      response = 'A JIW pode ajudar com trafego pago para leads, vendas e posicionamento. Qual produto ou servico voce vende e qual objetivo principal da campanha?';\n    } else if (service === 'social_media') {\n      stage = 'Briefing necessario';\n      response = 'A JIW pode apoiar sua empresa com social media, conteudo, criativos e presenca digital. Qual e o segmento da empresa e quais redes usa hoje?';\n    } else if (hasAny(['oi','ola','bom dia','boa tarde','boa noite','teste'])) {\n      response = 'Ola! Sou o assistente da JIW - Solucoes tecnologicas. A JIW ajuda empresas com sistemas, sites, automacoes, suporte de TI, trafego pago, social media e consultoria digital. Me diga em poucas palavras o que voce precisa.';\n    } else if (hasAny(['humano','atendente','especialista','reuniao','ligar','whatsapp'])) {\n      stage = 'Atendimento humano';\n      handoff = true;\n      response = 'Claro. Vou encaminhar seu atendimento para um especialista da JIW continuar com voce. [HUMANO_SOLICITADO]';\n    } else if (hasAny(['receita','bolo','piada','musica','filme','jogo'])) {\n      stage = 'Fora de contexto';\n      response = 'Nao consegui relacionar sua mensagem aos servicos da JIW. Posso ajudar com software, suporte de TI, trafego pago, social media, sites, automacoes ou consultoria digital. Pode reformular nesse contexto?';\n    } else {\n      response = 'Entendi. Sua necessidade esta mais ligada a software/site/automacao, suporte de TI, trafego pago, social media ou consultoria digital?';\n    }\n    return { service, stage, handoff, response };\n  }\n\n  async function insertEvent(event) {\n    const supabaseUrl = env('SUPABASE_URL').replace(/\\/$/, '');\n    const serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');\n    if (!supabaseUrl || !serviceKey) throw new Error('Supabase nao configurado no n8n');\n    return await helpers.httpRequest({\n      method: 'POST',\n      url: supabaseUrl + '/rest/v1/channel_events',\n      headers: {\n        'Content-Type': 'application/json',\n        apikey: serviceKey,\n        Authorization: 'Bearer ' + serviceKey,\n        Prefer: 'return=representation',\n      },\n      body: event,\n      json: true,\n    });\n  }\n\n  async function sendInstagram(recipientId, text) {\n    const token = env('INSTAGRAM_PAGE_ACCESS_TOKEN_JIW');\n    if (!token) return { ok: false, skipped: true, reason: 'INSTAGRAM_PAGE_ACCESS_TOKEN_JIW nao configurado' };\n    return await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://graph.facebook.com/v18.0/me/messages',\n      qs: { access_token: token },\n      headers: { 'Content-Type': 'application/json' },\n      body: { recipient: { id: recipientId }, message: { text } },\n      json: true,\n    });\n  }\n\n  if (input.object && input.object !== 'instagram') return { ok: true, ignored: true, reason: 'object_not_instagram' };\n  const { entry, messaging } = firstMessaging(input);\n  if (!messaging) return { ok: true, ignored: true, reason: 'no_messaging_event' };\n\n  const senderId = String(messaging.sender.id);\n  const message = messaging.message || {};\n  const normalized = normalizeText(message);\n  const classification = classify(normalized.text);\n  const responseText = classification.response.replace(/\\[HUMANO_SOLICITADO\\]/g, '').trim();\n  const instagram = await sendInstagram(senderId, responseText);\n\n  const event = {\n    tenant_slug: 'jiw',\n    channel_type: 'instagram',\n    external_conversation_id: senderId,\n    external_message_id: message.mid || 'instagram:' + senderId + ':' + Date.now(),\n    direction: 'inbound',\n    sender_type: 'contact',\n    contact_name: 'Contato Instagram',\n    contact_handle: senderId,\n    message_text: normalized.text,\n    service: classification.service,\n    stage: classification.stage,\n    handoff: classification.handoff,\n    response_text: classification.response,\n    ai_provider: 'fallback_rules',\n    ai_model: 'instagram-rules-v1',\n    ai_usage: {},\n    catalog_matches: [],\n    raw_payload: { entry, messaging, instagram, content_type: normalized.contentType, unsupported: normalized.unsupported },\n  };\n  const saved = await insertEvent(event);\n  return { ok: true, tenant_slug: 'jiw', channel_type: 'instagram', external_conversation_id: senderId, message_text: normalized.text, response_sent: Boolean(instagram?.ok), instagram, saved };\n}\n\ntry {\n  return { json: await main(this.helpers) };\n} catch (error) {\n  return { json: { ok: false, error: error.message || String(error) } };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -250,
+        -80
+      ],
+      "id": "ig-jiw-process",
+      "name": "Processar Instagram DM"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        40,
+        -80
+      ],
+      "id": "ig-jiw-response",
+      "name": "Responder Webhook Instagram"
+    }
+  ],
+  "connections": {
+    "Webhook Verificacao Instagram": {
+      "main": [
+        [
+          {
+            "node": "Validar Verificacao Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Verificacao Meta": {
+      "main": [
+        [
+          {
+            "node": "Responder Verificacao Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Instagram DM": {
+      "main": [
+        [
+          {
+            "node": "Processar Instagram DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar Instagram DM": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {},
+  "pinData": {},
+  "versionId": "instagram-jiw-real-v2",
+  "activeVersionId": "instagram-jiw-real-v2",
+  "versionCounter": 2,
+  "triggerCount": 0,
+  "tags": []
+}

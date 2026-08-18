@@ -1,0 +1,16 @@
+services:
+  - type: static
+    name: magia-app
+    runtime: static
+    rootDir: magia/app
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_TENANT_SLUG
+        value: jiw
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_N8N_BASE_URL
+        sync: false
