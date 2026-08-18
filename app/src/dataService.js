@@ -83,6 +83,24 @@ export function subscribeToClientEvents(onChange, activeTenantSlug = defaultTena
       },
       onChange,
     )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'appointments',
+      },
+      onChange,
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'broadcast_campaigns',
+      },
+      onChange,
+    )
     .subscribe();
 
   return () => {
@@ -97,15 +115,25 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
       ...fallback,
       source: 'mock',
       status: buildStatus({ source: 'mock', events: [], tenantSlug: activeTenantSlug }),
+      appointments: [],
+      broadcastContacts: [],
+      broadcastCampaigns: [],
     };
   }
 
-  const { data, error } = await supabase
-    .from('channel_events')
-    .select('*')
-    .eq('tenant_slug', activeTenantSlug)
-    .order('created_at', { ascending: false })
-    .limit(150);
+  const tenant = await loadTenant(activeTenantSlug);
+  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns] = await Promise.all([
+    supabase
+      .from('channel_events')
+      .select('*')
+      .eq('tenant_slug', activeTenantSlug)
+      .order('created_at', { ascending: false })
+      .limit(150),
+    tenant ? loadAppointments(tenant.id) : [],
+    tenant ? loadBroadcastContacts(tenant.id) : [],
+    tenant ? loadBroadcastCampaigns(tenant.id) : [],
+  ]);
+  const { data, error } = eventsResult;
 
   if (error) {
     console.warn('Supabase fallback:', error.message);
@@ -114,6 +142,9 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
       source: 'mock_error',
       error: error.message,
       status: buildStatus({ source: 'mock_error', events: [], error: error.message, tenantSlug: activeTenantSlug }),
+      appointments,
+      broadcastContacts,
+      broadcastCampaigns,
     };
   }
 
@@ -122,9 +153,12 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
       ...fallback,
       source: 'supabase_empty',
       conversations: [],
-      kanbanColumns: emptyKanban(),
+      kanbanColumns: eventsToKanban([], appointments),
       funnelStages: emptyFunnel(),
       status: buildStatus({ source: 'supabase_empty', events: [], tenantSlug: activeTenantSlug }),
+      appointments,
+      broadcastContacts,
+      broadcastCampaigns,
     };
   }
 
@@ -132,10 +166,200 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     ...fallback,
     source: 'supabase',
     conversations: eventsToConversations(data),
-    kanbanColumns: eventsToKanban(data),
+    kanbanColumns: eventsToKanban(data, appointments),
     funnelStages: eventsToFunnel(data),
     status: buildStatus({ source: 'supabase', events: data, tenantSlug: activeTenantSlug }),
+    appointments,
+    broadcastContacts,
+    broadcastCampaigns,
   };
+}
+
+async function loadTenant(activeTenantSlug) {
+  const supabase = getClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('tenants')
+    .select('id, slug, name')
+    .eq('slug', activeTenantSlug)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn('Tenant lookup:', error.message);
+    return null;
+  }
+  return data;
+}
+
+async function currentUserId() {
+  const supabase = getClient();
+  if (!supabase) return null;
+  const { data } = await supabase.auth.getUser();
+  return data?.user?.id || null;
+}
+
+async function loadAppointments(tenantId) {
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from('appointments')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('starts_at', { ascending: true })
+    .limit(200);
+  if (error) {
+    console.warn('Appointments fallback:', error.message);
+    return [];
+  }
+  return (data || []).map(mapAppointment);
+}
+
+async function loadBroadcastContacts(tenantId) {
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from('broadcast_contacts')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (error) {
+    console.warn('Broadcast contacts fallback:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+async function loadBroadcastCampaigns(tenantId) {
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from('broadcast_campaigns')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) {
+    console.warn('Broadcast campaigns fallback:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+export async function saveAppointment(activeTenantSlug, appointment) {
+  const supabase = getClient();
+  if (!supabase) throw new Error('Supabase nao configurado');
+  const tenant = await loadTenant(activeTenantSlug);
+  if (!tenant) throw new Error('Tenant nao encontrado');
+  const userId = await currentUserId();
+  const { data, error } = await supabase
+    .from('appointments')
+    .insert({
+      tenant_id: tenant.id,
+      title: appointment.title,
+      starts_at: appointment.startsAt,
+      ends_at: appointment.endsAt || null,
+      status: appointment.status || 'scheduled',
+      contact_name: appointment.contactName || null,
+      channel_type: appointment.channelType || 'manual',
+      external_conversation_id: appointment.externalConversationId || null,
+      notes: appointment.notes || null,
+      created_by: userId,
+      metadata: appointment.metadata || {},
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapAppointment(data);
+}
+
+export async function upsertBroadcastContacts(activeTenantSlug, contacts) {
+  const supabase = getClient();
+  if (!supabase) throw new Error('Supabase nao configurado');
+  const tenant = await loadTenant(activeTenantSlug);
+  if (!tenant) throw new Error('Tenant nao encontrado');
+  const clean = contacts
+    .map((contact) => ({
+      tenant_id: tenant.id,
+      name: contact.name || 'Contato',
+      channel_type: contact.channelType || contact.channel_type || 'telegram',
+      external_conversation_id: String(contact.externalConversationId || contact.external_conversation_id || '').trim(),
+      phone: contact.phone || null,
+      email: contact.email || null,
+      source: contact.source || 'manual',
+      tags: contact.tags || [],
+      metadata: contact.metadata || {},
+    }))
+    .filter((contact) => contact.external_conversation_id);
+  if (!clean.length) return [];
+  const { data, error } = await supabase
+    .from('broadcast_contacts')
+    .upsert(clean, { onConflict: 'tenant_id,channel_type,external_conversation_id' })
+    .select('*');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createBroadcastCampaign(activeTenantSlug, campaign, recipients) {
+  const supabase = getClient();
+  if (!supabase) throw new Error('Supabase nao configurado');
+  const tenant = await loadTenant(activeTenantSlug);
+  if (!tenant) throw new Error('Tenant nao encontrado');
+  const userId = await currentUserId();
+  const { data: campaignRow, error: campaignError } = await supabase
+    .from('broadcast_campaigns')
+    .insert({
+      tenant_id: tenant.id,
+      name: campaign.name,
+      channel_type: campaign.channelType || 'telegram',
+      message_text: campaign.messageText,
+      status: 'sending',
+      total_recipients: recipients.length,
+      created_by: userId,
+    })
+    .select('*')
+    .single();
+  if (campaignError) throw campaignError;
+
+  const recipientRows = recipients.map((recipient) => ({
+    tenant_id: tenant.id,
+    campaign_id: campaignRow.id,
+    contact_id: recipient.id || null,
+    channel_type: recipient.channel_type || recipient.channelType || campaign.channelType || 'telegram',
+    external_conversation_id: String(recipient.external_conversation_id || recipient.externalConversationId || '').trim(),
+    contact_name: recipient.name || recipient.contact_name || 'Contato',
+    status: 'queued',
+  })).filter((recipient) => recipient.external_conversation_id);
+
+  if (recipientRows.length) {
+    const { error: recipientsError } = await supabase
+      .from('broadcast_campaign_recipients')
+      .insert(recipientRows);
+    if (recipientsError) throw recipientsError;
+  }
+
+  return campaignRow;
+}
+
+export async function updateBroadcastCampaign(campaignId, patch) {
+  const supabase = getClient();
+  if (!supabase) throw new Error('Supabase nao configurado');
+  const { data, error } = await supabase
+    .from('broadcast_campaigns')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', campaignId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateBroadcastRecipient(campaignId, externalConversationId, patch) {
+  const supabase = getClient();
+  if (!supabase) throw new Error('Supabase nao configurado');
+  const { error } = await supabase
+    .from('broadcast_campaign_recipients')
+    .update(patch)
+    .eq('campaign_id', campaignId)
+    .eq('external_conversation_id', externalConversationId);
+  if (error) throw error;
 }
 
 function eventsToConversations(events) {
@@ -204,7 +428,7 @@ export function emptyKanban() {
   ];
 }
 
-function eventsToKanban(events) {
+function eventsToKanban(events, appointments = []) {
   const columns = emptyKanban();
   const latestByChat = new Map();
 
@@ -226,6 +450,24 @@ function eventsToKanban(events) {
       owner: event.handoff ? 'Equipe JIW' : 'Assistente JIW',
     });
   }
+
+  const appointmentCards = appointments
+    .filter((appointment) => appointment.status !== 'cancelled')
+    .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt))
+    .map((appointment) => ({
+      id: `appointment-${appointment.id}`,
+      title: appointment.title,
+      subtitle: appointment.contactName ? `${appointment.contactName} - ${appointment.when}` : appointment.when,
+      channel: appointment.channelLabel,
+      value: 'Agenda',
+      owner: appointment.statusLabel,
+    }));
+
+  columns.push({
+    id: 'agendamentos',
+    title: 'Agendamentos',
+    cards: appointmentCards,
+  });
 
   return columns;
 }
@@ -323,6 +565,7 @@ function normalizeChannel(value) {
     instagram_direct: 'Instagram',
     whatsapp: 'WhatsApp',
     webchat: 'WebChat',
+    manual: 'Manual',
   };
   return { type, label: labels[type] || type.charAt(0).toUpperCase() + type.slice(1) };
 }
@@ -347,4 +590,37 @@ function formatCurrency(value) {
     currency: 'BRL',
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function mapAppointment(row) {
+  const starts = row.starts_at ? new Date(row.starts_at) : null;
+  const ends = row.ends_at ? new Date(row.ends_at) : null;
+  return {
+    id: row.id,
+    title: row.title,
+    contactName: row.contact_name || row.metadata?.contact_name || '',
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    when: starts ? formatDate(row.starts_at) : 'Sem data',
+    dateKey: starts ? starts.toISOString().slice(0, 10) : '',
+    timeLabel: starts ? starts.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '',
+    endTimeLabel: ends ? ends.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '',
+    status: row.status || 'scheduled',
+    statusLabel: statusAppointmentLabel(row.status),
+    notes: row.notes || '',
+    channelType: row.channel_type || 'manual',
+    channelLabel: normalizeChannel(row.channel_type || 'manual').label,
+    externalConversationId: row.external_conversation_id || '',
+    raw: row,
+  };
+}
+
+function statusAppointmentLabel(status) {
+  const labels = {
+    scheduled: 'Agendado',
+    confirmed: 'Confirmado',
+    done: 'Concluido',
+    cancelled: 'Cancelado',
+  };
+  return labels[status] || status || 'Agendado';
 }

@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import readXlsxFile from 'read-excel-file/browser';
 import {
   Activity,
   Bot,
   Brain,
   Building2,
   CalendarCheck,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
   CircleDollarSign,
   Clock3,
+  FileSpreadsheet,
   Filter,
   Gauge,
   GitBranch,
@@ -18,6 +21,7 @@ import {
   Instagram,
   KanbanSquare,
   LayoutDashboard,
+  Megaphone,
   MessageCircle,
   PauseCircle,
   PlayCircle,
@@ -29,6 +33,7 @@ import {
   Sparkles,
   Tag,
   Trash2,
+  Upload,
   UserCheck,
   UserPlus,
   UserRound,
@@ -58,6 +63,7 @@ import {
 } from './authService';
 import { getIntegrationStatus, integrationTargets, sendN8nCommand } from './integration';
 import {
+  createBroadcastCampaign,
   emptyFunnel,
   emptyKanban,
   getInitialTenantSlug,
@@ -65,7 +71,11 @@ import {
   loadAvailableTenants,
   loadClientData,
   persistTenantSlug,
+  saveAppointment,
   subscribeToClientEvents,
+  updateBroadcastCampaign,
+  updateBroadcastRecipient,
+  upsertBroadcastContacts,
 } from './dataService';
 import './styles.css';
 
@@ -74,6 +84,8 @@ const menu = [
   { id: 'conversas', label: 'Conversas', icon: MessageCircle },
   { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
   { id: 'funil', label: 'Funil', icon: GitBranch },
+  { id: 'disparos', label: 'Disparos', icon: Megaphone },
+  { id: 'agendamentos', label: 'Agendamentos', icon: CalendarDays },
   { id: 'automacoes', label: 'Automações', icon: Workflow },
   { id: 'ia', label: 'IA', icon: Brain },
   { id: 'configuracoes', label: 'Configurações', icon: Settings },
@@ -120,6 +132,9 @@ function App() {
           latestAt: 'Sincronizando...',
           humanQueue: 0,
         },
+        appointments: [],
+        broadcastContacts: [],
+        broadcastCampaigns: [],
       };
     }
     return {
@@ -128,6 +143,9 @@ function App() {
       funnelStages,
       source: 'mock',
       status: null,
+      appointments: [],
+      broadcastContacts: [],
+      broadcastCampaigns: [],
     };
   });
   const AGENTS_STORAGE_KEY = 'magia:team-agents';
@@ -214,7 +232,14 @@ function App() {
     const minWait = new Promise((resolve) => setTimeout(resolve, 550));
     try {
       const [data] = await Promise.all([
-        loadClientData({ conversations, kanbanColumns, funnelStages }, activeTenantSlug),
+        loadClientData({
+          conversations,
+          kanbanColumns,
+          funnelStages,
+          appointments: appData.appointments || [],
+          broadcastContacts: appData.broadcastContacts || [],
+          broadcastCampaigns: appData.broadcastCampaigns || [],
+        }, activeTenantSlug),
         minWait,
       ]);
       setAppData(data);
@@ -334,6 +359,23 @@ function App() {
         )}
         {active === 'kanban' && <Kanban kanbanColumns={appData.kanbanColumns} tenantName={selectedTenant.name} />}
         {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} />}
+        {active === 'disparos' && (
+          <Broadcasts
+            conversations={appData.conversations}
+            contacts={appData.broadcastContacts || []}
+            campaigns={appData.broadcastCampaigns || []}
+            tenantSlug={activeTenantSlug}
+            onChanged={refreshData}
+          />
+        )}
+        {active === 'agendamentos' && (
+          <Appointments
+            appointments={appData.appointments || []}
+            conversations={appData.conversations}
+            tenantSlug={activeTenantSlug}
+            onChanged={refreshData}
+          />
+        )}
         {active === 'automacoes' && <Automations />}
         {active === 'ia' && <AiSettings tenantName={selectedTenant.name} />}
         {active === 'configuracoes' && (
@@ -886,6 +928,316 @@ function Funnel({ funnelStages, tenantName }) {
   );
 }
 
+function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantSlug, onChanged }) {
+  const [draftContacts, setDraftContacts] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [messageText, setMessageText] = useState('');
+  const [campaignName, setCampaignName] = useState('');
+  const [stageFilter, setStageFilter] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+  const allContacts = useMemo(() => mergeBroadcastContacts(contacts, draftContacts), [contacts, draftContacts]);
+  const stages = useMemo(() => Array.from(new Set(conversations.map((item) => item.stage).filter(Boolean))), [conversations]);
+  const selectedContacts = allContacts.filter((contact) => selected.has(contact.key));
+
+  async function handleFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await parseContactFile(file);
+      const normalized = parsed.map((row) => normalizeImportedContact(row)).filter((row) => row.externalConversationId);
+      setDraftContacts((prev) => mergeBroadcastContacts(prev, normalized));
+      setSelected((prev) => {
+        const next = new Set(prev);
+        normalized.forEach((contact) => next.add(contactKey(contact)));
+        return next;
+      });
+      setStatus(`${normalized.length} contatos importados.`);
+    } catch (error) {
+      setStatus(error.message || 'Nao foi possivel importar a planilha.');
+    } finally {
+      event.target.value = '';
+    }
+  }
+
+  function addRecentContacts() {
+    const recent = conversations.map(conversationToBroadcastContact).filter((item) => item.externalConversationId);
+    setDraftContacts((prev) => mergeBroadcastContacts(prev, recent));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      recent.forEach((contact) => next.add(contactKey(contact)));
+      return next;
+    });
+    setStatus(`${recent.length} contatos recentes adicionados.`);
+  }
+
+  function addStageContacts() {
+    if (!stageFilter) return;
+    const stageContacts = conversations
+      .filter((conversation) => conversation.stage === stageFilter)
+      .map(conversationToBroadcastContact)
+      .filter((item) => item.externalConversationId);
+    setDraftContacts((prev) => mergeBroadcastContacts(prev, stageContacts));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      stageContacts.forEach((contact) => next.add(contactKey(contact)));
+      return next;
+    });
+    setStatus(`${stageContacts.length} contatos do quadro adicionados.`);
+  }
+
+  function toggleContact(key) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function sendCampaign() {
+    const text = messageText.trim();
+    if (!text || !selectedContacts.length || busy) return;
+    setBusy(true);
+    setStatus('Preparando disparo...');
+    let sent = 0;
+    let failed = 0;
+    let campaign = null;
+    try {
+      const savedContacts = await upsertBroadcastContacts(tenantSlug, selectedContacts);
+      const recipients = mergeBroadcastContacts(savedContacts, selectedContacts);
+      campaign = await createBroadcastCampaign(tenantSlug, {
+        name: campaignName.trim() || `Disparo ${new Date().toLocaleString('pt-BR')}`,
+        channelType: 'telegram',
+        messageText: text,
+      }, recipients);
+
+      for (const contact of recipients) {
+        try {
+          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, { status: 'sending' });
+          const result = await sendN8nCommand('manual_reply', {
+            channel_type: contact.channel_type || contact.channelType || 'telegram',
+            external_conversation_id: contact.external_conversation_id || contact.externalConversationId,
+            contact_name: contact.name || contact.contact_name || 'Contato',
+            message_text: text,
+            sent_by_user: 'Disparo Mag.IA',
+          }, tenantSlug);
+          sent += 1;
+          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            external_message_id: result.external_message_id || null,
+          });
+          setStatus(`Enviando... ${sent} enviados, ${failed} falhas.`);
+        } catch (error) {
+          failed += 1;
+          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
+            status: 'failed',
+            error: error.message || String(error),
+          }).catch(() => {});
+        }
+      }
+
+      await updateBroadcastCampaign(campaign.id, {
+        status: failed ? 'partial_error' : 'sent',
+        sent_count: sent,
+        failed_count: failed,
+        sent_at: new Date().toISOString(),
+      });
+      setStatus(`Disparo concluido: ${sent} enviados, ${failed} falhas.`);
+      setMessageText('');
+      setCampaignName('');
+      setSelected(new Set());
+      await onChanged?.();
+    } catch (error) {
+      if (campaign?.id) {
+        await updateBroadcastCampaign(campaign.id, { status: 'failed', failed_count: selectedContacts.length }).catch(() => {});
+      }
+      setStatus(error.message || 'Falha ao executar disparo.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="broadcast-page">
+      <section className="panel">
+        <PanelTitle icon={Megaphone} title="Disparo de mensagens" action="Telegram agora" />
+        <div className="broadcast-grid">
+          <div className="broadcast-import">
+            <label className="file-drop">
+              <FileSpreadsheet size={22} />
+              <strong>Importar contatos</strong>
+              <span>XLSX ou CSV com nome e chat_id/telegram_id.</span>
+              <input type="file" accept=".xlsx,.csv,.txt" onChange={handleFile} />
+            </label>
+            <div className="header-actions">
+              <button className="secondary-button" type="button" onClick={addRecentContacts}><UsersRound size={16} /> Recentes</button>
+              <label className="select-label compact-select">
+                <select value={stageFilter} onChange={(event) => setStageFilter(event.target.value)}>
+                  <option value="">Quadro Kanban</option>
+                  {stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                </select>
+              </label>
+              <button className="secondary-button" type="button" onClick={addStageContacts} disabled={!stageFilter}>Adicionar</button>
+            </div>
+          </div>
+
+          <div className="broadcast-composer">
+            <label>Nome da campanha<input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Ex: Confirmacao de horarios" /></label>
+            <label className="textarea-label">Mensagem<textarea value={messageText} onChange={(event) => setMessageText(event.target.value)} placeholder="Digite a mensagem que sera enviada aos contatos selecionados." /></label>
+            <div className="header-actions">
+              <button className="primary-button" type="button" onClick={sendCampaign} disabled={busy || !messageText.trim() || !selectedContacts.length}>
+                <Send size={16} /> Enviar para {selectedContacts.length}
+              </button>
+              <small>{status}</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="content-grid two">
+        <section className="panel">
+          <PanelTitle icon={UsersRound} title="Contatos selecionaveis" action={`${selectedContacts.length}/${allContacts.length}`} />
+          <div className="contact-table">
+            {allContacts.map((contact) => {
+              const key = contact.key || contactKey(contact);
+              return (
+                <label className="contact-row" key={key}>
+                  <input type="checkbox" checked={selected.has(key)} onChange={() => toggleContact(key)} />
+                  <div>
+                    <strong>{contact.name || contact.contact_name || 'Contato'}</strong>
+                    <span>{contact.external_conversation_id || contact.externalConversationId} - {contact.channel_type || contact.channelType || 'telegram'}</span>
+                  </div>
+                </label>
+              );
+            })}
+            {!allContacts.length && <EmptyState title="Nenhum contato preparado" text="Importe uma planilha ou adicione contatos recentes." compact />}
+          </div>
+        </section>
+        <section className="panel">
+          <PanelTitle icon={Clock3} title="Historico de campanhas" />
+          <div className="campaign-list">
+            {campaigns.map((campaign) => (
+              <article className="campaign-card" key={campaign.id}>
+                <div>
+                  <strong>{campaign.name}</strong>
+                  <span>{campaign.total_recipients || 0} contatos - {campaign.sent_count || 0} enviados - {campaign.failed_count || 0} falhas</span>
+                </div>
+                <Badge value={campaign.status} status={campaign.status === 'sent' ? 'ia_ativa' : 'channel'} />
+              </article>
+            ))}
+            {!campaigns.length && <EmptyState title="Sem campanhas" text="Os disparos realizados ficarao registrados aqui." compact />}
+          </div>
+        </section>
+      </section>
+    </section>
+  );
+}
+
+function Appointments({ appointments = [], conversations = [], tenantSlug, onChanged }) {
+  const [title, setTitle] = useState('');
+  const [contactName, setContactName] = useState('');
+  const [startsAt, setStartsAt] = useState('');
+  const [endsAt, setEndsAt] = useState('');
+  const [notes, setNotes] = useState('');
+  const [selectedConversationId, setSelectedConversationId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState('');
+  const grouped = useMemo(() => groupAppointmentsByDay(appointments), [appointments]);
+
+  function pickConversation(value) {
+    setSelectedConversationId(value);
+    const conversation = conversations.find((item) => item.externalConversationId === value);
+    if (conversation) {
+      setContactName(conversation.contact || '');
+      if (!title) setTitle(`Atendimento - ${conversation.contact}`);
+    }
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    if (!title.trim() || !startsAt) return;
+    setSaving(true);
+    setStatus('');
+    try {
+      await saveAppointment(tenantSlug, {
+        title: title.trim(),
+        contactName: contactName.trim(),
+        startsAt: new Date(startsAt).toISOString(),
+        endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+        notes: notes.trim(),
+        channelType: selectedConversationId ? 'telegram' : 'manual',
+        externalConversationId: selectedConversationId,
+      });
+      setTitle('');
+      setContactName('');
+      setStartsAt('');
+      setEndsAt('');
+      setNotes('');
+      setSelectedConversationId('');
+      setStatus('Agendamento criado e enviado para o Kanban.');
+      await onChanged?.();
+    } catch (error) {
+      setStatus(error.message || 'Nao foi possivel salvar o agendamento.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="appointments-page">
+      <section className="panel appointment-form-panel">
+        <PanelTitle icon={CalendarDays} title="Novo agendamento" action="Manual" />
+        <form className="form-grid" onSubmit={handleSubmit}>
+          <label>Titulo<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex: Sessao de bronzeamento" required /></label>
+          <div className="form-row-two">
+            <label>Contato<input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="Nome da cliente" /></label>
+            <label>Conversa recente<select value={selectedConversationId} onChange={(event) => pickConversation(event.target.value)}>
+              <option value="">Sem vinculo</option>
+              {conversations.map((conversation) => (
+                <option key={conversation.id} value={conversation.externalConversationId}>{conversation.contact} - {conversation.channel}</option>
+              ))}
+            </select></label>
+          </div>
+          <div className="form-row-two">
+            <label>Inicio<input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} required /></label>
+            <label>Fim<input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></label>
+          </div>
+          <label className="textarea-label">Observacoes<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Detalhes internos do atendimento." /></label>
+          <div className="header-actions">
+            <button className="primary-button" type="submit" disabled={saving || !title.trim() || !startsAt}><CalendarCheck size={16} /> Salvar agendamento</button>
+            <small>{status}</small>
+          </div>
+        </form>
+      </section>
+
+      <section className="panel appointment-list-panel">
+        <PanelTitle icon={Clock3} title="Calendario simples" action={`${appointments.length} registros`} />
+        <div className="appointment-groups">
+          {grouped.map((group) => (
+            <div className="appointment-day" key={group.day}>
+              <h3>{group.day}</h3>
+              {group.items.map((appointment) => (
+                <article className="appointment-card" key={appointment.id}>
+                  <div className="appointment-time"><strong>{appointment.timeLabel}</strong><span>{appointment.endTimeLabel || '--:--'}</span></div>
+                  <div>
+                    <strong>{appointment.title}</strong>
+                    <span>{appointment.contactName || 'Sem contato'} - {appointment.channelLabel}</span>
+                    {appointment.notes && <p>{appointment.notes}</p>}
+                  </div>
+                  <Badge value={appointment.statusLabel} status="channel" />
+                </article>
+              ))}
+            </div>
+          ))}
+          {!appointments.length && <EmptyState title="Nenhum agendamento" text="Crie um agendamento manual para ele aparecer aqui e no Kanban." />}
+        </div>
+      </section>
+    </section>
+  );
+}
+
 function Automations() {
   return (
     <section className="content-grid">
@@ -1132,6 +1484,120 @@ function SettingsPage({ agents = [], onAddAgent, onToggleAgentStatus, onDeleteAg
       </section>
     </section>
   );
+}
+
+async function parseContactFile(file) {
+  const lowerName = file.name.toLowerCase();
+  if (lowerName.endsWith('.xls')) {
+    throw new Error('Arquivo .xls legado nao e suportado. Salve como .xlsx ou CSV.');
+  }
+  if (lowerName.endsWith('.csv') || lowerName.endsWith('.txt')) {
+    return parseDelimitedContacts(await file.text());
+  }
+  const rows = await readXlsxFile(file);
+  return rowsToObjects(rows);
+}
+
+function parseDelimitedContacts(text) {
+  const delimiter = text.includes(';') ? ';' : ',';
+  const rows = text
+    .split(/\r?\n/)
+    .map((line) => line.split(delimiter).map((cell) => cell.trim()))
+    .filter((row) => row.some(Boolean));
+  return rowsToObjects(rows);
+}
+
+function rowsToObjects(rows) {
+  if (!rows.length) return [];
+  const headers = rows[0].map((header) => String(header || '').trim());
+  return rows.slice(1).map((row) => {
+    const item = {};
+    headers.forEach((header, index) => {
+      item[header || `coluna_${index + 1}`] = row[index] ?? '';
+    });
+    return item;
+  });
+}
+
+function normalizeImportedContact(row) {
+  const lookup = (...keys) => {
+    for (const key of keys) {
+      const match = Object.keys(row).find((item) => normalizeKey(item) === normalizeKey(key));
+      if (match && row[match] !== undefined && row[match] !== '') return String(row[match]).trim();
+    }
+    return '';
+  };
+  const externalConversationId = lookup(
+    'chat_id',
+    'telegram_id',
+    'id_telegram',
+    'external_conversation_id',
+    'id_conversa',
+    'conversation_id',
+    'telefone',
+    'phone',
+  );
+  return {
+    name: lookup('nome', 'name', 'contato', 'cliente') || 'Contato',
+    channelType: lookup('canal', 'channel', 'channel_type') || 'telegram',
+    externalConversationId,
+    phone: lookup('telefone', 'phone', 'whatsapp'),
+    email: lookup('email', 'e-mail'),
+    source: 'import',
+    key: contactKey({ channelType: lookup('canal', 'channel', 'channel_type') || 'telegram', externalConversationId }),
+  };
+}
+
+function conversationToBroadcastContact(conversation) {
+  return {
+    name: conversation.contact,
+    channelType: conversation.channelType || 'telegram',
+    externalConversationId: conversation.externalConversationId,
+    source: 'conversation',
+    metadata: { stage: conversation.stage, status: conversation.status },
+    key: contactKey({ channelType: conversation.channelType || 'telegram', externalConversationId: conversation.externalConversationId }),
+  };
+}
+
+function contactKey(contact) {
+  return `${contact.channel_type || contact.channelType || 'telegram'}:${contact.external_conversation_id || contact.externalConversationId || contact.id || ''}`;
+}
+
+function mergeBroadcastContacts(...groups) {
+  const byKey = new Map();
+  groups.flat().filter(Boolean).forEach((contact) => {
+    const normalized = {
+      ...contact,
+      channelType: contact.channelType || contact.channel_type || 'telegram',
+      externalConversationId: contact.externalConversationId || contact.external_conversation_id || '',
+      key: contact.key || contactKey(contact),
+    };
+    if (normalized.externalConversationId) byKey.set(normalized.key, normalized);
+  });
+  return Array.from(byKey.values());
+}
+
+function normalizeKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function groupAppointmentsByDay(appointments) {
+  const groups = new Map();
+  appointments
+    .slice()
+    .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt))
+    .forEach((appointment) => {
+      const day = appointment.startsAt
+        ? new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' }).format(new Date(appointment.startsAt))
+        : 'Sem data';
+      if (!groups.has(day)) groups.set(day, []);
+      groups.get(day).push(appointment);
+    });
+  return Array.from(groups.entries()).map(([day, items]) => ({ day, items }));
 }
 
 function PanelTitle({ icon: Icon, title, action }) {

@@ -25,6 +25,9 @@ desenvolvimento e preparar hospedagem.
 - `operations/realtime_conversations_manual_replies.md`  
   Como funciona a aba Conversas em tempo quase real e envio manual.
 
+- `operations/broadcasts_and_appointments.md`  
+  Como funcionam as abas Disparos e Agendamentos.
+
 - `operations/versioning_workflow.md`  
   Como versionar, testar e liberar alteracoes nas branches `dev` e `prod`.
 

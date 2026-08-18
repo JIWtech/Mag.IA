@@ -93,6 +93,7 @@ docs/operations/local_runbook.md
 - `docs/operations/local_runbook.md`
 - `docs/operations/hosting_preparation.md`
 - `docs/operations/realtime_conversations_manual_replies.md`
+- `docs/operations/broadcasts_and_appointments.md`
 - `docs/operations/gemini_jiw_setup.md`
 - `docs/operations/instagram_jiw_setup.md`
 - `docs/architecture/final_architecture.md`
