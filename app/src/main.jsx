@@ -4,7 +4,6 @@ import readXlsxFile from 'read-excel-file/browser';
 import {
   Activity,
   Bot,
-  Brain,
   Building2,
   CalendarCheck,
   CalendarDays,
@@ -49,7 +48,6 @@ import {
 } from 'lucide-react';
 import {
   agents,
-  aiConfig,
   automationRules,
   channelAccounts,
   clientStatus,
@@ -96,7 +94,6 @@ const menu = [
   { id: 'disparos', label: 'Disparos', icon: Megaphone },
   { id: 'agendamentos', label: 'Agendamentos', icon: CalendarDays },
   { id: 'automacoes', label: 'Automações', icon: Workflow },
-  { id: 'ia', label: 'IA', icon: Brain },
   { id: 'configuracoes', label: 'Configurações', icon: Settings },
 ];
 
@@ -401,7 +398,6 @@ function App() {
           />
         )}
         {active === 'automacoes' && <Automations />}
-        {active === 'ia' && <AiSettings tenantName={selectedTenant.name} />}
         {active === 'configuracoes' && (
           <SettingsPage
             agents={agentsList}
@@ -1513,38 +1509,6 @@ function Automations() {
           <button className="primary-button wide" type="button"><PlayCircle size={17} /> Simular regra</button>
         </div>
       </section>
-    </section>
-  );
-}
-
-function AiSettings({ tenantName }) {
-  return (
-    <section className="ai-layout">
-      <section className="panel">
-        <PanelTitle icon={Brain} title={`Assistente ${tenantName}`} action={aiConfig.provider} />
-        <div className="form-grid two-cols">
-          <label>Nome da IA<input defaultValue={aiConfig.name} /></label>
-          <label>Provedor<select defaultValue={aiConfig.provider}><option>Regras de automação</option><option>Gemini</option><option>OpenAI</option><option>Anthropic</option><option>Local</option></select></label>
-          <label>Modelo<input defaultValue={aiConfig.model} /></label>
-          <label>Temperatura<input type="number" step="0.1" defaultValue={aiConfig.temperature} /></label>
-        </div>
-        <label className="textarea-label">Prompt principal<textarea defaultValue={aiConfig.prompt} /></label>
-        <div className="header-actions">
-          <button className="secondary-button" type="button"><RefreshCcw size={16} /> Testar regras</button>
-          <button className="primary-button" type="button"><CheckCircle2 size={16} /> Preparar IA real</button>
-        </div>
-      </section>
-      <aside className="panel">
-        <PanelTitle icon={ShieldCheck} title="Regras e ferramentas" />
-        <h3>Guardrails</h3>
-        <ul className="event-list">
-          {aiConfig.guardrails.map((item) => <li key={item}>{item}</li>)}
-        </ul>
-        <h3>Ferramentas</h3>
-        <div className="tag-list">
-          {aiConfig.tools.map((tool) => <span key={tool}>{tool}</span>)}
-        </div>
-      </aside>
     </section>
   );
 }

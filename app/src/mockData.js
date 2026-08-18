@@ -228,24 +228,6 @@ export const automationRules = [
   },
 ];
 
-export const aiConfig = {
-  name: 'Assistente JIW',
-  model: 'gemini-1.5-flash',
-  provider: 'Gemini',
-  temperature: 0.35,
-  maxTokens: 700,
-  activePromptVersion: 1,
-  prompt:
-    'Assistente virtual oficial. Identifica necessidades de software, sites institucionais, suporte técnico de TI, tráfego pago, mídias sociais e solicitações de orçamento. Transfere para atendimento humano sempre que solicitado ou quando houver agendamentos e orçamentos.',
-  guardrails: [
-    'Não prometer resultados imediatos irreais em campanhas ou serviços.',
-    'Não informar preço fechado sem briefing adequado.',
-    'Encaminhar para atendimento humano em orçamentos, agendamentos ou urgências.',
-    'Manter tom profissional, acolhedor e seguro.',
-  ],
-  tools: ['classificar_servico', 'responder_telegram', 'solicitar_humano', 'mover_kanban'],
-};
-
 export const channelAccounts = [
   { id: 'ch-1', name: 'Bot Telegram JIW', type: 'Telegram', status: 'conectado', tenant: 'JIW - Soluções Tecnológicas', messages: 12 },
   { id: 'ch-2', name: 'WhatsApp Oficial', type: 'WhatsApp', status: 'conectado', tenant: 'JIW - Soluções Tecnológicas', messages: 8 },
