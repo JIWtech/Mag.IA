@@ -49,6 +49,9 @@ desenvolvimento e preparar hospedagem.
 - `operations/onboarding_telegram_gemini_demo.md`  
   Passo a passo para configurar um novo cliente de apresentacao com Telegram e Gemini real.
 
+- `operations/whatsapp_evolution_mvp.md`
+  Plano, escopo e criterios de aceite para a integracao WhatsApp via Evolution API.
+
 ## Supabase
 
 - `../supabase/README.md`
