@@ -1,0 +1,56 @@
+{
+  "id": "magiaWhatsappEvolution01",
+  "name": "Mag.IA - WhatsApp Evolution MVP",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "magia-whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "id": "magia-whatsapp-webhook",
+      "name": "Webhook WhatsApp Evolution",
+      "webhookId": "magia-whatsapp-evolution-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "async function main(helpers) {\n  function env(name, fallback = '') {\n    let value = '';\n    try { value = $env[name] || ''; } catch (error) {}\n    try { value = value || $vars?.[name] || ''; } catch (error) {}\n    return value || fallback;\n  }\n\n  function required(value, label) {\n    if (value === undefined || value === null || String(value).trim() === '') throw new Error(label + ' obrigatorio');\n    return String(value).trim();\n  }\n\n  async function supabaseRequest(method, path, body, prefer = '') {\n    const baseUrl = required(env('SUPABASE_URL'), 'SUPABASE_URL').replace(/\\/$/, '');\n    const serviceKey = required(env('SUPABASE_SERVICE_ROLE_KEY'), 'SUPABASE_SERVICE_ROLE_KEY');\n    const headers = { 'Content-Type': 'application/json', apikey: serviceKey, Authorization: 'Bearer ' + serviceKey };\n    if (prefer) headers.Prefer = prefer;\n    return helpers.httpRequest({ method, url: baseUrl + path, headers, body, json: true });\n  }\n\n  function normalize(value) {\n    return String(value || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n  }\n\n  function hasAny(text, values) {\n    return values.some((value) => text.includes(value));\n  }\n\n  function classify(text) {\n    const normalized = normalize(text);\n    let service = 'geral';\n    let stage = 'Qualificacao';\n    let handoff = false;\n    if (hasAny(normalized, ['orcamento', 'proposta', 'contrato', 'quanto custa', 'preco', 'valor'])) {\n      service = 'comercial';\n      stage = 'Orcamento solicitado';\n      handoff = true;\n    } else if (hasAny(normalized, ['urgente', 'fora do ar', 'parado', 'caiu', 'nao funciona', 'erro'])) {\n      service = 'suporte_ti';\n      stage = 'Suporte tecnico';\n      handoff = true;\n    } else if (hasAny(normalized, ['sistema', 'software', 'app', 'site', 'dashboard', 'api', 'integracao', 'automacao'])) {\n      service = 'software_automacao';\n      stage = 'Briefing necessario';\n    } else if (hasAny(normalized, ['trafego', 'anuncio', 'google ads', 'meta ads', 'campanha', 'leads'])) {\n      service = 'trafego_pago';\n      stage = 'Briefing necessario';\n    } else if (hasAny(normalized, ['social media', 'instagram', 'conteudo', 'post', 'reels', 'criativo'])) {\n      service = 'social_media';\n      stage = 'Briefing necessario';\n    } else if (hasAny(normalized, ['humano', 'atendente', 'especialista', 'ligar', 'pessoa'])) {\n      service = 'atendimento_humano';\n      stage = 'Atendimento humano';\n      handoff = true;\n    } else if (hasAny(normalized, ['agendar', 'agenda', 'reuniao', 'horario', 'visita'])) {\n      service = 'agendamento';\n      stage = 'Agendamento';\n    }\n    return { service, stage, handoff };\n  }\n\n  function answer(text, classification, name) {\n    const normalized = normalize(text);\n    if (!text || hasAny(normalized, ['oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'menu', 'teste'])) {\n      return 'Ola, ' + name + '! Sou o atendimento da JIW - Solucoes tecnologicas. Posso ajudar com software, sites, automacoes, suporte de TI, trafego pago, social media ou consultoria digital. O que sua empresa precisa?';\n    }\n    if (classification.handoff) return 'Certo. Vou encaminhar seu atendimento para um especialista da JIW. Envie seu nome, empresa, objetivo e melhor contato. [HUMANO_SOLICITADO]';\n    if (classification.stage === 'Agendamento') return 'Para agendar, envie o servico desejado, melhor dia e horario e um telefone para confirmacao.';\n    if (classification.service === 'software_automacao') return 'A JIW pode ajudar com sistemas, sites, dashboards, integracoes e automacoes. Qual problema voce quer resolver e o que ja existe hoje?';\n    if (classification.service === 'suporte_ti') return 'Descreva o equipamento ou sistema com problema, o impacto para a equipe e se existe urgencia.';\n    if (classification.service === 'trafego_pago') return 'Para avaliar trafego pago, diga o que sua empresa vende, regiao de atendimento e objetivo principal: leads, vendas ou agenda.';\n    if (classification.service === 'social_media') return 'Para direcionar social media, diga o segmento da empresa, redes usadas e se precisa de estrategia, criacao ou gestao.';\n    return 'Para eu direcionar melhor, sua necessidade esta ligada a software/site/automacao, suporte de TI, trafego pago, social media ou consultoria digital?';\n  }\n\n  const input = typeof $json.body === 'string' ? JSON.parse($json.body || '{}') : ($json.body || $json);\n  const eventName = normalize(input.event || input.type || '');\n  const acceptedEvents = ['messages.upsert', 'messages.update'];\n  if (eventName && !acceptedEvents.includes(eventName)) return { ok: true, ignored: true, reason: 'event_not_supported', event: eventName };\n\n  const data = input.data || input;\n  const key = data.key || data.message?.key || {};\n  if (Boolean(key.fromMe || data.fromMe)) return { ok: true, ignored: true, reason: 'outbound_event' };\n\n  const remoteJid = key.remoteJid || key.remoteJidAlt || data.remoteJid || '';\n  if (!remoteJid || remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') return { ok: true, ignored: true, reason: 'group_or_status' };\n  const phone = remoteJid.split('@')[0].split(':')[0].replace(/\\D/g, '');\n  if (!phone) return { ok: true, ignored: true, reason: 'missing_phone' };\n\n  const message = data.message || {};\n  const messageType = data.messageType || Object.keys(message)[0] || 'conversation';\n  let messageText = message.conversation || message.extendedTextMessage?.text || message.imageMessage?.caption || message.videoMessage?.caption || message.documentMessage?.caption || '';\n  let contentType = 'text';\n  if (!messageText) {\n    contentType = messageType.replace('Message', '').toLowerCase() || 'unknown';\n    messageText = '[' + contentType + ']';\n  }\n\n  const messageId = String(key.id || data.id || remoteJid + ':' + Date.now());\n  const tenantSlug = env('WHATSAPP_TENANT_SLUG', 'jiw').toLowerCase();\n  const instance = input.instance || input.instanceName || env('EVOLUTION_INSTANCE_JIW', '');\n  const contactName = data.pushName || data.senderName || phone;\n  const duplicatePath = '/rest/v1/channel_events?tenant_slug=eq.' + encodeURIComponent(tenantSlug) + '&channel_type=eq.whatsapp&external_message_id=eq.' + encodeURIComponent(messageId) + '&select=id';\n  const existing = await supabaseRequest('GET', duplicatePath);\n  if (Array.isArray(existing) && existing.length) return { ok: true, duplicate: true, external_message_id: messageId };\n\n  const classification = classify(messageText);\n  const responseText = answer(messageText, classification, contactName).replace('[HUMANO_SOLICITADO]', '').trim();\n  const handoff = classification.handoff || answer(messageText, classification, contactName).includes('[HUMANO_SOLICITADO]');\n  const inboundEvent = {\n    tenant_slug: tenantSlug,\n    channel_type: 'whatsapp',\n    external_conversation_id: remoteJid,\n    external_message_id: messageId,\n    direction: 'inbound',\n    sender_type: 'contact',\n    contact_name: contactName,\n    contact_handle: phone,\n    message_text: messageText,\n    service: classification.service,\n    stage: classification.stage,\n    handoff,\n    response_text: responseText,\n    delivery_status: 'received',\n    raw_payload: input\n  };\n  await supabaseRequest('POST', '/rest/v1/channel_events', inboundEvent, 'return=representation,resolution=ignore-duplicates');\n\n  let sent = null;\n  let deliveryStatus = 'disabled';\n  if (String(env('WHATSAPP_AUTOREPLY', 'true')).toLowerCase() === 'true' && instance) {\n    const evolutionUrl = required(env('EVOLUTION_API_URL'), 'EVOLUTION_API_URL').replace(/\\/$/, '');\n    const apiKey = required(env('EVOLUTION_API_KEY'), 'EVOLUTION_API_KEY');\n    sent = await helpers.httpRequest({\n      method: 'POST',\n      url: evolutionUrl + '/message/sendText/' + encodeURIComponent(instance),\n      headers: { 'Content-Type': 'application/json', apikey: apiKey },\n      body: { number: phone, text: responseText },\n      json: true\n    });\n    deliveryStatus = 'sent';\n    const outboundId = String(sent?.key?.id || sent?.message?.key?.id || sent?.id || messageId + ':reply');\n    await supabaseRequest('POST', '/rest/v1/channel_events', {\n      tenant_slug: tenantSlug,\n      channel_type: 'whatsapp',\n      external_conversation_id: remoteJid,\n      external_message_id: outboundId,\n      direction: 'outbound',\n      sender_type: 'assistant',\n      contact_name: contactName,\n      contact_handle: phone,\n      message_text: responseText,\n      service: classification.service,\n      stage: classification.stage,\n      handoff,\n      delivery_status: deliveryStatus,\n      raw_payload: { provider: 'evolution_api', response: sent }\n    }, 'return=representation,resolution=ignore-duplicates');\n  }\n\n  return { ok: true, tenant_slug: tenantSlug, channel_type: 'whatsapp', instance, external_conversation_id: remoteJid, external_message_id: messageId, message_text: messageText, response_text: responseText, service: classification.service, stage: classification.stage, handoff, content_type: contentType, delivery_status: deliveryStatus, sent };\n}\n\ntry { return { json: await main(this.helpers) }; } catch (error) { return { json: { ok: false, error: error.message || String(error) } }; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [280, 0],
+      "id": "magia-whatsapp-process",
+      "name": "Processar WhatsApp JIW"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [560, 0],
+      "id": "magia-whatsapp-response",
+      "name": "Responder Evolution API"
+    }
+  ],
+  "connections": {
+    "Webhook WhatsApp Evolution": {
+      "main": [[{ "node": "Processar WhatsApp JIW", "type": "main", "index": 0 }]]
+    },
+    "Processar WhatsApp JIW": {
+      "main": [[{ "node": "Responder Evolution API", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}

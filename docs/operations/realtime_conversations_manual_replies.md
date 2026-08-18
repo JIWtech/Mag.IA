@@ -82,12 +82,16 @@ Obrigatórias para resposta manual:
 SUPABASE_URL=https://SEU-PROJETO.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=SUA_SERVICE_ROLE_KEY
 TELEGRAM_BOT_TOKEN_JIW=TOKEN_DO_BOT
+EVOLUTION_API_URL=https://SEU-DOMINIO-EVOLUTION
+EVOLUTION_API_KEY=CHAVE_DA_EVOLUTION
+EVOLUTION_INSTANCE_JIW=NOME_DA_INSTANCIA
 ```
 
 Importante:
 
 - `SUPABASE_SERVICE_ROLE_KEY` fica apenas no n8n.
 - `TELEGRAM_BOT_TOKEN_JIW` fica apenas no n8n.
+- `EVOLUTION_API_KEY` fica apenas no n8n.
 - Nunca usar essas chaves na interface.
 
 Depois de editar:

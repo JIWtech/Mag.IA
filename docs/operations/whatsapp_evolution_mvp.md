@@ -2,7 +2,7 @@
 
 **Data de inicio:** 2026-08-18  
 **Branch de trabalho:** `dev-whatsapp`  
-**Status:** planejamento
+**Status:** fluxo base implementado; configuracao da instancia pendente
 
 ## Objetivo
 
@@ -20,6 +20,47 @@ conversas, n8n e Supabase.
 - O painel de IA foi removido da interface; a automacao deve ser tratada como
   fluxo de canal/n8n, sem reintroduzir esse painel.
 - Nenhuma credencial, token, QR code ou chave privada deve ser versionada.
+
+## Workflow entregue
+
+Arquivo para importar no n8n:
+
+```text
+n8n/workflows/magia_whatsapp_evolution_mvp.json
+```
+
+O fluxo contem somente:
+
+- webhook `POST /webhook/magia-whatsapp`;
+- normalizacao e filtro de mensagens da Evolution API;
+- deduplicacao por `tenant_slug + channel_type + external_message_id`;
+- classificacao generalista da JIW sem IA, estoque de veiculos ou dados da Avvento;
+- persistencia no `channel_events`;
+- resposta opcional pelo endpoint `message/sendText` da Evolution API.
+
+O `magia_command_router.json` tambem aceita `channel_type: "whatsapp"`, permitindo
+respostas manuais pela aba Conversas.
+
+Variaveis obrigatorias no n8n/EasyPanel:
+
+```text
+SUPABASE_URL=https://SEU-PROJETO.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+EVOLUTION_API_URL=https://SEU-DOMINIO-EVOLUTION
+EVOLUTION_API_KEY=...
+EVOLUTION_INSTANCE_JIW=nome-da-instancia
+WHATSAPP_TENANT_SLUG=jiw
+```
+
+Opcional:
+
+```text
+WHATSAPP_AUTOREPLY=true
+```
+
+Depois de importar, configure o webhook da instancia Evolution para a URL
+`https://SEU-N8N/webhook/magia-whatsapp` e ative o workflow somente depois de
+validar as variaveis e o HTTPS.
 
 ## Escopo do MVP
 
@@ -57,6 +98,8 @@ conversas, n8n e Supabase.
 
 ### Fase 1 — Descoberta e ambiente
 
+- [x] Remover dependencias especificas da Avvento do fluxo principal.
+- [x] Criar workflow base `magia_whatsapp_evolution_mvp.json`.
 - [ ] Confirmar versao da Evolution API e nome da instancia.
 - [ ] Confirmar dominio HTTPS publico e rota de webhook.
 - [ ] Definir onde ficam n8n, Evolution API, Redis e banco em producao.
@@ -72,8 +115,8 @@ conversas, n8n e Supabase.
 
 ### Fase 3 — Webhook e n8n
 
-- [ ] Implementar fluxo de entrada WhatsApp -> normalizacao -> Supabase.
-- [ ] Implementar fluxo de saida Supabase/n8n -> Evolution API.
+- [x] Implementar fluxo de entrada WhatsApp -> normalizacao -> Supabase.
+- [x] Implementar fluxo de saida manual Supabase/n8n -> Evolution API.
 - [ ] Adicionar logs, retries e caminho de erro sem duplicar mensagens.
 
 ### Fase 4 — Frontend e aceite
@@ -109,4 +152,3 @@ conversas, n8n e Supabase.
 - O envio sera sempre manual ou tambem acionado por workflows existentes?
 - Quais tipos de midia sao obrigatorios para o primeiro piloto?
 - Qual politica de retencao e auditoria sera aplicada aos eventos WhatsApp?
-

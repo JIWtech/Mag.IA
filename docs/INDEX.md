@@ -64,6 +64,7 @@ desenvolvimento e preparar hospedagem.
 - `../n8n/workflows/jiw_telegram_real_supabase.json`
 - `../n8n/workflows/magia_telegram_multitenant.json`
 - `../n8n/workflows/jiw_instagram_real_supabase.json`
+- `../n8n/workflows/magia_whatsapp_evolution_mvp.json`
 - `../n8n/workflows/magia_command_router.json`
 - `../n8n/workflows/jiw_telegram_mock.json`
 
