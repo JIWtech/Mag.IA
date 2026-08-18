@@ -1,0 +1,86 @@
+Vou falar aqui de maneira mais fácil e direta, meus manos 
+
+No Supabase:
+Authentication > Users > Add user
+Preencha tudo direitinho :) 
+
+Em seguida, devemos criar o tenant. Cada usuário é um tenant,
+por isso nosso sistema é multitenant! :D 
+
+Pra criar, siga esse SQL no SQL editor do Supabase: 
+
+
+insert into tenants (slug, name, industry, plan, status)
+values (
+  'slug_do_cliente',
+  'Nome do Cliente',
+  'Segmento',
+  'mvp',
+  'active'
+)
+on conflict (slug) do update
+set
+  name = excluded.name,
+  industry = excluded.industry,
+  plan = excluded.plan,
+  status = excluded.status,
+  updated_at = now();
+
+
+O que você precisa alterar é simples:
+  'slug_do_cliente',
+  'Nome do Cliente',
+  'Segmento',
+
+Exemplo:
+
+insert into tenants (slug, name, industry, plan, status)
+values (
+  'clinica_nubia',
+  'Clínica da Núbia',
+  'Estética e bronzeamento',
+  'mvp',
+  'active'
+)
+...
+
+
+
+Tudo certo até aqui? 
+Se não tiver, desista. Procure outro rumo na vida. 
+
+Em seguida, precisamos associar o usuário que criamos ao 
+tenant dele. 
+
+Pra fazer isso, vamos rodar outro SQL no Supabase:
+
+
+insert into tenant_members (tenant_id, user_id, role, status)
+select
+  t.id,
+  u.id,
+  'owner',
+  'active'
+from tenants t
+join auth.users u on u.email = 'email_do_usuario@dominio.com'
+where t.slug = 'slug_do_cliente'
+on conflict (tenant_id, user_id) do update
+set
+  role = excluded.role,
+  status = excluded.status,
+  updated_at = now();
+
+
+Nesse SQL a gente só muda duas coisas:
+  'owner',
+  'active'
+
+pra primeira opção vamos usar 'owner' pro dono do negócio 
+(tipo a núbia), e 'agent' pra funcionários desse negócio. 
+
+
+pra segunda opção, podemos usar 'active' para clientes que
+estão ativos e 'suspended' para clientes suspensos. 
+
+
+
