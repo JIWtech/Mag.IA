@@ -1,0 +1,35 @@
+insert into public.channels (
+  tenant_id,
+  type,
+  name,
+  external_id,
+  status,
+  credentials_ref,
+  config
+)
+select
+  t.id,
+  'whatsapp',
+  'WhatsApp - Nome do cliente',
+  'NOME_DA_INSTANCIA_EVOLUTION',
+  'active',
+  'evolution_instance',
+  jsonb_build_object(
+    'instance_name', 'NOME_DA_INSTANCIA_EVOLUTION',
+    'phone', '5511999999999'
+  )
+from public.tenants t
+where t.slug = 'slug_do_cliente'
+on conflict (tenant_id, type, external_id) do update
+set
+  name = excluded.name,
+  status = excluded.status,
+  credentials_ref = excluded.credentials_ref,
+  config = excluded.config,
+  updated_at = now();
+
+o que mudar:
+slug_do_cliente
+Nome do cliente
+NOME_DA_INSTANCIA_EVOLUTION
+5511999999999

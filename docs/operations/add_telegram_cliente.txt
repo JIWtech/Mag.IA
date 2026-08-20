@@ -1,0 +1,37 @@
+insert into public.channels (
+  tenant_id,
+  type,
+  name,
+  external_id,
+  status,
+  credentials_ref,
+  config
+)
+select
+  t.id,
+  'telegram',
+  'Telegram - Nome do cliente',
+  'USERNAME_DO_BOT_SEM_ARROBA',
+  'active',
+  'telegram_token',
+  jsonb_build_object(
+    'bot_token', 'COLE_AQUI_O_TOKEN_DO_TELEGRAM',
+    'bot_username', 'USERNAME_DO_BOT_SEM_ARROBA'
+  )
+from public.tenants t
+where t.slug = 'slug_do_cliente'
+on conflict (tenant_id, type, external_id) do update
+set
+  name = excluded.name,
+  status = excluded.status,
+  credentials_ref = excluded.credentials_ref,
+  config = excluded.config,
+  updated_at = now();
+
+
+
+o que trocar:
+slug_do_cliente
+Nome do cliente
+USERNAME_DO_BOT_SEM_ARROBA
+COLE_AQUI_O_TOKEN_DO_TELEGRAM
