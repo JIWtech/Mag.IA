@@ -31,6 +31,31 @@ function hasAny(words) {
   return words.some((word) => normalized.includes(word));
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function settingsFor(context = {}) {
+  return context.settings?.settings || {};
+}
+
+function activePromptFor(context = {}) {
+  const settings = settingsFor(context);
+  return context.promptVersion?.prompt || settings.system_prompt || settings.prompt || settings.ai_prompt || '';
+}
+
+function matchKeywords(keywords = []) {
+  return asArray(keywords).some((keyword) => normalized.includes(normalizeText(keyword)));
+}
+
 function isPureGreeting() {
   const compact = normalized.replace(/[^\w\s/]/g, ' ').replace(/\s+/g, ' ').trim();
   return ['/start', 'oi', 'ola', 'olá', 'bom dia', 'boa tarde', 'boa noite', 'teste'].includes(compact);
@@ -140,35 +165,19 @@ async function loadCatalogContext() {
   }
 }
 
-function classify() {
+function classify(context = {}) {
+  const settings = settingsFor(context);
   let service = 'geral';
   let stage = 'Qualificacao';
   let handoff = false;
 
-  if (tenantSlug === 'clinica_nubia') {
-    if (hasAny(['reclamacao', 'reclamar', 'problema', 'insatisfeita', 'manchou', 'alergia', 'irritacao'])) {
-      stage = 'Atendimento humano';
-      handoff = true;
-      service = 'reclamacoes';
-    } else if (hasAny(['agendar', 'marcar', 'horario', 'agenda', 'encaixe', 'disponibilidade'])) {
-      stage = 'Agendamento';
-      handoff = true;
-      service = 'agendamento';
-    } else if (hasAny(['valor', 'preco', 'quanto custa', 'pagamento', 'pix', 'cartao', 'dinheiro', 'desconto'])) {
-      stage = 'Orcamento solicitado';
-      handoff = false;
-      service = 'formas_de_pagamento';
-    } else if (hasAny(['amiga', 'amigas', 'grupo', 'juntas', 'dupla'])) {
-      stage = 'Qualificacao';
-      service = 'pacotes_para_amigas';
-    } else if (hasAny(['resultado', 'imediato', 'uma sessao', 'primeira sessao', 'quantas sessoes', 'dura', 'duracao'])) {
-      stage = 'Qualificacao';
-      service = 'duvidas_sobre_resultado';
-    } else if (hasAny(['bronze', 'bronzeamento', 'jato', 'como funciona', 'como e feito', 'procedimento'])) {
-      stage = 'Qualificacao';
-      service = 'bronzeamento_a_jato';
-    }
-    return { service, stage, handoff };
+  for (const rule of asArray(settings.classification_rules || settings.intent_rules)) {
+    if (!matchKeywords(rule.keywords || rule.triggers)) continue;
+    return {
+      service: rule.service || rule.intent || service,
+      stage: rule.stage || stage,
+      handoff: Boolean(rule.handoff),
+    };
   }
 
   if (hasAny(['orcamento', 'proposta', 'contrato', 'quanto custa', 'preco', 'valor'])) {
@@ -197,84 +206,91 @@ function classify() {
 
 function fallbackAnswer(context, classification) {
   const tenantName = context.tenant?.name || tenantSlug;
-  const settings = context.settings?.settings || {};
+  const settings = settingsFor(context);
   const categories = Array.isArray(settings.service_categories) && settings.service_categories.length
     ? settings.service_categories.join(', ')
     : 'atendimento, vendas, suporte, agendamentos e duvidas sobre a empresa';
+  const manualResponse = findManualResponse(settings);
 
-  if (tenantSlug === 'clinica_nubia') {
-    return nubiaMockAnswer(classification, tenantName);
+  if (!rawText || isPureGreeting()) {
+    return buildInitialMessage(settings, tenantName, categories);
   }
 
-  if (!rawText) {
-    return `Ola! Sou o assistente da ${tenantName}. Me envie por texto o que voce precisa para eu direcionar seu atendimento.`;
-  }
-  if (hasAny(['/start', 'oi', 'ola', 'olá', 'bom dia', 'boa tarde', 'boa noite', 'teste'])) {
-    return `Ola, ${firstName}! Sou o assistente da ${tenantName}. Posso ajudar com ${categories}. Me conte em poucas palavras o que voce precisa.`;
-  }
+  if (manualResponse) return manualResponse;
+
   if (classification.handoff) {
-    return 'Certo. Para encaminhar corretamente, me envie nome, empresa, melhor contato e um resumo do que precisa. Vou sinalizar para uma pessoa da equipe continuar com voce. [HUMANO_SOLICITADO]';
+    return context.settings?.handoff_message
+      || settings.handoff_message
+      || 'Certo. Para encaminhar corretamente, me envie nome, melhor contato e um resumo do que precisa. Vou sinalizar para uma pessoa da equipe continuar com voce. [HUMANO_SOLICITADO]';
   }
-  if (classification.stage === 'Agendamento') {
-    return 'Consigo ajudar com isso. Me diga qual servico deseja agendar, melhor dia/horario e um telefone de contato para confirmacao.';
-  }
-  if (classification.service === 'software_automacao') {
-    return `Entendi. A ${tenantName} pode ajudar com sistemas, sites, dashboards, integracoes e automacoes. Me diga o que voce quer construir ou automatizar, se ja existe alguma ferramenta em uso e qual resultado espera alcancar.`;
-  }
-  if (classification.service === 'suporte_ti') {
-    return `Certo. Para direcionar o suporte de TI da ${tenantName}, me diga qual equipamento, sistema ou servico esta com problema, quantas pessoas foram impactadas e se existe urgencia.`;
-  }
-  if (classification.service === 'trafego_pago') {
-    return `A ${tenantName} pode ajudar com campanhas de trafego pago. Me diga o que sua empresa vende, se ja anuncia hoje e qual objetivo principal: leads, vendas, agenda ou reconhecimento.`;
-  }
-  if (classification.service === 'social_media') {
-    return `A ${tenantName} pode apoiar sua presenca digital com social media, conteudo e criativos. Me diga o segmento da empresa, quais redes usa hoje e se precisa de estrategia, criacao ou gestao completa.`;
-  }
-  if (classification.service === 'agendamento_atendimento') {
-    return `Consigo ajudar com atendimento e agendamento. Me diga qual servico voce deseja, melhor dia/horario e um contato para confirmacao.`;
-  }
+
+  if (classification.stage === 'Agendamento') return buildAppointmentMessage(settings);
+
   return context.settings?.fallback_message
     || `Para eu direcionar melhor: sua necessidade esta ligada a ${categories}? Pode me explicar o objetivo principal?`;
 }
 
-function nubiaMockAnswer(classification, tenantName) {
-  const intro = `Ola, ${firstName}! Sou o assistente da ${tenantName}.`;
+function buildInitialMessage(settings, tenantName, categories) {
+  const greeting = settings.greeting_message || settings.initial_message || `Ola, ${firstName}! Sou o assistente da ${tenantName}.`;
+  const options = asArray(settings.menu_options || settings.conversation_options);
+  if (!options.length) return `${greeting} Posso ajudar com ${categories}. Me conte em poucas palavras o que voce precisa.`;
 
-  if (!rawText || isPureGreeting()) {
-    return `${intro}\n\nEscolha uma opcao para eu te direcionar:\n1. Quero saber valores\n2. Quero agendar um horario\n3. Quero saber se o resultado e imediato\n4. Quero entender como funciona o bronzeamento a jato\n5. Quero ir com uma amiga ou grupo\n6. Tenho uma reclamacao ou preciso falar com a Nubia`;
+  const lines = options.map((option, index) => `${index + 1}. ${option.label || option.title || option.question || option.intent || option}`);
+  return `${greeting}\n\n${lines.join('\n')}`;
+}
+
+function findManualResponse(settings) {
+  const options = asArray(settings.menu_options || settings.conversation_options);
+  const manualResponses = [
+    ...options,
+    ...asArray(settings.manual_responses),
+    ...asArray(settings.mock_responses),
+    ...asArray(settings.faq),
+  ];
+  const selectedOption = normalized.match(/^\d+$/) ? Number(normalized) - 1 : -1;
+
+  if (selectedOption >= 0 && options[selectedOption]) {
+    return responseFromItem(options[selectedOption]);
   }
 
-  if (classification.service === 'duvidas_sobre_resultado') {
-    return 'Sobre o resultado:\n1. O resultado pode ser percebido desde a primeira sessao.\n2. Mesmo assim, nao e correto prometer um resultado perfeito ou definitivo em apenas uma sessao.\n3. Normalmente, mais de uma sessao pode ser necessaria para chegar no tom desejado.\n4. Se quiser, posso te direcionar para agendamento com a Nubia.';
+  for (const item of manualResponses) {
+    if (typeof item === 'string') continue;
+    const searchable = [
+      item.intent,
+      item.label,
+      item.title,
+      item.question,
+      item.category,
+      ...asArray(item.keywords),
+      ...asArray(item.triggers),
+    ].map(normalizeText);
+
+    if (searchable.some((part) => part && normalized.includes(part))) {
+      return responseFromItem(item);
+    }
   }
 
-  if (classification.service === 'bronzeamento_a_jato') {
-    return 'Como funciona o bronzeamento a jato:\n1. O produto e aplicado de forma uniforme na pele com equipamento proprio.\n2. A ideia e conquistar um bronzeado mais pratico e controlado.\n3. Nao depende de exposicao direta ao sol.\n4. Para orientacao correta, a Nubia confirma preparo, cuidados e indicacao conforme cada cliente.';
-  }
+  return '';
+}
 
-  if (classification.service === 'pacotes_para_amigas') {
-    return 'Atendimento com amiga ou grupo:\n1. Existe possibilidade de condicao especial para amigas/grupos.\n2. Os valores e encaixes precisam ser confirmados pela Nubia.\n3. Em alguns horarios existem maquinas individuais e coletivas.\n4. Para verificar, me envie nome, quantidade de pessoas e melhor horario. [HUMANO_SOLICITADO]';
-  }
+function responseFromItem(item) {
+  if (typeof item === 'string') return item;
+  return item.answer || item.response || item.text || item.message || '';
+}
 
-  if (classification.service === 'formas_de_pagamento') {
-    return 'Sobre valores e pagamento:\n1. Posso te ajudar a direcionar essa informacao.\n2. Os valores podem variar conforme procedimento, quantidade de sessoes e atendimento individual ou em grupo.\n3. Para confirmar corretamente, me envie a forma de pagamento desejada e se voce e cliente antiga ou nova.\n4. Se quiser fechar horario, encaminho para a Nubia.';
+function buildAppointmentMessage(settings) {
+  const fields = asArray(settings.appointment_fields || settings.required_fields);
+  if (!fields.length) {
+    return 'Consigo ajudar com isso. Me diga qual servico deseja agendar, melhor dia/horario e um telefone de contato para confirmacao.';
   }
-
-  if (classification.service === 'agendamento' || classification.stage === 'Agendamento') {
-    return 'Para agendamento, me envie por favor:\n1. Seu nome\n2. Melhor horario\n3. Forma de pagamento\n4. Se voce e cliente antiga ou nova\n5. Sua idade ou data de nascimento\n\nObservacao: menor de idade precisa de responsavel. Vou encaminhar para a Nubia confirmar o horario. [HUMANO_SOLICITADO]';
-  }
-
-  if (classification.service === 'reclamacoes' || classification.stage === 'Atendimento humano') {
-    return 'Sinto muito por isso. Para a Nubia verificar com cuidado, me envie:\n1. Seu nome\n2. O que aconteceu\n3. Data do atendimento, se lembrar\n4. Melhor horario para retorno\n\nVou encaminhar diretamente para atendimento humano. [HUMANO_SOLICITADO]';
-  }
-
-  return 'Nao consegui identificar exatamente sua necessidade. Escolha uma opcao:\n1. Valores\n2. Agendamento\n3. Resultado do bronzeamento\n4. Como funciona o bronzeamento a jato\n5. Atendimento com amigas/grupo\n6. Falar com a Nubia';
+  return `Para seguir com o agendamento, me envie:\n${fields.map((field, index) => `${index + 1}. ${field}`).join('\n')}`;
 }
 
 function usageGate(context = {}) {
-  const settings = context.settings?.settings || {};
+  const settings = settingsFor(context);
   const tenantAiMode = String(settings.ai_mode || '').toLowerCase();
-  const forceMock = tenantAiMode === 'mock' || tenantSlug === 'clinica_nubia';
+  const hasTenantDisabledAi = settings.ai_enabled === false || String(settings.ai_enabled).toLowerCase() === 'false';
+  const forceMock = tenantAiMode === 'mock' || hasTenantDisabledAi;
   const enabled = String(env('GEMINI_ENABLED', 'false')).toLowerCase() === 'true';
   const hasKey = Boolean(env('GEMINI_API_KEY'));
   const dailyLimit = Number(env('GEMINI_DAILY_LIMIT', 20));
@@ -299,8 +315,9 @@ async function callGemini(context, classification, fallback, history, catalog) {
   const model = agent.model || env('GEMINI_MODEL', 'gemini-2.5-flash-lite');
   const maxOutputTokens = Math.min(Number(agent.max_tokens || env('GEMINI_MAX_OUTPUT_TOKENS', 300)), 500);
   const temperature = Number(agent.temperature || 0.65);
-  const basePrompt = context.promptVersion?.prompt
+  const basePrompt = activePromptFor(context)
     || `Voce e o assistente virtual da empresa ${context.tenant.name}. Seu papel e entender a necessidade do contato, responder com clareza, qualificar oportunidades e solicitar atendimento humano quando necessario.`;
+  const settings = settingsFor(context);
   const recentHistory = history.length
     ? history.map((item) => {
       const actor = item.direction === 'outbound' ? 'Assistente/equipe' : 'Cliente';
@@ -315,6 +332,15 @@ Segmento: ${context.tenant.industry || 'nao informado'}
 
 Base consultada:
 ${catalog.context || 'Nenhum item especifico encontrado para esta mensagem.'}
+
+Configuracao manual do tenant:
+${JSON.stringify({
+  service_categories: settings.service_categories || [],
+  menu_options: settings.menu_options || settings.conversation_options || [],
+  manual_responses: settings.manual_responses || settings.faq || [],
+  appointment_fields: settings.appointment_fields || settings.required_fields || [],
+  handoff_rules: settings.handoff_rules || [],
+}).slice(0, 3000)}
 
 Historico recente:
 ${recentHistory}
@@ -368,7 +394,7 @@ if (!chatId) return { json: { ok: false, error: 'missing_chat_id' } };
 
 try {
   const context = await loadTenantContext();
-  const classification = classify();
+  const classification = classify(context);
   const history = await loadRecentHistory();
   const catalog = await loadCatalogContext();
   const fallback = fallbackAnswer(context, classification);
