@@ -39,3 +39,14 @@ o funcionamento com ou sem IA
 
 'COLE_AQUI_O_PROMPT_COMPLETO_DO_CLIENTE' é onde devemos colar o prompt
 daquele cliente 
+
+
+pra configurar o servidor do telegram:
+
+$token = "TOKEN_REAL_DO_BOT"
+$url = "https://auton8n-n8n.tplv5d.easypanel.host/webhook/telegram?tenant_slug=bronzeamento_dom_ian"
+
+Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/setWebhook" -Method Post -Body @{ url = $url }
+
+só executar acima no powershell do windows (substituir 'TOKEN_REAL_DO_BOT' pelo token gerado no BotFather)
+

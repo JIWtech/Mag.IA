@@ -236,8 +236,8 @@ function App() {
     };
   }, []);
 
-  async function refreshData() {
-    setLoading(true);
+  async function refreshData({ showLoading = true } = {}) {
+    if (showLoading) setLoading(true);
     const minWait = new Promise((resolve) => setTimeout(resolve, 550));
     try {
       const [data] = await Promise.all([
@@ -253,7 +253,7 @@ function App() {
       ]);
       setAppData(data);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -270,15 +270,31 @@ function App() {
   }, [activeTenantSlug, session]);
 
   useEffect(() => {
+    if (isAuthRequired() && !session) return undefined;
     persistTenantSlug(activeTenantSlug);
     refreshData();
+
+    let lastRealtimeRefresh = 0;
+    const refreshFromRealtime = () => {
+      const now = Date.now();
+      if (now - lastRealtimeRefresh < 800) return;
+      lastRealtimeRefresh = now;
+      refreshData({ showLoading: false });
+    };
+
     const unsubscribe = subscribeToClientEvents(() => {
-      refreshData();
+      refreshFromRealtime();
     }, activeTenantSlug);
+
+    const fallbackPolling = window.setInterval(() => {
+      refreshData({ showLoading: false });
+    }, 5000);
+
     return () => {
       unsubscribe();
+      window.clearInterval(fallbackPolling);
     };
-  }, [activeTenantSlug]);
+  }, [activeTenantSlug, session?.user?.id]);
 
   if (checkingAuth) {
     return <AuthShell title="Carregando painel..." />;
