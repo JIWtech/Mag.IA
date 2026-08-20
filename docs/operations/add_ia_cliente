@@ -1,0 +1,41 @@
+insert into public.tenant_settings (
+  tenant_id,
+  timezone,
+  fallback_message,
+  handoff_message,
+  settings
+)
+select
+  t.id,
+  'America/Sao_Paulo',
+  'Desculpe, não consegui entender. Pode reformular sua pergunta?',
+  'Vou encaminhar sua conversa para atendimento humano. Em breve alguém da equipe continua por aqui.',
+  jsonb_build_object(
+    'ai_enabled', false,
+    'ai_provider', 'gemini',
+    'ai_model', 'gemini-1.5-flash',
+    'system_prompt', 'COLE_AQUI_O_PROMPT_COMPLETO_DO_CLIENTE',
+    'tone', 'formal, acolhedor e objetivo',
+    'handoff_rules', jsonb_build_array(
+      'cliente pedir atendente humano',
+      'reclamação',
+      'orçamento complexo',
+      'agendamento confirmado ou alteração de horário'
+    )
+  )
+from public.tenants t
+where t.slug = 'slug_do_cliente'
+on conflict (tenant_id) do update
+set
+  timezone = excluded.timezone,
+  fallback_message = excluded.fallback_message,
+  handoff_message = excluded.handoff_message,
+  settings = excluded.settings,
+  updated_at = now();
+
+
+a variável 'ai_enabled' estando true ou false determina
+o funcionamento com ou sem IA 
+
+'COLE_AQUI_O_PROMPT_COMPLETO_DO_CLIENTE' é onde devemos colar o prompt
+daquele cliente 
