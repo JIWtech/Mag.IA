@@ -136,39 +136,36 @@ export const conversations = [
 
 export const kanbanColumns = [
   {
-    id: 'novo',
-    title: 'Novo contato',
+    id: 'novas_conversas',
+    title: 'Novas conversas',
+    automationKey: 'novas_conversas',
     cards: [
       { id: 'card-1', title: 'Atendimento Geral', subtitle: 'Aguardando detalhamento', channel: 'Telegram', value: 'R$ 0', owner: 'Assistente JIW' },
     ],
   },
   {
-    id: 'qualificacao',
-    title: 'Qualificação',
+    id: 'conversas_andamento',
+    title: 'Conversas em andamento',
+    automationKey: 'conversas_andamento',
     cards: [
       { id: 'card-2', title: 'Paula Freitas', subtitle: 'Tráfego pago e social media', channel: 'Telegram', value: 'R$ 3.200', owner: 'Assistente JIW' },
-    ],
-  },
-  {
-    id: 'briefing',
-    title: 'Briefing necessário',
-    cards: [
       { id: 'card-3', title: 'Renata Martins', subtitle: 'Sistema comercial sob medida', channel: 'Telegram', value: 'R$ 18.000', owner: 'Assistente JIW' },
     ],
   },
   {
-    id: 'suporte',
-    title: 'Suporte técnico',
+    id: 'conversas_humanos',
+    title: 'Conversas com humanos',
+    automationKey: 'conversas_humanos',
     cards: [
       { id: 'card-4', title: 'Eduardo Salles', subtitle: 'Suporte urgente solicitado', channel: 'Telegram', value: 'R$ 450', owner: 'Equipe JIW' },
+      { id: 'card-5', title: 'Marcos Vieira', subtitle: 'Landing page e captação', channel: 'Telegram', value: 'R$ 2.500', owner: 'Comercial JIW' },
     ],
   },
   {
-    id: 'orcamento',
-    title: 'Orçamento solicitado',
-    cards: [
-      { id: 'card-5', title: 'Marcos Vieira', subtitle: 'Landing page e captação', channel: 'Telegram', value: 'R$ 2.500', owner: 'Comercial JIW' },
-    ],
+    id: 'agendamentos',
+    title: 'Agendamentos',
+    automationKey: 'agendamentos',
+    cards: [],
   },
 ];
 

@@ -27,7 +27,6 @@ import {
   Megaphone,
   MessageCircle,
   PauseCircle,
-  PlayCircle,
   RefreshCcw,
   Search,
   Send,
@@ -41,14 +40,11 @@ import {
   UserPlus,
   UserRound,
   UsersRound,
-  Webhook,
-  Workflow,
   X,
   Zap,
 } from 'lucide-react';
 import {
   agents,
-  automationRules,
   channelAccounts,
   clientStatus,
   conversations,
@@ -93,7 +89,6 @@ const menu = [
   { id: 'funil', label: 'Funil', icon: GitBranch },
   { id: 'disparos', label: 'Disparos', icon: Megaphone },
   { id: 'agendamentos', label: 'Agendamentos', icon: CalendarDays },
-  { id: 'automacoes', label: 'Automações', icon: Workflow },
   { id: 'configuracoes', label: 'Configurações', icon: Settings },
 ];
 
@@ -397,7 +392,6 @@ function App() {
             onChanged={refreshData}
           />
         )}
-        {active === 'automacoes' && <Automations />}
         {active === 'configuracoes' && (
           <SettingsPage
             agents={agentsList}
@@ -1467,46 +1461,6 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
             </div>
           ))}
           {!appointments.length && <EmptyState title="Nenhum agendamento" text="Crie um agendamento manual para ele aparecer aqui e no Kanban." />}
-        </div>
-      </section>
-    </section>
-  );
-}
-
-function Automations() {
-  return (
-    <section className="content-grid">
-      <section className="panel">
-        <PanelTitle icon={Workflow} title="Regras de automação" action="Criar regra" />
-        <div className="rule-list">
-          {automationRules.map((rule) => (
-            <article className="rule-card" key={rule.id}>
-              <div>
-                <strong>{rule.name}</strong>
-                <span>{rule.trigger} · {rule.condition}</span>
-              </div>
-              <div className="rule-actions">
-                {rule.actions.map((action) => <Badge key={action} value={action} status="channel" />)}
-              </div>
-              <div className="rule-footer">
-                <span>{rule.runs} execuções</span>
-                <label className="switch">
-                  <input type="checkbox" defaultChecked={rule.active} />
-                  <span />
-                </label>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-      <section className="panel">
-        <PanelTitle icon={Webhook} title="Builder rápido" />
-        <div className="form-grid">
-          <label>Gatilho<select><option>Mensagem contém palavra-chave</option><option>IA detectou intenção</option><option>Status alterado</option></select></label>
-          <label>Condição<input defaultValue="agendar, consulta, horário" /></label>
-          <label>Ação<select><option>Mover kanban</option><option>Transferir para humano</option><option>Criar oportunidade</option><option>Notificar equipe</option></select></label>
-          <label>Destino<input defaultValue="Consulta solicitada" /></label>
-          <button className="primary-button wide" type="button"><PlayCircle size={17} /> Simular regra</button>
         </div>
       </section>
     </section>

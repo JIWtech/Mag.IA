@@ -101,6 +101,24 @@ export function subscribeToClientEvents(onChange, activeTenantSlug = defaultTena
       },
       onChange,
     )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'kanban_boards',
+      },
+      onChange,
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'kanban_columns',
+      },
+      onChange,
+    )
     .subscribe();
 
   return () => {
@@ -122,7 +140,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
   }
 
   const tenant = await loadTenant(activeTenantSlug);
-  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns] = await Promise.all([
+  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig] = await Promise.all([
     supabase
       .from('channel_events')
       .select('*')
@@ -132,6 +150,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     tenant ? loadAppointments(tenant.id) : [],
     tenant ? loadBroadcastContacts(tenant.id) : [],
     tenant ? loadBroadcastCampaigns(tenant.id) : [],
+    tenant ? loadKanbanConfig(tenant.id) : null,
   ]);
   const { data, error } = eventsResult;
 
@@ -153,7 +172,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
       ...fallback,
       source: 'supabase_empty',
       conversations: [],
-      kanbanColumns: eventsToKanban([], activeTenantSlug, appointments),
+      kanbanColumns: eventsToKanban([], activeTenantSlug, appointments, kanbanConfig),
       funnelStages: emptyFunnel(),
       status: buildStatus({ source: 'supabase_empty', events: [], tenantSlug: activeTenantSlug }),
       appointments,
@@ -166,7 +185,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     ...fallback,
     source: 'supabase',
     conversations: eventsToConversations(data),
-    kanbanColumns: eventsToKanban(data, activeTenantSlug, appointments),
+    kanbanColumns: eventsToKanban(data, activeTenantSlug, appointments, kanbanConfig),
     funnelStages: eventsToFunnel(data),
     status: buildStatus({ source: 'supabase', events: data, tenantSlug: activeTenantSlug }),
     appointments,
@@ -241,6 +260,42 @@ async function loadBroadcastCampaigns(tenantId) {
     return [];
   }
   return data || [];
+}
+
+async function loadKanbanConfig(tenantId) {
+  const supabase = getClient();
+  const { data: board, error: boardError } = await supabase
+    .from('kanban_boards')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('is_default', true)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (boardError) {
+    console.warn('Kanban board fallback:', boardError.message);
+    return null;
+  }
+
+  if (!board) return null;
+
+  const { data: columns, error: columnsError } = await supabase
+    .from('kanban_columns')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('board_id', board.id)
+    .order('position', { ascending: true });
+
+  if (columnsError) {
+    console.warn('Kanban columns fallback:', columnsError.message);
+    return null;
+  }
+
+  return {
+    board,
+    columns: columns || [],
+  };
 }
 
 export async function saveAppointment(activeTenantSlug, appointment) {
@@ -446,41 +501,73 @@ export function getTenantSchedulingLink(tenantSlug) {
   return TENANT_SCHEDULING_LINKS[tenantSlug] || 'https://nbbronze.tuaagenda.app/';
 }
 
+const OFFICIAL_KANBAN_COLUMNS = [
+  { id: 'novas_conversas', title: 'Novas conversas', automationKey: 'novas_conversas' },
+  { id: 'conversas_andamento', title: 'Conversas em andamento', automationKey: 'conversas_andamento' },
+  { id: 'conversas_humanos', title: 'Conversas com humanos', automationKey: 'conversas_humanos' },
+  { id: 'agendamentos', title: 'Agendamentos', automationKey: 'agendamentos' },
+];
+
+const KANBAN_KEY_ALIASES = {
+  novo: 'novas_conversas',
+  novos: 'novas_conversas',
+  novas: 'novas_conversas',
+  novas_conversas: 'novas_conversas',
+  primeiro_contato: 'novas_conversas',
+  qualificacao: 'conversas_andamento',
+  qualificação: 'conversas_andamento',
+  link_enviado: 'conversas_andamento',
+  agendamento_link: 'conversas_andamento',
+  conversas_andamento: 'conversas_andamento',
+  andamento: 'conversas_andamento',
+  ativo: 'conversas_andamento',
+  humano: 'conversas_humanos',
+  atendimento_humano: 'conversas_humanos',
+  conversas_humanos: 'conversas_humanos',
+  humanos: 'conversas_humanos',
+  handoff: 'conversas_humanos',
+  agendamento: 'agendamentos',
+  agendamentos: 'agendamentos',
+  agendamento_confirmado: 'agendamentos',
+  agenda: 'agendamentos',
+  concluido: 'conversas_andamento',
+  concluidos: 'conversas_andamento',
+  finalizado: 'conversas_andamento',
+  finalizada: 'conversas_andamento',
+};
+
 export function emptyKanban() {
-  return [
-    { id: 'novo', title: 'Novos contatos', cards: [] },
-    { id: 'qualificacao', title: 'Qualificação & Dúvidas', cards: [] },
-    { id: 'link_enviado', title: 'Link de agendamento enviado', cards: [] },
-    { id: 'agendamento_confirmado', title: 'Agendamento confirmado', cards: [] },
-    { id: 'humano', title: 'Atendimento humano', cards: [] },
-    { id: 'concluido', title: 'Concluídos', cards: [] },
-  ];
+  return OFFICIAL_KANBAN_COLUMNS.map((column) => ({ ...column, cards: [] }));
 }
 
-function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = []) {
-  const columns = emptyKanban();
+function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null) {
+  const columns = buildKanbanColumns(kanbanConfig);
   const latestByChat = new Map();
+  const eventCountsByChat = new Map();
 
   for (const event of events) {
     const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.id}`;
+    eventCountsByChat.set(key, (eventCountsByChat.get(key) || 0) + 1);
     if (!latestByChat.has(key)) latestByChat.set(key, event);
   }
 
   const defaultSchedulingUrl = getTenantSchedulingLink(tenantSlug);
 
   for (const event of latestByChat.values()) {
+    const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.id}`;
     const channelType = normalizeChannel(event.channel_type);
-    const target = pickColumn(event.stage, event.handoff, event.message_text);
-    const column = columns.find((item) => item.id === target) || columns[0];
+    const target = pickColumn(event.stage, event.handoff, event.message_text, {
+      direction: event.direction,
+      isFirstContact: (eventCountsByChat.get(key) || 0) <= 1,
+    });
+    const column = findKanbanColumn(columns, target) || columns[0];
 
-    let aiReason = 'IA respondendo dúvidas';
-    if (target === 'link_enviado') {
-      aiReason = 'IA identificou intenção de agendamento e enviou link';
-    } else if (target === 'agendamento_confirmado') {
+    let aiReason = 'IA conduzindo a conversa';
+    if (target === 'agendamentos') {
       aiReason = 'Agendamento registrado pelo sistema';
-    } else if (target === 'humano') {
+    } else if (target === 'conversas_humanos') {
       aiReason = 'Transferido para atendimento humano';
-    } else if (target === 'novo') {
+    } else if (target === 'novas_conversas') {
       aiReason = 'Primeiro contato recebido';
     }
 
@@ -497,7 +584,7 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [])
       owner: event.handoff ? 'Recepção / Núbia' : 'Assistente IA',
       aiReason,
       schedulingLink: defaultSchedulingUrl,
-      hasSchedulingLink: target === 'link_enviado' || target === 'agendamento_confirmado' || String(event.message_text || '').toLowerCase().includes('agendar'),
+      hasSchedulingLink: target === 'agendamentos' || hasSchedulingSignal(event.message_text),
       lastAt: formatDate(event.created_at),
     });
   }
@@ -514,13 +601,57 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [])
       owner: appointment.statusLabel,
     }));
 
-  columns.push({
-    id: 'agendamentos',
-    title: 'Agendamentos',
-    cards: appointmentCards,
-  });
+  const appointmentsColumn = findKanbanColumn(columns, 'agendamentos');
+  if (appointmentsColumn) {
+    appointmentsColumn.cards.push(...appointmentCards);
+  } else {
+    columns.push({
+      id: 'agendamentos',
+      title: 'Agendamentos',
+      automationKey: 'agendamentos',
+      cards: appointmentCards,
+    });
+  }
 
   return columns;
+}
+
+function buildKanbanColumns(kanbanConfig) {
+  const configuredColumns = kanbanConfig?.columns;
+  if (!Array.isArray(configuredColumns) || !configuredColumns.length) {
+    return emptyKanban();
+  }
+
+  const columnsByKey = new Map(emptyKanban().map((column) => [column.automationKey, column]));
+
+  for (const column of configuredColumns) {
+    const rawKey = column.automation_key || column.id || column.name;
+    const canonicalKey = canonicalKanbanKey(rawKey);
+    const officialColumn = OFFICIAL_KANBAN_COLUMNS.find((item) => item.automationKey === canonicalKey);
+    if (!officialColumn) continue;
+
+    const usesOfficialKey = canonicalKey === normalizeKey(rawKey);
+    columnsByKey.set(canonicalKey, {
+      ...officialColumn,
+      title: usesOfficialKey && column.name ? column.name : officialColumn.title,
+      boardId: column.board_id,
+      position: column.position,
+      cards: [],
+    });
+  }
+
+  return OFFICIAL_KANBAN_COLUMNS.map((column) => (
+    columnsByKey.get(column.automationKey) || { ...column, cards: [] }
+  ));
+}
+
+function findKanbanColumn(columns, targetKey) {
+  const target = canonicalKanbanKey(targetKey);
+  return columns.find((column) => (
+    canonicalKanbanKey(column.automationKey) === target ||
+    canonicalKanbanKey(column.automation_key) === target ||
+    canonicalKanbanKey(column.id) === target
+  ));
 }
 
 export function emptyFunnel() {
@@ -554,16 +685,34 @@ function eventsToFunnel(events) {
   return stages.map((stage) => ({ ...stage, conversion: Math.round((stage.count / total) * 100) }));
 }
 
-function pickColumn(stage, handoff, messageText = '') {
+function pickColumn(stage, handoff, messageText = '', context = {}) {
   const norm = normalizeStage(stage);
   const text = String(messageText || '').toLowerCase();
 
-  if (handoff || norm === 'Atendimento humano') return 'humano';
-  if (norm === 'Cliente fechado' || norm === 'Concluídos' || norm === 'Finalizada') return 'concluido';
-  if (norm === 'Agendamento confirmado' || text.includes('confirmado') || text.includes('agendado')) return 'agendamento_confirmado';
-  if (norm === 'Agendamento' || text.includes('agendar') || text.includes('horario') || text.includes('tuaagenda') || text.includes('link')) return 'link_enviado';
-  if (norm === 'Qualificação' || text.includes('bronze') || text.includes('resultado') || text.includes('duvida')) return 'qualificacao';
-  return 'novo';
+  if (handoff || norm === 'Atendimento humano') return 'conversas_humanos';
+  if (norm === 'Agendamento confirmado' || text.includes('confirmado') || text.includes('agendado')) return 'agendamentos';
+  if (context.isFirstContact && context.direction !== 'outbound') return 'novas_conversas';
+  return 'conversas_andamento';
+}
+
+function canonicalKanbanKey(key) {
+  const normalized = normalizeKey(key);
+  return KANBAN_KEY_ALIASES[normalized] || normalized;
+}
+
+function normalizeKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function hasSchedulingSignal(messageText = '') {
+  const text = String(messageText || '').toLowerCase();
+  return text.includes('agendar') || text.includes('horario') || text.includes('horário') || text.includes('tuaagenda') || text.includes('link');
 }
 
 function statusFromEvent(event) {
