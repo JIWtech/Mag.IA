@@ -1,3 +1,5 @@
+import { getCurrentSession } from './authService';
+
 const env = {
   supabaseUrl: import.meta.env.VITE_SUPABASE_URL || '',
   supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
@@ -16,9 +18,17 @@ export function getIntegrationStatus(activeTenantSlug = env.tenantSlug) {
 
 export async function sendN8nCommand(command, payload, activeTenantSlug = env.tenantSlug) {
   const url = `${env.n8nBaseUrl.replace(/\/$/, '')}/webhook/magia-command`;
+  const session = await getCurrentSession();
+  if (!session?.access_token) {
+    throw new Error('Sessao expirada. Entre novamente para enviar mensagens.');
+  }
+
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
     body: JSON.stringify({
       tenant_slug: activeTenantSlug,
       command,

@@ -134,3 +134,6 @@ Etapas:
 - Render Static Sites: https://render.com/pricing
 - Gemini API: https://ai.google.dev/gemini-api/docs/pricing
 - n8n webhook URL: https://docs.n8n.io/deploy/host-n8n/configure-n8n/basic-configuration/configuration-examples/configure-webhook-urls-with-reverse-proxy
+> Documento legado do piloto JIW. Nao usar como runbook de producao.
+> O fluxo oficial atual e `magia_telegram_multitenant.json` em
+> `/webhook/telegram?tenant_slug=slug_do_cliente`.

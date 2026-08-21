@@ -96,6 +96,7 @@ Exemplos:
 TELEGRAM_BOT_TOKEN_JIW
 TELEGRAM_BOT_TOKEN_CLINICA_SANTOS
 TELEGRAM_BOT_TOKEN_STUDIO_ANA
+TELEGRAM_BOT_TOKEN_BRONZEAMENTO_DOM_IAN
 ```
 
 Nunca colocar token no frontend, em documento publico ou em print de

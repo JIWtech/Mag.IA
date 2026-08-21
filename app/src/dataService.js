@@ -494,11 +494,10 @@ function eventsToConversations(events) {
 
 export const TENANT_SCHEDULING_LINKS = {
   clinica_nubia: 'https://nbbronze.tuaagenda.app/',
-  jiw: 'https://nbbronze.tuaagenda.app/',
 };
 
 export function getTenantSchedulingLink(tenantSlug) {
-  return TENANT_SCHEDULING_LINKS[tenantSlug] || 'https://nbbronze.tuaagenda.app/';
+  return TENANT_SCHEDULING_LINKS[tenantSlug] || '';
 }
 
 const OFFICIAL_KANBAN_COLUMNS = [
@@ -581,10 +580,10 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
       stage: normalizeStage(event.stage),
       targetColumnId: target,
       value: formatCurrency(estimatedValue(event)),
-      owner: event.handoff ? 'Recepção / Núbia' : 'Assistente IA',
+      owner: event.handoff ? 'Atendimento humano' : 'Assistente IA',
       aiReason,
       schedulingLink: defaultSchedulingUrl,
-      hasSchedulingLink: target === 'agendamentos' || hasSchedulingSignal(event.message_text),
+      hasSchedulingLink: Boolean(defaultSchedulingUrl) && (target === 'agendamentos' || hasSchedulingSignal(event.message_text)),
       lastAt: formatDate(event.created_at),
     });
   }

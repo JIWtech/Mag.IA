@@ -33,8 +33,9 @@ POSTGRES_PASSWORD
 REDIS_PASSWORD
 N8N_ENCRYPTION_KEY
 SUPABASE_URL
+SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
-TELEGRAM_BOT_TOKEN_JIW
+TELEGRAM_BOT_TOKEN_{TENANT_SLUG_EM_CAIXA_ALTA}
 EVOLUTION_POSTGRES_PASSWORD
 EVOLUTION_API_KEY
 ```
@@ -103,13 +104,13 @@ evolution_postgres
 Com o container `n8n` ligado:
 
 ```powershell
-docker cp n8n\workflows\jiw_telegram_real_supabase.json n8n:/tmp/jiw_telegram_real_supabase.json
+docker cp n8n\workflows\magia_telegram_multitenant.json n8n:/tmp/magia_telegram_multitenant.json
 docker cp n8n\workflows\magia_command_router.json n8n:/tmp/magia_command_router.json
 
-docker exec n8n n8n import:workflow --input=/tmp/jiw_telegram_real_supabase.json
+docker exec n8n n8n import:workflow --input=/tmp/magia_telegram_multitenant.json
 docker exec n8n n8n import:workflow --input=/tmp/magia_command_router.json
 
-docker exec n8n n8n publish:workflow --id=jiwTelegramReal01
+docker exec n8n n8n publish:workflow --id=magiaTelegramMultiTenant01
 docker exec n8n n8n publish:workflow --id=magiaCommandRouter01
 ```
 
@@ -178,7 +179,7 @@ temporaria apontando para `localhost:5678`, por exemplo localhost.run.
 Depois configure o webhook do Telegram para:
 
 ```text
-https://URL-DO-TUNEL/webhook/telegram-jiw-real
+https://URL-DO-TUNEL/webhook/telegram?tenant_slug=jiw
 ```
 
 Validar webhook:
@@ -218,9 +219,9 @@ limit 20;
 
 ## 10. Teste local do Instagram sem token Meta
 
-O workflow de Instagram pode ser validado localmente com payload simulado. Esse
-teste grava no Supabase e aparece na interface, mas nao envia DM real enquanto
-`INSTAGRAM_PAGE_ACCESS_TOKEN_JIW` nao estiver configurado.
+O workflow de Instagram ainda e legado do piloto. Para producao, use apenas
+Telegram multi-tenant ate o adapter oficial de Instagram ser padronizado por
+tenant.
 
 Webhook local:
 

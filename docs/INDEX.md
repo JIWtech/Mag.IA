@@ -17,6 +17,9 @@ desenvolvimento e preparar hospedagem.
 - `operations/hosting_preparation.md`  
   Checklist para sair do ambiente local e hospedar o piloto JIW.
 
+- `operations/production_deploy_checklist.md`  
+  Checklist objetivo para publicar Supabase, n8n e interface sem usar workflows legados.
+
 - `architecture/final_architecture.md`  
   Decisoes de arquitetura SaaS multi-tenant.
 
@@ -61,12 +64,12 @@ desenvolvimento e preparar hospedagem.
 
 ## n8n
 
-- `../n8n/workflows/jiw_telegram_real_supabase.json`
 - `../n8n/workflows/magia_telegram_multitenant.json`
-- `../n8n/workflows/jiw_instagram_real_supabase.json`
-- `../n8n/workflows/magia_whatsapp_evolution_mvp.json`
 - `../n8n/workflows/magia_command_router.json`
-- `../n8n/workflows/jiw_telegram_mock.json`
+- `../n8n/workflows/magia_whatsapp_evolution_mvp.json`
+
+Arquivos `jiw_*.json` sao legado do piloto e nao devem ser importados como
+fluxos principais de producao.
 
 ## Cliente piloto
 

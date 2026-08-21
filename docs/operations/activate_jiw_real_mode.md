@@ -90,3 +90,6 @@ Depois do `channel_events` funcionando:
 3. Materializar mensagens em `messages`.
 4. Atualizar kanban/funil real.
 5. Ativar IA paga com budget por tenant.
+> Documento legado do piloto JIW. Nao usar como runbook de producao.
+> O fluxo oficial atual e `magia_telegram_multitenant.json` em
+> `/webhook/telegram?tenant_slug=slug_do_cliente`.

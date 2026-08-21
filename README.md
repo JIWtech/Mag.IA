@@ -8,18 +8,15 @@ deve ficar aqui.
 
 ## Estado Atual
 
-Cliente piloto oficial:
+Estado operacional atual:
 
 ```text
-Cliente: JIW - Solucoes tecnologicas
-Tenant: jiw
-Canal ativo: Telegram
-Canal preparado: Instagram DM
-Bot: @jiwtech_bot
+Modelo: SaaS multi-tenant
+Canais ativos no core: Telegram e envio manual pela interface
+IA: Gemini por tenant via configuracao no Supabase
 Interface local: http://localhost:5174
 n8n local: http://localhost:5678
 Supabase: remoto, multi-tenant
-IA: Gemini planejado; atualmente pode ficar desligado para controlar custo
 ```
 
 O que ja esta funcional localmente:
@@ -28,10 +25,20 @@ O que ja esta funcional localmente:
 - leitura real de conversas via Supabase;
 - atualizacao da aba Conversas via Realtime com polling de apoio;
 - envio manual pela interface para Telegram;
-- workflow n8n real da JIW para receber mensagens Telegram;
-- workflow n8n oficial para receber Instagram DM e salvar em Supabase;
+- workflow n8n multi-tenant para receber mensagens Telegram;
 - workflow n8n generico `Mag.IA/Core - Command Router` para comandos da interface;
+- prompts, configuracoes de IA e dados por cliente via Supabase;
 - tabela `channel_events` recebendo mensagens de entrada e saida.
+
+Em producao, use os workflows oficiais:
+
+```text
+n8n/workflows/magia_telegram_multitenant.json
+n8n/workflows/magia_command_router.json
+```
+
+Os arquivos `jiw_*.json` sao legado/historico do piloto e nao devem ser
+importados como fluxo principal de producao.
 
 ## Estrutura Oficial
 
@@ -92,6 +99,7 @@ docs/operations/local_runbook.md
 - `docs/operations/versioning_workflow.md`
 - `docs/operations/local_runbook.md`
 - `docs/operations/hosting_preparation.md`
+- `docs/operations/production_deploy_checklist.md`
 - `docs/operations/realtime_conversations_manual_replies.md`
 - `docs/operations/broadcasts_and_appointments.md`
 - `docs/operations/gemini_jiw_setup.md`

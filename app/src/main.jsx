@@ -930,9 +930,20 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
   const schedulingUrl = getTenantSchedulingLink(tenantSlug);
 
   function copySchedulingLink(cardId, link) {
-    navigator.clipboard.writeText(link || schedulingUrl);
+    const targetLink = link || schedulingUrl;
+    if (!targetLink) return;
+    navigator.clipboard.writeText(targetLink);
     setCopiedCardId(cardId);
     setTimeout(() => setCopiedCardId(null), 2500);
+  }
+
+  function formatSchedulingLink(link) {
+    if (!link) return '';
+    try {
+      return new URL(link).host;
+    } catch (e) {
+      return link;
+    }
   }
 
   const filteredColumns = useMemo(() => {
@@ -1069,12 +1080,12 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
                       </div>
                     )}
 
-                    {card.hasSchedulingLink && (
+                    {card.hasSchedulingLink && (card.schedulingLink || schedulingUrl) && (
                       <div className="scheduling-link-box">
                         <div className="link-info">
                           <CalendarCheck size={14} className="calendar-icon" />
                           <span className="link-text" title={card.schedulingLink || schedulingUrl}>
-                            nbbronze.tuaagenda.app
+                            {formatSchedulingLink(card.schedulingLink || schedulingUrl)}
                           </span>
                         </div>
                         <div className="link-actions">
@@ -1260,7 +1271,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
       for (const contact of recipients) {
         try {
           await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, { status: 'sending' });
-          const result = await sendN8nCommand('manual_reply', {
+          const result = await sendN8nCommand('broadcast_send', {
             channel_type: contact.channel_type || contact.channelType || 'telegram',
             external_conversation_id: contact.external_conversation_id || contact.externalConversationId,
             contact_name: contact.name || contact.contact_name || 'Contato',

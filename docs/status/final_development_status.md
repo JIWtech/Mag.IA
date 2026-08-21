@@ -76,3 +76,6 @@ magia/n8n/workflows/jiw_telegram_real_supabase.json
 magia/supabase/migrations/
 magia/supabase/seeds/jiw_seed.sql
 ```
+> Documento historico. Para deploy atual de producao, use
+> `docs/operations/production_deploy_checklist.md` e os workflows
+> `magia_telegram_multitenant.json` + `magia_command_router.json`.

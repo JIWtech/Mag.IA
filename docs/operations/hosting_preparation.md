@@ -71,10 +71,9 @@ N8N_EDITOR_BASE_URL=https://n8n.seudominio.com/
 WEBHOOK_URL=https://n8n.seudominio.com/
 N8N_ENCRYPTION_KEY=valor-fixo-e-guardado
 SUPABASE_URL=https://seu-projeto.supabase.co
+SUPABASE_ANON_KEY=anon-key
 SUPABASE_SERVICE_ROLE_KEY=service-role-key
-TELEGRAM_BOT_TOKEN_JIW=token-do-bot
-INSTAGRAM_VERIFY_TOKEN_JIW=token-de-verificacao
-INSTAGRAM_PAGE_ACCESS_TOKEN_JIW=[TOKEN_DA_META]
+TELEGRAM_BOT_TOKEN_{TENANT_SLUG_EM_CAIXA_ALTA}=token-do-bot
 GEMINI_ENABLED=false
 GEMINI_API_KEY=
 ```
@@ -116,9 +115,9 @@ app/dist
 - [ ] Seeds da JIW aplicados.
 - [ ] n8n com dominio HTTPS fixo.
 - [ ] `WEBHOOK_URL` definitivo configurado.
-- [ ] Workflows importados, publicados e ativos.
-- [ ] Telegram apontando para `/webhook/telegram-jiw-real`.
-- [ ] Instagram/Meta apontando para `/webhook/instagram-jiw`.
+- [ ] Workflows `magia_telegram_multitenant` e `magia_command_router` importados, publicados e ativos.
+- [ ] Telegram apontando para `/webhook/telegram?tenant_slug=slug_do_cliente`.
+- [ ] Instagram/Meta ainda nao publicado como canal principal ate existir adapter multi-tenant oficial.
 - [ ] Interface hospedada apontando para Supabase e n8n corretos.
 - [ ] Resposta manual pela interface testada.
 - [ ] Gemini ativado com limite baixo ou mantido desligado.

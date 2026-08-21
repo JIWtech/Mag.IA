@@ -630,3 +630,6 @@ docker compose restart n8n
 - [ ] Interface com `VITE_TENANT_SLUG` do novo cliente.
 - [ ] Gemini ligado com limite baixo.
 - [ ] Teste ponta a ponta feito antes da reuniao.
+> Documento de demo antigo. Para onboarding atual, use
+> `docs/operations/onboarding_telegram_multitenant.md` e
+> `docs/operations/production_deploy_checklist.md`.

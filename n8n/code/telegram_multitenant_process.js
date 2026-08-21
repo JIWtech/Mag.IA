@@ -12,6 +12,7 @@ const tenantSlug = String(query.tenant_slug || query.tenant || params.tenant_slu
   .trim()
   .toLowerCase()
   .replace(/[^a-z0-9_-]/g, '');
+const requestId = `${tenantSlug || 'unknown'}:telegram:${Date.now()}`;
 const firstName = from.first_name || chat.first_name || 'tudo bem';
 const normalized = rawText.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
@@ -65,14 +66,14 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function httpJson(method, url, headers = {}, payload = null) {
+async function httpJson(method, url, headers = {}, payload = null, options = {}) {
   return await helpers.httpRequest({
     method,
     url,
     headers,
     ...(payload === null ? {} : { body: payload }),
     json: true,
-    timeout: 45000,
+    timeout: Number(options.timeout || 15000),
   });
 }
 
@@ -115,10 +116,10 @@ async function loadTenantContext() {
 
   const tenantId = tenant.id;
   const [settingsRows, agentRows, promptRows, channelRows] = await Promise.all([
-    supabaseGet('/rest/v1/tenant_settings?select=*&tenant_id=eq.' + tenantId + '&limit=1').catch(() => []),
-    supabaseGet('/rest/v1/ai_agents?select=*&tenant_id=eq.' + tenantId + '&limit=1').catch(() => []),
-    supabaseGet('/rest/v1/ai_prompt_versions?select=*&tenant_id=eq.' + tenantId + '&active=eq.true&order=version.desc&limit=1').catch(() => []),
-    supabaseGet('/rest/v1/channels?select=*&tenant_id=eq.' + tenantId + '&type=eq.telegram&limit=1').catch(() => []),
+    supabaseGet('/rest/v1/tenant_settings?select=*&tenant_id=eq.' + tenantId + '&limit=1'),
+    supabaseGet('/rest/v1/ai_agents?select=*&tenant_id=eq.' + tenantId + '&limit=1'),
+    supabaseGet('/rest/v1/ai_prompt_versions?select=*&tenant_id=eq.' + tenantId + '&active=eq.true&order=version.desc&limit=1'),
+    supabaseGet('/rest/v1/channels?select=*&tenant_id=eq.' + tenantId + '&type=eq.telegram&limit=1'),
   ]);
 
   return {
@@ -131,14 +132,18 @@ async function loadTenantContext() {
 }
 
 async function loadRecentHistory() {
-  if (!chatId) return [];
-  const path = '/rest/v1/channel_events?select=direction,sender_type,message_text,response_text,stage,created_at'
+  if (!chatId) return { rows: [], error: '' };
+  const path = '/rest/v1/channel_events?select=direction,sender_type,sent_by_user,message_text,response_text,service,stage,handoff,raw_payload,created_at'
     + '&tenant_slug=eq.' + encodeFilter(tenantSlug)
     + '&channel_type=eq.telegram'
     + '&external_conversation_id=eq.' + encodeFilter(String(chatId))
     + '&order=created_at.desc&limit=8';
-  const rows = await supabaseGet(path).catch(() => []);
-  return Array.isArray(rows) ? rows.reverse() : [];
+  try {
+    const rows = await supabaseGet(path);
+    return { rows: Array.isArray(rows) ? rows.reverse() : [], error: '' };
+  } catch (error) {
+    return { rows: [], error: error.message || String(error) };
+  }
 }
 
 async function loadCatalogContext() {
@@ -163,6 +168,32 @@ async function loadCatalogContext() {
   } catch (error) {
     return { matches: [], context: '', error: error.message || String(error) };
   }
+}
+
+function defaultConversationState(history = []) {
+  const latestState = [...history].reverse().find((item) => item.raw_payload?.agent_state)?.raw_payload?.agent_state || {};
+  const latest = history[history.length - 1] || {};
+  return {
+    saudacao_enviada: history.length > 0,
+    nome_cliente: latestState.customer_name || latestState.nome_cliente || null,
+    servico: latestState.service || latestState.servico || latest.service || null,
+    dia: latestState.date || latestState.dia || null,
+    periodo: latestState.period || latestState.periodo || null,
+    agendamento_em_andamento: Boolean(latestState.ready_to_schedule || latestState.agendamento_em_andamento || latest.stage === 'Agendamento'),
+    ultima_pergunta: latest.response_text || latestState.last_question || latestState.ultima_pergunta || null,
+  };
+}
+
+function mergeConversationState(previousState, structured = {}) {
+  return {
+    ...previousState,
+    nome_cliente: structured.customer_name || previousState.nome_cliente || null,
+    servico: structured.service || previousState.servico || null,
+    dia: structured.date || previousState.dia || null,
+    periodo: structured.period || previousState.periodo || null,
+    agendamento_em_andamento: Boolean(structured.intent === 'scheduling' || structured.ready_to_schedule || previousState.agendamento_em_andamento),
+    ultima_pergunta: structured.reply || previousState.ultima_pergunta || null,
+  };
 }
 
 function classify(context = {}) {
@@ -286,6 +317,67 @@ function buildAppointmentMessage(settings) {
   return `Para seguir com o agendamento, me envie:\n${fields.map((field, index) => `${index + 1}. ${field}`).join('\n')}`;
 }
 
+function asksForPrice() {
+  return hasAny(['valor', 'preco', 'preço', 'quanto custa', 'custa', 'tabela', 'orçamento', 'orcamento']);
+}
+
+function normalizeServiceKey(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function servicePrice(settings, service) {
+  const prices = settings.service_prices || settings.prices || {};
+  const key = normalizeServiceKey(service);
+  const direct = prices[service] ?? prices[key];
+  if (direct !== undefined) return direct;
+
+  for (const [candidateKey, candidateValue] of Object.entries(prices)) {
+    if (normalizeServiceKey(candidateKey) === key) return candidateValue;
+  }
+  return null;
+}
+
+function formatPrice(value) {
+  const amount = typeof value === 'object' && value !== null ? value.price : value;
+  const number = Number(amount);
+  if (!Number.isFinite(number)) return String(amount || '');
+  return 'R$ ' + number.toFixed(2).replace('.', ',');
+}
+
+function serviceLabel(settings, service) {
+  const prices = settings.service_prices || settings.prices || {};
+  const entry = prices[service] || prices[normalizeServiceKey(service)];
+  if (entry && typeof entry === 'object' && entry.label) return entry.label;
+  return String(service || '').replace(/_/g, ' ');
+}
+
+function applyPricingGuard(reply, structured, settings) {
+  if (!structured?.service || !asksForPrice()) return reply;
+  const price = servicePrice(settings, structured.service);
+  if (price === null || price === undefined || price === '') return reply;
+  return `${serviceLabel(settings, structured.service)} fica ${formatPrice(price)}. Quer garantir seu horario?`;
+}
+
+const AGENT_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    intent: {
+      type: 'string',
+      enum: ['greeting', 'service_info', 'pricing', 'scheduling', 'complaint', 'handoff', 'out_of_scope', 'other'],
+    },
+    reply: { type: 'string' },
+    service: { type: ['string', 'null'] },
+    customer_name: { type: ['string', 'null'] },
+    date: { type: ['string', 'null'] },
+    period: { type: ['string', 'null'], enum: ['manha', 'tarde', 'noite', 'indiferente', null] },
+    ready_to_schedule: { type: 'boolean' },
+    handoff: { type: 'boolean' },
+    action_tag: { type: ['string', 'null'], enum: ['PRONTO_PARA_AGENDAR', 'RECLAMACAO', 'HUMANO_SOLICITADO', null] },
+  },
+  required: ['intent', 'reply', 'service', 'customer_name', 'date', 'period', 'ready_to_schedule', 'handoff', 'action_tag'],
+};
+
 function usageGate(context = {}) {
   const settings = settingsFor(context);
   const tenantAiMode = String(settings.ai_mode || '').toLowerCase();
@@ -311,13 +403,14 @@ function markUsage() {
 }
 
 async function callGemini(context, classification, fallback, history, catalog) {
+  const settings = settingsFor(context);
   const agent = context.agent || {};
-  const model = agent.model || env('GEMINI_MODEL', 'gemini-2.5-flash-lite');
+  const model = settings.ai_model || agent.model || env('GEMINI_MODEL', 'gemini-2.5-flash-lite');
   const maxOutputTokens = Math.min(Number(agent.max_tokens || env('GEMINI_MAX_OUTPUT_TOKENS', 300)), 500);
   const temperature = Number(agent.temperature || 0.65);
   const basePrompt = activePromptFor(context)
     || `Voce e o assistente virtual da empresa ${context.tenant.name}. Seu papel e entender a necessidade do contato, responder com clareza, qualificar oportunidades e solicitar atendimento humano quando necessario.`;
-  const settings = settingsFor(context);
+  const conversationState = defaultConversationState(history);
   const recentHistory = history.length
     ? history.map((item) => {
       const actor = item.direction === 'outbound' ? 'Assistente/equipe' : 'Cliente';
@@ -338,9 +431,13 @@ ${JSON.stringify({
   service_categories: settings.service_categories || [],
   menu_options: settings.menu_options || settings.conversation_options || [],
   manual_responses: settings.manual_responses || settings.faq || [],
+  service_prices: settings.service_prices || settings.prices || {},
   appointment_fields: settings.appointment_fields || settings.required_fields || [],
   handoff_rules: settings.handoff_rules || [],
 }).slice(0, 3000)}
+
+Estado atual da conversa:
+${JSON.stringify(conversationState)}
 
 Historico recente:
 ${recentHistory}
@@ -359,7 +456,23 @@ Regras:
 - Nao invente preco, prazo fechado, disponibilidade ou garantia.
 - Faca no maximo 2 ou 3 perguntas por resposta.
 - Se houver pedido de orcamento, urgencia ou humano, inclua [HUMANO_SOLICITADO].
-- Maximo de 900 caracteres.`;
+- Maximo de 900 caracteres.
+- Retorne somente JSON valido no schema solicitado.
+- Use o campo reply para a mensagem que sera enviada a cliente.
+- Se a cliente responder "sim", "isso", "pode ser" ou similar, use o estado da conversa para continuar o fluxo anterior, sem reiniciar explicacoes.
+
+Schema obrigatorio da resposta:
+{
+  "intent": "greeting|service_info|pricing|scheduling|complaint|handoff|out_of_scope|other",
+  "reply": "mensagem curta para enviar a cliente",
+  "service": "servico_identificado_ou_null",
+  "customer_name": "nome_ou_null",
+  "date": "data_ou_null",
+  "period": "manha|tarde|noite|indiferente|null",
+  "ready_to_schedule": false,
+  "handoff": false,
+  "action_tag": "PRONTO_PARA_AGENDAR|RECLAMACAO|HUMANO_SOLICITADO|null"
+}`;
 
   const body = await httpJson(
     'POST',
@@ -376,12 +489,38 @@ Regras:
         topK: 40,
         maxOutputTokens,
         candidateCount: 1,
+        responseMimeType: 'application/json',
       },
     },
+    { timeout: Number(env('GEMINI_TIMEOUT_MS', 5000)) },
   );
   const text = body?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim();
   if (!text) throw new Error('Gemini sem texto de resposta');
-  return { text, usage: body.usageMetadata || {}, model };
+  let structured;
+  try {
+    structured = JSON.parse(text);
+  } catch (error) {
+    structured = {
+      intent: 'other',
+      reply: text,
+      service: conversationState.servico || null,
+      customer_name: conversationState.nome_cliente || null,
+      date: conversationState.dia || null,
+      period: conversationState.periodo || null,
+      ready_to_schedule: false,
+      handoff: false,
+      action_tag: null,
+    };
+  }
+  const guardedReply = applyPricingGuard(structured.reply || fallback, structured, settings);
+  structured.reply = guardedReply;
+  return {
+    text: guardedReply,
+    structured,
+    state: mergeConversationState(conversationState, structured),
+    usage: body.usageMetadata || {},
+    model,
+  };
 }
 
 async function saveEvent(event) {
@@ -395,7 +534,8 @@ if (!chatId) return { json: { ok: false, error: 'missing_chat_id' } };
 try {
   const context = await loadTenantContext();
   const classification = classify(context);
-  const history = await loadRecentHistory();
+  const historyResult = await loadRecentHistory();
+  const history = historyResult.rows;
   const catalog = await loadCatalogContext();
   const fallback = fallbackAnswer(context, classification);
   const gate = usageGate(context);
@@ -405,6 +545,8 @@ try {
   let aiModel = env('GEMINI_MODEL', 'gemini-2.5-flash-lite');
   let aiError = '';
   let aiUsage = {};
+  let structuredOutput = null;
+  let agentState = defaultConversationState(history);
 
   if (rawText && gate.allowed) {
     try {
@@ -413,6 +555,8 @@ try {
       aiProvider = 'gemini';
       aiModel = gemini.model;
       aiUsage = gemini.usage;
+      structuredOutput = gemini.structured;
+      agentState = gemini.state || agentState;
       markUsage();
     } catch (error) {
       aiProvider = 'fallback_gemini_error';
@@ -456,7 +600,19 @@ try {
     catalog_error: catalog.error || '',
     gemini_daily_limit: gate.dailyLimit,
     gemini_used_today_before_request: gate.usedToday,
-    raw_payload: update,
+    request_id: requestId,
+    error_code: historyResult.error ? 'history_load_error' : null,
+    raw_payload: {
+      telegram_update: update,
+      agent_state: agentState,
+      structured_output: structuredOutput,
+      observability: {
+        request_id: requestId,
+        history_count: history.length,
+        history_error: historyResult.error,
+        prompt_source: activePromptFor(context) ? 'tenant_config' : 'default',
+      },
+    },
   };
   await saveEvent(event);
 
@@ -481,7 +637,9 @@ try {
       tenant_slug: tenantSlug,
       channel_type: 'telegram',
       chat_id: chatId,
+      request_id: requestId,
       error: error.message || String(error),
+      error_code: 'telegram_processing_error',
       telegram_response: {
         method: 'sendMessage',
         chat_id: chatId,

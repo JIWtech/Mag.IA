@@ -143,4 +143,7 @@ docs/operations/hosting_preparation.md
 docs/operations/realtime_conversations_manual_replies.md
 docs/operations/gemini_jiw_setup.md
 ```
+> Documento historico. Para deploy atual de producao, use
+> `docs/operations/production_deploy_checklist.md` e os workflows
+> `magia_telegram_multitenant.json` + `magia_command_router.json`.
 

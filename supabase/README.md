@@ -14,9 +14,19 @@ migrations/004_ai_usage_channel_events.sql
 migrations/005_tenant_service_catalog.sql
 migrations/006_frontend_read_policies_jiw.sql
 migrations/007_realtime_manual_replies.sql
+migrations/008_auth_multi_tenant_policies.sql
+migrations/009_team_agents.sql
+migrations/010_broadcasts_and_appointments.sql
+migrations/011_ai_knowledge_pgvector.sql
+migrations/012_standard_kanban_four_columns.sql
+migrations/013_security_schema_alignment.sql
 seeds/jiw_seed.sql
 seeds/jiw_service_catalog_seed.sql
 ```
+
+Observacao: a migration `006_frontend_read_policies_jiw.sql` e legado do piloto.
+A `013_security_schema_alignment.sql` remove essas policies abertas e deixa o
+acesso preso a `tenant_members`.
 
 ## Modelo
 
