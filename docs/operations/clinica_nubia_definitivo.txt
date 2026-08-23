@@ -1,0 +1,98 @@
+SETUP DEFINITIVO - CLINICA DA NUBIA
+
+Objetivo:
+Deixar a Clinica da Nubia pronta para teste real com Telegram, Gemini, Kanban customizado e atendimento humano pela interface.
+
+1. Criar ou confirmar usuario no Supabase Auth
+
+Supabase > Authentication > Users.
+
+Crie o usuario da Nubia ou confirme o e-mail que sera usado para login.
+
+2. Rodar o seed definitivo do tenant
+
+Arquivo:
+supabase/seeds/clinica_nubia_final_setup.sql
+
+Antes de rodar, substituir:
+
+AJUSTAR_EMAIL_OWNER
+AJUSTAR_USERNAME_BOT_SEM_ARROBA
+
+Esse SQL configura:
+
+- tenant clinica_nubia
+- vinculo do usuario owner
+- canal Telegram
+- tenant_settings com Gemini ativo
+- prompt sem excesso de emojis
+- ai_agent e ai_prompt_versions
+- Kanban com 6 colunas:
+  1. Conversas IA
+  2. Aguardando humano
+  3. Com humano
+  4. Finalizadas
+  5. Agendamentos
+  6. Conversas abandonadas
+
+3. Variavel do Telegram no n8n/EasyPanel
+
+Adicionar no ambiente do servico n8n:
+
+TELEGRAM_BOT_TOKEN_CLINICA_NUBIA=TOKEN_REAL_DO_BOT
+
+Depois de salvar, redeploy/reiniciar o servico n8n.
+
+4. Webhook do Telegram
+
+Rodar no PowerShell:
+
+$token = "TOKEN_REAL_DO_BOT"
+$url = "https://auton8n-n8n.tplv5d.easypanel.host/webhook/telegram?tenant_slug=clinica_nubia"
+Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/setWebhook" -Method Post -Body @{ url = $url }
+
+5. Workflows n8n obrigatorios
+
+Importar/atualizar no n8n:
+
+n8n/workflows/magia_command_router.json
+n8n/workflows/magia_telegram_multitenant_v4_handoff_close.json
+
+Ativar os dois workflows.
+
+6. Como o Kanban deve funcionar
+
+Conversas IA:
+Conversas ativas respondidas pela IA, sem handoff e sem encerramento.
+
+Aguardando humano:
+Quando a IA indicar que vai conferir agenda, chamar alguem ou tratar reclamacao.
+
+Com humano:
+Quando um operador atribuir a conversa para uma pessoa ou responder manualmente pela interface.
+
+Finalizadas:
+Quando o operador clicar em Encerrar atendimento.
+Depois disso, a proxima mensagem do cliente volta para a IA.
+
+Agendamentos:
+Cards criados manualmente em Agendamentos e eventos detectados como agendamento confirmado.
+
+Conversas abandonadas:
+Conversas ativas sem encerramento e sem nova interacao apos o periodo configurado.
+Padrao atual: 24 horas.
+
+7. Teste final
+
+Fluxo esperado:
+
+1. Cliente manda mensagem no Telegram.
+2. IA responde.
+3. Cliente pede agenda/reclamacao/humano.
+4. Card vai para Aguardando humano.
+5. Operador atribui ou responde pela interface.
+6. Card vai para Com humano.
+7. Operador clica em Encerrar atendimento.
+8. Card vai para Finalizadas.
+9. Cliente manda nova mensagem.
+10. IA volta a responder normalmente.

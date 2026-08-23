@@ -641,6 +641,26 @@ const OFFICIAL_KANBAN_COLUMNS = [
 ];
 
 const KANBAN_KEY_ALIASES = {
+  ia: 'conversas_ia',
+  conversa_ia: 'conversas_ia',
+  conversas_ia: 'conversas_ia',
+  conversas_com_ia: 'conversas_ia',
+  aguardando_humano: 'aguardando_humano',
+  aguardando_atendimento: 'aguardando_humano',
+  aguardando_atendimento_humano: 'aguardando_humano',
+  aguardando: 'aguardando_humano',
+  com_humano: 'com_humano',
+  conversa_com_humano: 'com_humano',
+  conversas_com_humano: 'com_humano',
+  designado_humano: 'com_humano',
+  finalizadas: 'finalizadas',
+  finalizada: 'finalizadas',
+  finalizado: 'finalizadas',
+  encerradas: 'finalizadas',
+  encerrada: 'finalizadas',
+  conversas_abandonadas: 'conversas_abandonadas',
+  abandonadas: 'conversas_abandonadas',
+  abandonada: 'conversas_abandonadas',
   novo: 'novas_conversas',
   novos: 'novas_conversas',
   novas: 'novas_conversas',
@@ -664,8 +684,6 @@ const KANBAN_KEY_ALIASES = {
   agenda: 'agendamentos',
   concluido: 'conversas_andamento',
   concluidos: 'conversas_andamento',
-  finalizado: 'conversas_andamento',
-  finalizada: 'conversas_andamento',
 };
 
 export function emptyKanban() {
@@ -688,17 +706,25 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
   for (const event of latestByChat.values()) {
     const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.id}`;
     const channelType = normalizeChannel(event.channel_type);
-    const target = pickColumn(event.stage, event.handoff, event.message_text, {
+    const targetCandidates = pickColumn(event.stage, event.handoff, event.message_text, {
       direction: event.direction,
       isFirstContact: (eventCountsByChat.get(key) || 0) <= 1,
+      event,
     });
+    const target = targetCandidates.find((candidate) => findKanbanColumn(columns, candidate)) || targetCandidates[0];
     const column = findKanbanColumn(columns, target) || columns[0];
 
     let aiReason = 'IA conduzindo a conversa';
     if (target === 'agendamentos') {
       aiReason = 'Agendamento registrado pelo sistema';
-    } else if (target === 'conversas_humanos') {
+    } else if (target === 'aguardando_humano') {
+      aiReason = 'IA encaminhou para a equipe';
+    } else if (target === 'com_humano' || target === 'conversas_humanos') {
       aiReason = 'Transferido para atendimento humano';
+    } else if (target === 'finalizadas') {
+      aiReason = 'Atendimento finalizado';
+    } else if (target === 'conversas_abandonadas') {
+      aiReason = 'Conversa sem encerramento recente';
     } else if (target === 'novas_conversas') {
       aiReason = 'Primeiro contato recebido';
     }
@@ -713,7 +739,7 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
       stage: normalizeStage(event.stage),
       targetColumnId: target,
       value: formatCurrency(estimatedValue(event)),
-      owner: event.handoff ? 'Atendimento humano' : 'Assistente IA',
+      owner: ownerFromKanbanTarget(target, event),
       aiReason,
       schedulingLink: defaultSchedulingUrl,
       hasSchedulingLink: Boolean(defaultSchedulingUrl) && (target === 'agendamentos' || hasSchedulingSignal(event.message_text)),
@@ -754,27 +780,29 @@ function buildKanbanColumns(kanbanConfig) {
     return emptyKanban();
   }
 
-  const columnsByKey = new Map(emptyKanban().map((column) => [column.automationKey, column]));
-
-  for (const column of configuredColumns) {
-    const rawKey = column.automation_key || column.id || column.name;
-    const canonicalKey = canonicalKanbanKey(rawKey);
-    const officialColumn = OFFICIAL_KANBAN_COLUMNS.find((item) => item.automationKey === canonicalKey);
-    if (!officialColumn) continue;
-
-    const usesOfficialKey = canonicalKey === normalizeKey(rawKey);
-    columnsByKey.set(canonicalKey, {
-      ...officialColumn,
-      title: usesOfficialKey && column.name ? column.name : officialColumn.title,
-      boardId: column.board_id,
-      position: column.position,
-      cards: [],
+  const seen = new Set();
+  return configuredColumns
+    .slice()
+    .sort((left, right) => Number(left.position || 0) - Number(right.position || 0))
+    .map((column) => {
+      const rawKey = column.automation_key || column.id || column.name;
+      const canonicalKey = canonicalKanbanKey(rawKey);
+      const officialColumn = OFFICIAL_KANBAN_COLUMNS.find((item) => item.automationKey === canonicalKey);
+      return {
+        ...(officialColumn || {}),
+        id: canonicalKey || String(column.id || column.name),
+        title: column.name || officialColumn?.title || rawKey || 'Etapa',
+        automationKey: canonicalKey,
+        boardId: column.board_id,
+        position: column.position,
+        cards: [],
+      };
+    })
+    .filter((column) => {
+      if (!column.automationKey || seen.has(column.automationKey)) return false;
+      seen.add(column.automationKey);
+      return true;
     });
-  }
-
-  return OFFICIAL_KANBAN_COLUMNS.map((column) => (
-    columnsByKey.get(column.automationKey) || { ...column, cards: [] }
-  ));
 }
 
 function findKanbanColumn(columns, targetKey) {
@@ -820,11 +848,54 @@ function eventsToFunnel(events) {
 function pickColumn(stage, handoff, messageText = '', context = {}) {
   const norm = normalizeStage(stage);
   const text = String(messageText || '').toLowerCase();
+  const event = context.event || {};
 
-  if (handoff || norm === 'Atendimento humano') return 'conversas_humanos';
-  if (norm === 'Agendamento confirmado' || text.includes('confirmado') || text.includes('agendado')) return 'agendamentos';
-  if (context.isFirstContact && context.direction !== 'outbound') return 'novas_conversas';
-  return 'conversas_andamento';
+  if (isKanbanClosed(event, norm)) return ['finalizadas', 'conversas_andamento'];
+  if (norm === 'Agendamento confirmado' || text.includes('confirmado') || text.includes('agendado')) return ['agendamentos'];
+  if (isKanbanAssignedToHuman(event)) return ['com_humano', 'conversas_humanos'];
+  if (isKanbanWaitingHuman(event, handoff, norm)) return ['aguardando_humano', 'conversas_humanos'];
+  if (isKanbanAbandoned(event, context)) return ['conversas_abandonadas', 'conversas_andamento'];
+  if (context.isFirstContact && context.direction !== 'outbound') return ['conversas_ia', 'novas_conversas', 'conversas_andamento'];
+  return ['conversas_ia', 'conversas_andamento'];
+}
+
+function isKanbanClosed(event, normalizedStage = normalizeStage(event?.stage)) {
+  return normalizedStage === 'Finalizado'
+    || event?.service === 'conversation_closed'
+    || event?.ai_provider === 'conversation_closed'
+    || event?.delivery_status === 'closed';
+}
+
+function isKanbanAssignedToHuman(event) {
+  return event?.sender_type === 'agent'
+    || event?.service === 'manual_reply'
+    || event?.service === 'conversation_assigned'
+    || Boolean(event?.raw_payload?.assignee);
+}
+
+function isKanbanWaitingHuman(event, handoff, normalizedStage = normalizeStage(event?.stage)) {
+  return Boolean(handoff)
+    || normalizedStage === 'Atendimento humano'
+    || event?.ai_provider === 'human_lock'
+    || event?.raw_payload?.internal_actions?.ready_to_schedule
+    || event?.raw_payload?.internal_actions?.complaint_handoff;
+}
+
+function isKanbanAbandoned(event, context = {}) {
+  if (context.direction === 'outbound') return false;
+  if (context.isFirstContact) return false;
+  if (!event?.created_at) return false;
+  const createdAt = Date.parse(event.created_at);
+  if (!Number.isFinite(createdAt)) return false;
+  const abandonedAfterHours = Number(event.raw_payload?.kanban_abandoned_after_hours || 24);
+  return Date.now() - createdAt > abandonedAfterHours * 60 * 60 * 1000;
+}
+
+function ownerFromKanbanTarget(target, event) {
+  if (target === 'com_humano') return event.sent_by_user || event.raw_payload?.assignee?.name || 'Atendimento humano';
+  if (target === 'aguardando_humano') return 'Aguardando humano';
+  if (target === 'finalizadas') return 'Finalizado';
+  return event.handoff ? 'Atendimento humano' : 'Assistente IA';
 }
 
 function canonicalKanbanKey(key) {

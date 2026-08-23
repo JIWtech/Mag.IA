@@ -231,7 +231,12 @@ function App() {
     await removeTeamAgent(agentId, activeTenantSlug);
   }
 
-  function handleAssignAgent(conversationId, agent) {
+  async function handleAssignAgent(conversationOrId, agent) {
+    const selectedConversation = typeof conversationOrId === 'object'
+      ? conversationOrId
+      : appData.conversations.find((conv) => conv.id === conversationOrId);
+    const conversationId = selectedConversation?.id || conversationOrId;
+
     setAppData((prev) => {
       const nextConversations = prev.conversations.map((conv) => {
         if (conv.id === conversationId) {
@@ -259,6 +264,25 @@ function App() {
     });
 
     setAgentsList((prev) => prev.map((ag) => ag.id === agent.id ? { ...ag, load: (ag.load || 0) + 1 } : ag));
+
+    if (!selectedConversation) return;
+    try {
+      await sendN8nCommand('assign_conversation', {
+        channel_type: selectedConversation.channelType || selectedConversation.channel?.toLowerCase(),
+        external_conversation_id: selectedConversation.externalConversationId || selectedConversation.id.replace(/^conv-/, ''),
+        contact_name: selectedConversation.contact,
+        message_text: `Conversa atribuida a ${agent.name}`,
+        sent_by_user: agent.name,
+        assignee: {
+          id: agent.id,
+          name: agent.name,
+          role: agent.role,
+        },
+      }, activeTenantSlug);
+      await refreshData();
+    } catch (error) {
+      console.warn('Falha ao persistir atribuicao de conversa:', error.message || error);
+    }
   }
 
   useEffect(() => {
@@ -1004,7 +1028,7 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
                     type="button"
                     className={`agent-selection-card ${selected.owner === agent.name ? 'selected' : ''}`}
                     onClick={() => {
-                      onAssignAgent?.(selected.id, agent);
+                      onAssignAgent?.(selected, agent);
                       setShowAssignModal(false);
                       setAssignToast(`Conversa atribuída a ${agent.name}`);
                       setTimeout(() => setAssignToast(''), 3000);

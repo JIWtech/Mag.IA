@@ -155,7 +155,7 @@ async function main(helpers) {
   const command = required(input.command, 'command');
   const tenantSlug = required(input.tenant_slug, 'tenant_slug').toLowerCase();
   const payload = input.payload || {};
-  if (!['manual_reply', 'broadcast_send', 'close_conversation'].includes(command)) throw new Error('command nao suportado: ' + command);
+  if (!['manual_reply', 'broadcast_send', 'close_conversation', 'assign_conversation'].includes(command)) throw new Error('command nao suportado: ' + command);
 
   const user = await validateUserSession();
   const tenant = await loadTenant(tenantSlug);
@@ -165,6 +165,8 @@ async function main(helpers) {
   const externalConversationId = required(payload.external_conversation_id, 'payload.external_conversation_id');
   const messageText = command === 'close_conversation'
     ? String(payload.message_text || 'Atendimento encerrado').trim()
+    : command === 'assign_conversation'
+      ? String(payload.message_text || 'Conversa atribuida').trim()
     : required(payload.message_text, 'payload.message_text');
   const token = tokenFor(tenantSlug, channelType);
   const evolution = channelType === 'whatsapp' ? evolutionFor(tenantSlug) : null;
@@ -173,7 +175,7 @@ async function main(helpers) {
   if (!['telegram', 'instagram', 'instagram_direct', 'whatsapp'].includes(channelType)) {
     throw new Error('channel_type ainda nao suportado para envio manual: ' + channelType);
   }
-  if (command !== 'close_conversation' && channelType !== 'whatsapp' && !token) {
+  if (!['close_conversation', 'assign_conversation'].includes(command) && channelType !== 'whatsapp' && !token) {
     throw new Error('token nao configurado para tenant=' + tenantSlug + ' channel=' + channelType);
   }
 
@@ -204,6 +206,44 @@ async function main(helpers) {
         command,
         closed_by: payload.sent_by_user || user.email || 'Operador Mag.IA',
         reason: payload.reason || 'Atendimento encerrado pela interface',
+      },
+    };
+    const saved = await insertEvent(event);
+    return { ok: true, command, tenant_slug: tenantSlug, channel_type: normalizedChannel, command_id: commandId, external_message_id: event.external_message_id, saved };
+  }
+
+  if (command === 'assign_conversation') {
+    const assignee = payload.assignee || {};
+    const assigneeName = assignee.name || payload.assignee_name || payload.sent_by_user || user.email || 'Atendimento humano';
+    const event = {
+      tenant_id: tenant.id,
+      tenant_slug: tenantSlug,
+      channel_type: normalizedChannel,
+      external_conversation_id: externalConversationId,
+      external_message_id: commandId,
+      direction: 'outbound',
+      sender_type: 'system',
+      contact_name: payload.contact_name || 'Contato',
+      message_text: messageText,
+      service: 'conversation_assigned',
+      stage: 'Atendimento humano',
+      handoff: true,
+      response_text: null,
+      ai_provider: 'human_lock',
+      ai_model: null,
+      ai_error: '',
+      ai_usage: {},
+      sent_by_user: assigneeName,
+      delivery_status: 'assigned',
+      command_id: commandId,
+      raw_payload: {
+        command,
+        assigned_by: user.email || 'Operador Mag.IA',
+        assignee: {
+          id: assignee.id || null,
+          name: assigneeName,
+          role: assignee.role || null,
+        },
       },
     };
     const saved = await insertEvent(event);
