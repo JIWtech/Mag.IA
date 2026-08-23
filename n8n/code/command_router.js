@@ -155,7 +155,7 @@ async function main(helpers) {
   const command = required(input.command, 'command');
   const tenantSlug = required(input.tenant_slug, 'tenant_slug').toLowerCase();
   const payload = input.payload || {};
-  if (!['manual_reply', 'broadcast_send'].includes(command)) throw new Error('command nao suportado: ' + command);
+  if (!['manual_reply', 'broadcast_send', 'close_conversation'].includes(command)) throw new Error('command nao suportado: ' + command);
 
   const user = await validateUserSession();
   const tenant = await loadTenant(tenantSlug);
@@ -163,7 +163,9 @@ async function main(helpers) {
 
   const channelType = required(payload.channel_type, 'payload.channel_type').toLowerCase();
   const externalConversationId = required(payload.external_conversation_id, 'payload.external_conversation_id');
-  const messageText = required(payload.message_text, 'payload.message_text');
+  const messageText = command === 'close_conversation'
+    ? String(payload.message_text || 'Atendimento encerrado').trim()
+    : required(payload.message_text, 'payload.message_text');
   const token = tokenFor(tenantSlug, channelType);
   const evolution = channelType === 'whatsapp' ? evolutionFor(tenantSlug) : null;
   const commandId = payload.command_id || tenantSlug + ':' + channelType + ':' + externalConversationId + ':' + Date.now();
@@ -171,11 +173,43 @@ async function main(helpers) {
   if (!['telegram', 'instagram', 'instagram_direct', 'whatsapp'].includes(channelType)) {
     throw new Error('channel_type ainda nao suportado para envio manual: ' + channelType);
   }
-  if (channelType !== 'whatsapp' && !token) {
+  if (command !== 'close_conversation' && channelType !== 'whatsapp' && !token) {
     throw new Error('token nao configurado para tenant=' + tenantSlug + ' channel=' + channelType);
   }
 
   const normalizedChannel = channelType === 'instagram_direct' ? 'instagram' : channelType;
+  if (command === 'close_conversation') {
+    const event = {
+      tenant_id: tenant.id,
+      tenant_slug: tenantSlug,
+      channel_type: normalizedChannel,
+      external_conversation_id: externalConversationId,
+      external_message_id: commandId,
+      direction: 'outbound',
+      sender_type: 'system',
+      contact_name: payload.contact_name || 'Contato',
+      message_text: messageText,
+      service: 'conversation_closed',
+      stage: 'Finalizado',
+      handoff: false,
+      response_text: null,
+      ai_provider: 'conversation_closed',
+      ai_model: null,
+      ai_error: '',
+      ai_usage: {},
+      sent_by_user: payload.sent_by_user || user.email || 'Operador Mag.IA',
+      delivery_status: 'closed',
+      command_id: commandId,
+      raw_payload: {
+        command,
+        closed_by: payload.sent_by_user || user.email || 'Operador Mag.IA',
+        reason: payload.reason || 'Atendimento encerrado pela interface',
+      },
+    };
+    const saved = await insertEvent(event);
+    return { ok: true, command, tenant_slug: tenantSlug, channel_type: normalizedChannel, command_id: commandId, external_message_id: event.external_message_id, saved };
+  }
+
   const sent = normalizedChannel === 'telegram'
     ? await sendTelegram(token, externalConversationId, messageText)
     : normalizedChannel === 'whatsapp'

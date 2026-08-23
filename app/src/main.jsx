@@ -563,6 +563,7 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [ending, setEnding] = useState(false);
   const [sendError, setSendError] = useState('');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignToast, setAssignToast] = useState('');
@@ -642,6 +643,31 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
       setSendError(error.message || 'Não foi possível enviar a resposta.');
     } finally {
       setSending(false);
+    }
+  }
+
+  async function closeConversation() {
+    if (!selected || ending) return;
+
+    const confirmed = window.confirm('Encerrar este atendimento e devolver a proxima mensagem para a IA?');
+    if (!confirmed) return;
+
+    setEnding(true);
+    setSendError('');
+    try {
+      await sendN8nCommand('close_conversation', {
+        channel_type: selected.channelType || selected.channel.toLowerCase(),
+        external_conversation_id: selected.externalConversationId || selected.id.replace(/^conv-/, ''),
+        contact_name: selected.contact,
+        message_text: 'Atendimento encerrado pela interface',
+        sent_by_user: 'Operador Mag.IA',
+        reason: 'Atendimento finalizado pelo operador',
+      }, tenantSlug);
+      await onSent?.();
+    } catch (error) {
+      setSendError(error.message || 'Nao foi possivel encerrar o atendimento.');
+    } finally {
+      setEnding(false);
     }
   }
 
@@ -804,6 +830,15 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
               <span>{selected.stage} · Responsável: <strong>{selected.owner || 'Não atribuído'}</strong></span>
             </div>
             <div className="header-actions">
+              <button
+                className="secondary-button text-danger"
+                type="button"
+                onClick={closeConversation}
+                disabled={ending}
+                title="Finaliza o atendimento humano e libera a IA para a proxima mensagem do cliente"
+              >
+                <CheckCircle2 size={16} /> {ending ? 'Encerrando...' : 'Encerrar atendimento'}
+              </button>
               <button className="secondary-button" type="button" onClick={() => setShowAssignModal(true)}>
                 <UserRound size={16} /> Atribuir
               </button>
@@ -813,19 +848,20 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
             {(selected.messages || []).map((message, index) => {
               const isAi = message.from === 'ai' || message.sender_type === 'bot';
               const isAgent = message.from === 'agent' || message.sender_type === 'agent';
-              const isContact = !isAi && !isAgent;
+              const isSystem = message.from === 'system' || message.sender_type === 'system';
 
               let senderLabel = selected.contact;
               if (isAi) senderLabel = 'Assistente IA';
               else if (isAgent) senderLabel = message.sent_by || selected.owner || 'Operador';
+              else if (isSystem) senderLabel = 'Sistema';
 
               return (
-                <div key={`${message.at}-${index}`} className={`bubble ${isAi ? 'ai' : isAgent ? 'agent' : 'contact'}`}>
+                <div key={`${message.at}-${index}`} className={`bubble ${isAi ? 'ai' : isAgent || isSystem ? 'agent' : 'contact'}`}>
                   <div className="bubble-sender">{senderLabel}</div>
                   <p className="bubble-text">{message.text}</p>
                   <div className="bubble-meta">
                     <span className="bubble-time">{message.at}</span>
-                    {(isAi || isAgent) && <CheckCheck size={13} className="bubble-check" />}
+                    {(isAi || isAgent || isSystem) && <CheckCheck size={13} className="bubble-check" />}
                   </div>
                 </div>
               );

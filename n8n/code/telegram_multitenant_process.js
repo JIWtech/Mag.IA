@@ -133,7 +133,7 @@ async function loadTenantContext() {
 
 async function loadRecentHistory() {
   if (!chatId) return { rows: [], error: '' };
-  const path = '/rest/v1/channel_events?select=direction,sender_type,sent_by_user,message_text,response_text,service,stage,handoff,raw_payload,created_at'
+  const path = '/rest/v1/channel_events?select=direction,sender_type,sent_by_user,message_text,response_text,service,stage,handoff,ai_provider,raw_payload,created_at'
     + '&tenant_slug=eq.' + encodeFilter(tenantSlug)
     + '&channel_type=eq.telegram'
     + '&external_conversation_id=eq.' + encodeFilter(String(chatId))
@@ -144,6 +144,61 @@ async function loadRecentHistory() {
   } catch (error) {
     return { rows: [], error: error.message || String(error) };
   }
+}
+
+function isConversationClosedEvent(event) {
+  const stage = normalizeText(event?.stage);
+  const service = normalizeText(event?.service);
+  const provider = normalizeText(event?.ai_provider);
+  return stage === 'finalizado'
+    || stage === 'encerrado'
+    || service === 'conversation_closed'
+    || provider === 'conversation_closed';
+}
+
+function historyAfterControlBoundary(history = []) {
+  let boundaryIndex = -1;
+  history.forEach((event, index) => {
+    const stage = normalizeText(event.stage);
+    const provider = normalizeText(event.ai_provider);
+    if (isConversationClosedEvent(event) || stage === 'reset' || provider === 'conversation_reset') {
+      boundaryIndex = index;
+    }
+  });
+  return boundaryIndex >= 0 ? history.slice(boundaryIndex + 1) : history;
+}
+
+function eventTime(event) {
+  const value = Date.parse(event?.created_at || '');
+  return Number.isFinite(value) ? value : 0;
+}
+
+function isHumanOutbound(event) {
+  if (!event || event.direction !== 'outbound') return false;
+  const senderType = normalizeText(event.sender_type);
+  const sentBy = normalizeText(event.sent_by_user);
+  if (['human', 'agent', 'operator', 'atendente'].includes(senderType)) return true;
+  return Boolean(event.handoff && sentBy && !sentBy.includes('assistente') && !sentBy.includes('bot') && !sentBy.includes('ia'));
+}
+
+function conversationControl(history = []) {
+  const activeHistory = historyAfterControlBoundary(history);
+  const latestHandoff = [...activeHistory].reverse().find((event) => event.direction === 'inbound' && event.handoff === true);
+  const latestHumanReply = [...activeHistory].reverse().find(isHumanOutbound);
+  const lockEvent = [latestHandoff, latestHumanReply]
+    .filter(Boolean)
+    .sort((left, right) => eventTime(right) - eventTime(left))[0] || null;
+
+  return {
+    activeHistory,
+    lockedByHuman: Boolean(lockEvent),
+    lockSource: latestHumanReply && eventTime(latestHumanReply) >= eventTime(latestHandoff)
+      ? 'human_reply'
+      : latestHandoff
+        ? 'handoff_requested'
+        : null,
+    lockEvent,
+  };
 }
 
 async function loadCatalogContext() {
@@ -533,9 +588,57 @@ if (!chatId) return { json: { ok: false, error: 'missing_chat_id' } };
 
 try {
   const context = await loadTenantContext();
+  const contactName = [from.first_name, from.last_name].filter(Boolean).join(' ') || chat.title || 'Contato Telegram';
+  const externalConversationId = String(chatId);
+  const externalMessageId = message.message_id ? String(message.message_id) : `${chatId}:${Date.now()}`;
   const classification = classify(context);
   const historyResult = await loadRecentHistory();
-  const history = historyResult.rows;
+  const control = conversationControl(historyResult.rows);
+  const history = control.activeHistory;
+
+  if (control.lockedByHuman) {
+    const lockedEvent = {
+      tenant_slug: tenantSlug,
+      channel_type: 'telegram',
+      external_conversation_id: externalConversationId,
+      external_message_id: externalMessageId,
+      direction: 'inbound',
+      sender_type: 'contact',
+      contact_name: contactName,
+      contact_handle: from.username || '',
+      message_text: rawText,
+      service: 'atendimento_humano',
+      stage: 'Atendimento humano',
+      handoff: true,
+      response_text: null,
+      ai_provider: 'human_lock',
+      ai_model: null,
+      ai_error: '',
+      ai_usage: {},
+      request_id: requestId,
+      error_code: historyResult.error ? 'history_load_error' : null,
+      raw_payload: {
+        telegram_update: update,
+        human_lock_source: control.lockSource,
+      },
+    };
+    await saveEvent(lockedEvent);
+    return {
+      json: {
+        ok: true,
+        ...lockedEvent,
+        chat_id: chatId,
+        skip_response: true,
+        human_lock: true,
+        telegram_response: {
+          method: 'noop',
+          chat_id: chatId,
+          text: '',
+        },
+      },
+    };
+  }
+
   const catalog = await loadCatalogContext();
   const fallback = fallbackAnswer(context, classification);
   const gate = usageGate(context);
@@ -574,9 +677,6 @@ try {
 
   const handoff = classification.handoff || responseText.includes('[HUMANO_SOLICITADO]');
   const cleanResponse = responseText.replace('[HUMANO_SOLICITADO]', '').trim();
-  const contactName = [from.first_name, from.last_name].filter(Boolean).join(' ') || chat.title || 'Contato Telegram';
-  const externalConversationId = String(chatId);
-  const externalMessageId = message.message_id ? String(message.message_id) : `${chatId}:${Date.now()}`;
 
   const event = {
     tenant_slug: tenantSlug,

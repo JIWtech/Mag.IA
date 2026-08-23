@@ -419,6 +419,7 @@ export async function updateBroadcastRecipient(campaignId, externalConversationI
 
 function normalizeStage(stage) {
   const s = String(stage || '').toLowerCase().trim();
+  if (s.includes('finaliz') || s.includes('encerr')) return 'Finalizado';
   if (s.includes('qualific') || s === 'qualificacao') return 'Qualificação';
   if (s.includes('agend') || s === 'agendamento') return 'Agendamento';
   if (s.includes('brief') || s.includes('briefing')) return 'Briefing necessário';
@@ -441,6 +442,7 @@ function eventsToConversations(events) {
     const stageName = normalizeStage(event.stage);
     const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.contact_handle || event.id}`;
     const isHumanTransfer = Boolean(event.handoff && (normalizeStage(event.stage) === 'Atendimento humano' || event.service === 'manual_reply'));
+    const isClosed = stageName === 'Finalizado' || event.service === 'conversation_closed' || event.ai_provider === 'conversation_closed';
     const defaultOwner = isHumanTransfer ? 'Recepção / Núbia' : 'Assistente IA';
 
     if (!byChat.has(key)) {
@@ -451,7 +453,7 @@ function eventsToConversations(events) {
         company: event.contact_handle ? `@${event.contact_handle}` : channelType.label,
         channel: channelType.label,
         channelType: channelType.type,
-        status: isHumanTransfer ? 'atendimento_humano' : 'ia_ativa',
+        status: isClosed ? 'finalizado' : isHumanTransfer ? 'atendimento_humano' : 'ia_ativa',
         stage: stageName,
         owner: defaultOwner,
         unread: 0,
@@ -469,13 +471,14 @@ function eventsToConversations(events) {
     conversation.lastMessage = event.message_text || conversation.lastMessage;
     conversation.lastAt = formatDate(event.created_at);
     conversation.stage = stageName;
-    conversation.status = isHumanTransfer ? 'atendimento_humano' : (conversation.status === 'atendimento_humano' ? 'atendimento_humano' : 'ia_ativa');
+    conversation.status = isClosed ? 'finalizado' : isHumanTransfer ? 'atendimento_humano' : (conversation.status === 'atendimento_humano' ? 'atendimento_humano' : 'ia_ativa');
+    if (isClosed) conversation.owner = 'Assistente IA';
     conversation.owner = isHumanTransfer ? 'Recepção / Núbia' : conversation.owner;
     conversation.value = Math.max(conversation.value, estimatedValue(event));
     conversation.tags = Array.from(new Set([...conversation.tags, event.service, stageName].filter(Boolean)));
     if (event.direction === 'outbound') {
       conversation.messages.push({
-        from: event.sender_type === 'agent' ? 'agent' : 'ai',
+        from: event.sender_type === 'agent' ? 'agent' : event.sender_type === 'system' ? 'system' : 'ai',
         text: event.message_text || event.response_text || '',
         at: formatDate(event.created_at),
         status: event.delivery_status,
