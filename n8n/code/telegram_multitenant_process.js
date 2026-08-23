@@ -102,6 +102,67 @@ async function supabasePost(pathname, payload, prefer = 'return=representation')
   return httpJson('POST', supabaseUrl(pathname), supabaseHeaders(prefer), payload);
 }
 
+function envSuffix(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '_');
+}
+
+function telegramMediaDescriptor(source = {}) {
+  if (Array.isArray(source.photo) && source.photo.length) {
+    const file = source.photo[source.photo.length - 1] || {};
+    return { kind: 'image', fileId: file.file_id, fileName: '', mimeType: 'image/jpeg', size: Number(file.file_size || 0), width: file.width, height: file.height };
+  }
+  if (source.voice) return { kind: 'audio', fileId: source.voice.file_id, fileName: '', mimeType: source.voice.mime_type || 'audio/ogg', size: Number(source.voice.file_size || 0), duration: Number(source.voice.duration || 0) };
+  if (source.audio) return { kind: 'audio', fileId: source.audio.file_id, fileName: source.audio.file_name || '', mimeType: source.audio.mime_type || 'audio/mpeg', size: Number(source.audio.file_size || 0), duration: Number(source.audio.duration || 0) };
+  if (source.video || source.video_note || source.animation) {
+    const file = source.video || source.video_note || source.animation;
+    return { kind: 'video', fileId: file.file_id, fileName: file.file_name || '', mimeType: file.mime_type || 'video/mp4', size: Number(file.file_size || 0), duration: Number(file.duration || 0), width: file.width, height: file.height };
+  }
+  if (source.document) return { kind: 'document', fileId: source.document.file_id, fileName: source.document.file_name || '', mimeType: source.document.mime_type || 'application/octet-stream', size: Number(source.document.file_size || 0) };
+  return null;
+}
+
+function mediaExtension(media = {}) {
+  const fromName = String(media.fileName || '').match(/\.([a-z0-9]{1,10})$/i)?.[1];
+  if (fromName) return fromName.toLowerCase();
+  const byMime = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'video/mp4': 'mp4', 'application/pdf': 'pdf' };
+  return byMime[media.mimeType] || 'bin';
+}
+
+async function persistTelegramMedia(source, externalMessageId) {
+  const descriptor = telegramMediaDescriptor(source);
+  if (!descriptor?.fileId) return null;
+
+  const base = { kind: descriptor.kind, caption: String(source.caption || ''), fileName: descriptor.fileName, mimeType: descriptor.mimeType, size: descriptor.size, duration: descriptor.duration || 0, width: descriptor.width || null, height: descriptor.height || null, source: 'telegram' };
+  const maxBytes = Math.max(1, Number(env('TELEGRAM_MEDIA_MAX_BYTES', 10485760)));
+  if (descriptor.size && descriptor.size > maxBytes) return { ...base, status: 'skipped_too_large' };
+
+  const token = env('TELEGRAM_BOT_TOKEN_' + envSuffix(tenantSlug));
+  const bucket = env('TELEGRAM_MEDIA_BUCKET', 'channel-media');
+  if (!token) return { ...base, status: 'token_not_configured' };
+
+  try {
+    const info = await httpJson('POST', 'https://api.telegram.org/bot' + token + '/getFile', {}, { file_id: descriptor.fileId });
+    const file = info?.result;
+    if (!file?.file_path) throw new Error(info?.description || 'Telegram nao retornou o caminho do arquivo');
+    const finalSize = Number(file.file_size || descriptor.size || 0);
+    if (finalSize > maxBytes) return { ...base, size: finalSize, status: 'skipped_too_large' };
+
+    const binary = await helpers.httpRequest({ method: 'GET', url: 'https://api.telegram.org/file/bot' + token + '/' + file.file_path, encoding: 'arraybuffer', timeout: 30000 });
+    const path = [tenantSlug, 'telegram', String(chatId), String(externalMessageId) + '.' + mediaExtension(base)].map((part) => encodeURIComponent(part)).join('/');
+    await helpers.httpRequest({
+      method: 'POST',
+      url: supabaseUrl('/storage/v1/object/' + encodeURIComponent(bucket) + '/' + path),
+      headers: { apikey: env('SUPABASE_SERVICE_ROLE_KEY'), Authorization: 'Bearer ' + env('SUPABASE_SERVICE_ROLE_KEY'), 'Content-Type': 'text/plain; charset=utf-8', 'x-upsert': 'true' },
+      body: Buffer.from(binary).toString('base64'),
+      json: false,
+      timeout: 30000,
+    });
+    return { ...base, size: finalSize, bucket, storagePath: path, encoding: 'base64', status: 'stored' };
+  } catch (error) {
+    return { ...base, status: 'storage_error', error: String(error?.message || error).slice(0, 180) };
+  }
+}
+
 function encodeFilter(value) {
   return encodeURIComponent(String(value));
 }
@@ -591,6 +652,7 @@ try {
   const contactName = [from.first_name, from.last_name].filter(Boolean).join(' ') || chat.title || 'Contato Telegram';
   const externalConversationId = String(chatId);
   const externalMessageId = message.message_id ? String(message.message_id) : `${chatId}:${Date.now()}`;
+  const media = await persistTelegramMedia(message, externalMessageId);
   const classification = classify(context);
   const historyResult = await loadRecentHistory();
   const control = conversationControl(historyResult.rows);
@@ -619,6 +681,7 @@ try {
       error_code: historyResult.error ? 'history_load_error' : null,
       raw_payload: {
         telegram_update: update,
+        ...(media ? { media } : {}),
         human_lock_source: control.lockSource,
       },
     };
@@ -704,6 +767,7 @@ try {
     error_code: historyResult.error ? 'history_load_error' : null,
     raw_payload: {
       telegram_update: update,
+      ...(media ? { media } : {}),
       agent_state: agentState,
       structured_output: structuredOutput,
       observability: {

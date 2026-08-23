@@ -5,6 +5,16 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const defaultTenantSlug = import.meta.env.VITE_TENANT_SLUG || 'jiw';
 const tenantStorageKey = 'magia:selected-tenant-slug';
+const mediaObjectUrlCache = new Map();
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Não foi possível ler a imagem.'));
+    reader.readAsDataURL(blob);
+  });
+}
 
 export function hasSupabaseConfig() {
   return Boolean(supabaseUrl && supabaseAnonKey);
@@ -181,13 +191,15 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     };
   }
 
+  const eventsWithMediaUrls = await enrichMediaUrls(data, supabase);
+
   return {
     ...fallback,
     source: 'supabase',
-    conversations: eventsToConversations(data),
-    kanbanColumns: eventsToKanban(data, activeTenantSlug, appointments, kanbanConfig),
-    funnelStages: eventsToFunnel(data),
-    status: buildStatus({ source: 'supabase', events: data, tenantSlug: activeTenantSlug }),
+    conversations: eventsToConversations(eventsWithMediaUrls),
+    kanbanColumns: eventsToKanban(eventsWithMediaUrls, activeTenantSlug, appointments, kanbanConfig),
+    funnelStages: eventsToFunnel(eventsWithMediaUrls),
+    status: buildStatus({ source: 'supabase', events: eventsWithMediaUrls, tenantSlug: activeTenantSlug }),
     appointments,
     broadcastContacts,
     broadcastCampaigns,
@@ -434,6 +446,120 @@ function normalizeStage(stage) {
   return stage || 'Qualificação';
 }
 
+function asObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function enrichMediaUrls(events, supabase) {
+  const targets = new Map();
+
+  for (const event of events) {
+    const payload = asObject(event.raw_payload);
+    const media = asObject(payload.media);
+    if (media.status !== 'stored' || !media.bucket || !media.storagePath || media.url) continue;
+    targets.set(`${media.bucket}:${media.storagePath}`, media);
+  }
+
+  if (!targets.size) return events;
+
+  const mediaUrls = new Map();
+  await Promise.all([...targets.entries()].map(async ([key, media]) => {
+    const cachedUrl = mediaObjectUrlCache.get(key);
+    if (cachedUrl) {
+      mediaUrls.set(key, cachedUrl);
+      return;
+    }
+    const { data, error } = await supabase.storage
+      .from(media.bucket)
+      .download(media.storagePath);
+    if (error) {
+      console.warn('Media download fallback:', error.message);
+      return;
+    }
+    if (data?.size) {
+      let url = '';
+      if (media.encoding === 'base64') {
+        const base64 = (await data.text()).trim();
+        if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+          console.warn('Media download fallback: conteúdo Base64 inválido.');
+          return;
+        }
+        url = `data:${media.mimeType || 'application/octet-stream'};base64,${base64}`;
+      } else {
+        if (media.kind === 'image' && !String(data.type || '').startsWith('image/')) {
+          console.warn('Media download fallback: arquivo não é uma imagem válida.', data.type || 'tipo ausente');
+          return;
+        }
+        url = media.kind === 'image'
+          ? await blobToDataUrl(data)
+          : URL.createObjectURL(data);
+      }
+      if (url) {
+      mediaObjectUrlCache.set(key, url);
+      mediaUrls.set(key, url);
+      }
+    }
+  }));
+
+  return events.map((event) => {
+    const payload = asObject(event.raw_payload);
+    const media = asObject(payload.media);
+    const url = mediaUrls.get(`${media.bucket}:${media.storagePath}`);
+    if (!url) return event;
+    return { ...event, raw_payload: { ...payload, media: { ...media, url } } };
+  });
+}
+
+function normalizeMedia(rawPayload) {
+  const payload = asObject(rawPayload);
+  const normalized = asObject(payload.media);
+  const message = asObject(payload.telegram_update).message || payload.message || {};
+
+  if (normalized.kind) {
+    return {
+      kind: normalized.kind,
+      caption: normalized.caption || '',
+      url: normalized.url || '',
+      thumbnailUrl: normalized.thumbnailUrl || normalized.thumbnail_url || '',
+      fileName: normalized.fileName || normalized.file_name || '',
+      mimeType: normalized.mimeType || normalized.mime_type || '',
+      encoding: normalized.encoding || '',
+      size: Number(normalized.size || normalized.file_size || 0),
+      duration: Number(normalized.duration || 0),
+    };
+  }
+
+  if (Array.isArray(message.photo) && message.photo.length) {
+    const photo = message.photo[message.photo.length - 1] || {};
+    return { kind: 'image', caption: message.caption || '', size: Number(photo.file_size || 0) };
+  }
+  if (message.voice) return { kind: 'audio', caption: message.caption || '', duration: Number(message.voice.duration || 0), mimeType: message.voice.mime_type || '', size: Number(message.voice.file_size || 0) };
+  if (message.audio) return { kind: 'audio', caption: message.caption || '', duration: Number(message.audio.duration || 0), fileName: message.audio.file_name || '', mimeType: message.audio.mime_type || '', size: Number(message.audio.file_size || 0) };
+  if (message.video || message.video_note || message.animation) {
+    const video = message.video || message.video_note || message.animation;
+    return { kind: 'video', caption: message.caption || '', duration: Number(video.duration || 0), fileName: video.file_name || '', mimeType: video.mime_type || '', size: Number(video.file_size || 0) };
+  }
+  if (message.document) return { kind: 'document', caption: message.caption || '', fileName: message.document.file_name || '', mimeType: message.document.mime_type || '', size: Number(message.document.file_size || 0) };
+  return null;
+}
+
+function mediaPreview(media) {
+  if (!media) return '';
+  const labels = { image: 'Foto', audio: 'Áudio', video: 'Vídeo', document: 'Documento' };
+  return media.caption || media.fileName || labels[media.kind] || 'Anexo';
+}
+
+function isGeneratedMediaLabel(text) {
+  return /^\[(?:Imagem|Áudio|Video|Vídeo|Arquivo|Figurinha) recebida\]$/i.test(String(text || '').trim());
+}
+
 function eventsToConversations(events) {
   const byChat = new Map();
 
@@ -457,7 +583,7 @@ function eventsToConversations(events) {
         stage: stageName,
         owner: defaultOwner,
         unread: 0,
-        lastMessage: event.message_text || '',
+        lastMessage: event.message_text || mediaPreview(normalizeMedia(event.raw_payload)),
         lastAt: formatDate(event.created_at),
         tags: [event.service, stageName].filter(Boolean),
         sentiment: sentimentFromEvent(event),
@@ -468,7 +594,10 @@ function eventsToConversations(events) {
     }
 
     const conversation = byChat.get(key);
-    conversation.lastMessage = event.message_text || conversation.lastMessage;
+    const media = normalizeMedia(event.raw_payload);
+    const text = event.message_text || media?.caption || '';
+    const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
+    conversation.lastMessage = text || mediaPreview(media) || conversation.lastMessage;
     conversation.lastAt = formatDate(event.created_at);
     conversation.stage = stageName;
     conversation.status = isClosed ? 'finalizado' : isHumanTransfer ? 'atendimento_humano' : (conversation.status === 'atendimento_humano' ? 'atendimento_humano' : 'ia_ativa');
@@ -479,12 +608,13 @@ function eventsToConversations(events) {
     if (event.direction === 'outbound') {
       conversation.messages.push({
         from: event.sender_type === 'agent' ? 'agent' : event.sender_type === 'system' ? 'system' : 'ai',
-        text: event.message_text || event.response_text || '',
+        text: visibleText || event.response_text || '',
         at: formatDate(event.created_at),
         status: event.delivery_status,
+        media,
       });
     } else {
-      conversation.messages.push({ from: 'contact', text: event.message_text || '', at: formatDate(event.created_at) });
+      conversation.messages.push({ from: 'contact', text: visibleText, at: formatDate(event.created_at), media });
     }
     if (event.direction !== 'outbound' && event.response_text) {
       conversation.messages.push({ from: 'ai', text: event.response_text, at: formatDate(event.created_at) });

@@ -35,6 +35,8 @@ GEMINI_DAILY_LIMIT
 GEMINI_MAX_OUTPUT_TOKENS
 GEMINI_TIMEOUT_MS
 TELEGRAM_BOT_TOKEN_{TENANT_SLUG_EM_CAIXA_ALTA}
+TELEGRAM_MEDIA_BUCKET=channel-media
+TELEGRAM_MEDIA_MAX_BYTES=10485760
 ```
 
 Exemplo para `bronzeamento_dom_ian`:
@@ -79,3 +81,4 @@ TELEGRAM_BOT_TOKEN_SLUG_DO_CLIENTE_EM_CAIXA_ALTA
 5. Responder manualmente pela interface.
 6. Confirmar que a resposta chega no Telegram e salva em `channel_events`.
 7. Confirmar que o prompt usado vem do Supabase, nao hardcoded no workflow.
+8. Enviar uma imagem pequena; confirmar `raw_payload.media.status = stored` e que o objeto foi criado no bucket privado `channel-media`.

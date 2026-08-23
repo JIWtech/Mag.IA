@@ -21,11 +21,14 @@ import {
   GitBranch,
   Globe,
   Inbox,
+  FileText,
+  Image as ImageIcon,
   Instagram,
   KanbanSquare,
   LayoutDashboard,
   Megaphone,
   MessageCircle,
+  Music2,
   PauseCircle,
   RefreshCcw,
   Search,
@@ -41,6 +44,7 @@ import {
   UserRound,
   UsersRound,
   X,
+  Video,
   Zap,
 } from 'lucide-react';
 import {
@@ -91,6 +95,42 @@ const menu = [
   { id: 'agendamentos', label: 'Agendamentos', icon: CalendarDays },
   { id: 'configuracoes', label: 'Configurações', icon: Settings },
 ];
+const activePageStorageKey = 'magia:active-page';
+const appDataCachePrefix = 'magia:app-data:';
+
+function getInitialActivePage() {
+  const stored = localStorage.getItem(activePageStorageKey);
+  return menu.some((item) => item.id === stored) ? stored : 'dashboard';
+}
+
+function appDataSignature(value) {
+  return JSON.stringify(value, (key, entry) => (
+    key === 'url' || key === 'thumbnailUrl' ? undefined : entry
+  ));
+}
+
+function loadCachedAppData(tenantSlug) {
+  try {
+    const raw = localStorage.getItem(`${appDataCachePrefix}${tenantSlug}`);
+    const cached = raw ? JSON.parse(raw) : null;
+    return cached?.conversations ? cached : null;
+  } catch {
+    return null;
+  }
+}
+
+function cacheAppData(tenantSlug, data) {
+  try {
+    const serialized = JSON.stringify(data, (key, value) => (
+      key === 'url' || key === 'thumbnailUrl' ? undefined : value
+    ));
+    if (serialized.length <= 2_000_000) {
+      localStorage.setItem(`${appDataCachePrefix}${tenantSlug}`, serialized);
+    }
+  } catch {
+    // Cache local é opcional: quota cheia nunca deve afetar o painel.
+  }
+}
 
 const statusLabels = {
   ia_ativa: 'Bot ativo',
@@ -110,13 +150,15 @@ function formatCurrency(value) {
 }
 
 function App() {
-  const [active, setActive] = useState('dashboard');
+  const [active, setActive] = useState(getInitialActivePage);
   const [availableTenants, setAvailableTenants] = useState(mockTenants);
   const [tenantSlug, setTenantSlug] = useState(getInitialTenantSlug);
   const [session, setSession] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(isAuthRequired());
   const [loading, setLoading] = useState(false);
   const [appData, setAppData] = useState(() => {
+    const cached = loadCachedAppData(getInitialTenantSlug());
+    if (cached) return cached;
     if (hasSupabaseConfig()) {
       return {
         conversations: [],
@@ -238,20 +280,19 @@ function App() {
 
   async function refreshData({ showLoading = true } = {}) {
     if (showLoading) setLoading(true);
-    const minWait = new Promise((resolve) => setTimeout(resolve, 550));
     try {
-      const [data] = await Promise.all([
-        loadClientData({
-          conversations,
-          kanbanColumns,
-          funnelStages,
-          appointments: appData.appointments || [],
-          broadcastContacts: appData.broadcastContacts || [],
-          broadcastCampaigns: appData.broadcastCampaigns || [],
-        }, activeTenantSlug),
-        minWait,
-      ]);
-      setAppData(data);
+      const data = await loadClientData({
+        conversations,
+        kanbanColumns,
+        funnelStages,
+        appointments: appData.appointments || [],
+        broadcastContacts: appData.broadcastContacts || [],
+        broadcastCampaigns: appData.broadcastCampaigns || [],
+      }, activeTenantSlug);
+      cacheAppData(activeTenantSlug, data);
+      setAppData((previous) => (
+        appDataSignature(previous) === appDataSignature(data) ? previous : data
+      ));
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -270,8 +311,14 @@ function App() {
   }, [activeTenantSlug, session]);
 
   useEffect(() => {
+    localStorage.setItem(activePageStorageKey, active);
+  }, [active]);
+
+  useEffect(() => {
     if (isAuthRequired() && !session) return undefined;
     persistTenantSlug(activeTenantSlug);
+    const cached = loadCachedAppData(activeTenantSlug);
+    if (cached) setAppData(cached);
     refreshData();
 
     let lastRealtimeRefresh = 0;
@@ -286,12 +333,17 @@ function App() {
       refreshFromRealtime();
     }, activeTenantSlug);
 
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshData({ showLoading: false });
+    };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     const fallbackPolling = window.setInterval(() => {
       refreshData({ showLoading: false });
-    }, 5000);
+    }, 10000);
 
     return () => {
       unsubscribe();
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
       window.clearInterval(fallbackPolling);
     };
   }, [activeTenantSlug, session?.user?.id]);
@@ -555,6 +607,41 @@ function getChannelClass(channel) {
   return 'channel-webchat';
 }
 
+function MediaAttachment({ media, onMediaLoad }) {
+  const [expandedImage, setExpandedImage] = useState(false);
+  const config = {
+    image: { label: 'Imagem recebida', icon: ImageIcon },
+    audio: { label: 'Áudio recebido', icon: Music2 },
+    video: { label: 'Vídeo recebido', icon: Video },
+    document: { label: 'Documento recebido', icon: FileText },
+  }[media?.kind] || { label: 'Anexo recebido', icon: FileText };
+  const Icon = config.icon;
+
+  if (media?.kind === 'image' && media.url) {
+    return <>
+      <button className="media-image-button" type="button" onClick={() => setExpandedImage(true)} aria-label="Ampliar imagem">
+        <img className="media-image" src={media.thumbnailUrl || media.url} alt={media.caption || config.label} loading="lazy" onLoad={onMediaLoad} />
+      </button>
+      {expandedImage && (
+        <div className="media-lightbox" role="dialog" aria-modal="true" aria-label="Imagem ampliada" onClick={() => setExpandedImage(false)}>
+          <button className="media-lightbox-close" type="button" aria-label="Fechar imagem" onClick={() => setExpandedImage(false)}><X size={20} /></button>
+          <img className="media-lightbox-image" src={media.url} alt={media.caption || config.label} onClick={(event) => event.stopPropagation()} />
+        </div>
+      )}
+    </>;
+  }
+  if (media?.kind === 'audio' && media.url) {
+    return <audio className="media-audio" controls preload="metadata" src={media.url}>Seu navegador não suporta áudio.</audio>;
+  }
+  if (media?.kind === 'video' && media.url) {
+    return <video className="media-video" controls preload="metadata" poster={media.thumbnailUrl || undefined} src={media.url}>Seu navegador não suporta vídeo.</video>;
+  }
+  if (media?.kind === 'document' && media.url) {
+    return <a className="media-placeholder media-download" href={media.url} target="_blank" rel="noreferrer"><Icon size={20} /><span>{media.fileName || config.label}</span><ExternalLink size={15} /></a>;
+  }
+  return <div className="media-placeholder" title="O arquivo original ainda não foi disponibilizado pelo canal"><Icon size={20} /><span>{media?.fileName || config.label}</span><small>Prévia indisponível</small></div>;
+}
+
 function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onAssignAgent }) {
   const [selectedId, setSelectedId] = useState(conversations[0]?.id || null);
   const [query, setQuery] = useState('');
@@ -568,6 +655,12 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignToast, setAssignToast] = useState('');
   const messagesEndRef = React.useRef(null);
+  const messageStreamRef = React.useRef(null);
+
+  function scrollToLatest() {
+    const stream = messageStreamRef.current;
+    if (stream) stream.scrollTop = stream.scrollHeight;
+  }
 
   const channelCounts = useMemo(() => {
     const counts = { todos: conversations.length, telegram: 0, whatsapp: 0, instagram: 0 };
@@ -618,9 +711,9 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   }, [filteredConversations, selectedId]);
 
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    scrollToLatest();
+    const timer = window.setTimeout(scrollToLatest, 120);
+    return () => window.clearTimeout(timer);
   }, [selected?.id, selected?.messages?.length]);
 
   async function sendManualReply() {
@@ -844,7 +937,7 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
               </button>
             </div>
           </div>
-          <div className="message-stream">
+          <div className="message-stream" ref={messageStreamRef}>
             {(selected.messages || []).map((message, index) => {
               const isAi = message.from === 'ai' || message.sender_type === 'bot';
               const isAgent = message.from === 'agent' || message.sender_type === 'agent';
@@ -858,7 +951,8 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
               return (
                 <div key={`${message.at}-${index}`} className={`bubble ${isAi ? 'ai' : isAgent || isSystem ? 'agent' : 'contact'}`}>
                   <div className="bubble-sender">{senderLabel}</div>
-                  <p className="bubble-text">{message.text}</p>
+                  {message.media && <MediaAttachment media={message.media} onMediaLoad={scrollToLatest} />}
+                  {message.text && <p className="bubble-text">{message.text}</p>}
                   <div className="bubble-meta">
                     <span className="bubble-time">{message.at}</span>
                     {(isAi || isAgent || isSystem) && <CheckCheck size={13} className="bubble-check" />}
