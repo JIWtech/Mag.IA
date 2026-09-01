@@ -1138,6 +1138,95 @@ function statusAppointmentLabel(status) {
     confirmed: 'Confirmado',
     done: 'Concluido',
     cancelled: 'Cancelado',
+    payment_reported: 'Pagamento informado',
+    aguardando_verificacao: 'Pagamento informado',
   };
   return labels[status] || status || 'Agendado';
+}
+
+export async function moveKanbanCard(activeTenantSlug, card, targetColumnKey, agentName = null) {
+  const canonical = canonicalKanbanKey(targetColumnKey);
+  const tenantSlug = activeTenantSlug || 'clinica_nubia';
+
+  let stage = 'Qualificacao';
+  let service = 'kanban_move';
+  let handoff = false;
+  let senderType = 'system';
+  let sentByUser = agentName || null;
+  let responseText = null;
+
+  if (canonical === 'finalizadas') {
+    stage = 'Finalizada';
+    service = 'conversation_closed';
+    handoff = false;
+    responseText = 'Atendimento finalizado no painel.';
+  } else if (canonical === 'com_humano' || canonical === 'conversas_humanos') {
+    stage = 'Atendimento humano';
+    service = 'conversation_assigned';
+    handoff = true;
+    senderType = 'agent';
+    sentByUser = agentName || 'Atendente';
+    responseText = `Conversa assumida por ${sentByUser}.`;
+  } else if (canonical === 'aguardando_humano') {
+    stage = 'Atendimento humano';
+    service = 'handoff_requested';
+    handoff = true;
+    responseText = 'Aguardando atendimento humano.';
+  } else if (canonical === 'agendamentos') {
+    stage = 'Agendamento';
+    service = 'agendamento';
+    handoff = true;
+    responseText = 'Movido para agendamentos.';
+  } else if (canonical === 'conversas_abandonadas') {
+    stage = 'Finalizada';
+    service = 'conversation_abandoned';
+    handoff = false;
+    responseText = 'Conversa marcada como abandonada.';
+  } else {
+    stage = 'Qualificacao';
+    service = 'ia_active';
+    handoff = false;
+    responseText = 'Retornado para atendimento da IA.';
+  }
+
+  const conversationId = String(card.externalConversationId || card.conversationId || card.id || '');
+  const contactName = card.title || card.contactName || 'Contato';
+  const channelType = card.channelType || card.channel || 'telegram';
+
+  const newEvent = {
+    tenant_slug: tenantSlug,
+    channel_type: channelType,
+    external_conversation_id: conversationId,
+    external_message_id: `kanban_move_${Date.now()}`,
+    direction: 'outbound',
+    sender_type: senderType,
+    sent_by_user: sentByUser,
+    contact_name: contactName,
+    message_text: `[Kanban] Etapa alterada para: ${stage}`,
+    response_text: responseText,
+    service,
+    stage,
+    handoff,
+    delivery_status: 'delivered',
+    ai_provider: 'kanban_action',
+    raw_payload: {
+      kanban_transition: {
+        from_stage: card.stage,
+        to_column: canonical,
+        moved_at: new Date().toISOString(),
+        moved_by: sentByUser || 'Operador',
+      },
+    },
+  };
+
+  if (hasSupabaseConfig()) {
+    const tenant = await getTenantBySlug(tenantSlug);
+    if (!tenant?.id) throw new Error('Tenant não encontrado ao salvar a movimentação do Kanban.');
+    newEvent.tenant_id = tenant.id;
+    const { data, error } = await supabase.from('channel_events').insert([newEvent]).select();
+    if (error) throw error;
+    return data;
+  }
+
+  return [newEvent];
 }

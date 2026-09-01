@@ -74,6 +74,7 @@ import {
   loadAvailableTenants,
   loadClientData,
   loadTeamAgents,
+  moveKanbanCard,
   persistTenantSlug,
   saveAppointment,
   subscribeToClientEvents,
@@ -90,7 +91,6 @@ const menu = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'conversas', label: 'Conversas', icon: MessageCircle },
   { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
-  { id: 'funil', label: 'Funil', icon: GitBranch },
   { id: 'disparos', label: 'Disparos', icon: Megaphone },
   { id: 'agendamentos', label: 'Agendamentos', icon: CalendarDays },
   { id: 'configuracoes', label: 'Configurações', icon: Settings },
@@ -197,6 +197,53 @@ function App() {
   const integration = getIntegrationStatus(activeTenantSlug);
 
   const [agentsList, setAgentsList] = useState([]);
+  const [initialConversationId, setInitialConversationId] = useState(null);
+  const [prefilledAppointment, setPrefilledAppointment] = useState(null);
+
+  const handleOpenChatFromKanban = (conversationId) => {
+    setInitialConversationId(conversationId);
+    setActive('conversas');
+  };
+
+  const handleOpenAppointmentFromKanban = (card) => {
+    setPrefilledAppointment({
+      contactName: card.title || '',
+      title: card.service || card.subtitle || 'Bronzeamento',
+      notes: `Agendamento via Kanban (${card.stage || 'Qualificação'})`,
+      selectedConversationId: card.externalConversationId || '',
+    });
+    setActive('agendamentos');
+  };
+
+  const handleMoveKanbanCard = async (card, targetColumnKey) => {
+    // Atualização otimista no estado local
+    setAppData((prev) => {
+      if (!prev?.kanbanColumns) return prev;
+      const nextColumns = prev.kanbanColumns.map((col) => {
+        const filteredCards = (col.cards || []).filter((c) => c.id !== card.id);
+        const colKey = col.automationKey || col.id;
+        if (colKey === targetColumnKey || col.id === targetColumnKey) {
+          return {
+            ...col,
+            cards: [{ ...card, stage: targetColumnKey }, ...filteredCards],
+          };
+        }
+        return { ...col, cards: filteredCards };
+      });
+      return { ...prev, kanbanColumns: nextColumns };
+    });
+
+    try {
+      await moveKanbanCard(activeTenantSlug, card, targetColumnKey);
+    } catch (err) {
+      console.warn('Falha ao salvar movimentação de card no banco:', err);
+      refreshData({ showLoading: false });
+    }
+  };
+
+  const handleFinishConversationFromKanban = (card) => {
+    handleMoveKanbanCard(card, 'finalizadas');
+  };
 
   useEffect(() => {
     try {
@@ -456,6 +503,8 @@ function App() {
             onSent={refreshData}
             agentsList={agentsList}
             onAssignAgent={handleAssignAgent}
+            initialConversationId={initialConversationId}
+            onInitialConversationOpened={() => setInitialConversationId(null)}
           />
         )}
         {active === 'kanban' && (
@@ -464,6 +513,10 @@ function App() {
             tenantName={selectedTenant.name}
             agentsList={agentsList}
             tenantSlug={activeTenantSlug}
+            onOpenChat={handleOpenChatFromKanban}
+            onOpenAppointment={handleOpenAppointmentFromKanban}
+            onMoveCard={handleMoveKanbanCard}
+            onFinishConversation={handleFinishConversationFromKanban}
           />
         )}
         {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} />}
@@ -482,6 +535,7 @@ function App() {
             conversations={appData.conversations}
             tenantSlug={activeTenantSlug}
             onChanged={refreshData}
+            initialData={prefilledAppointment}
           />
         )}
         {active === 'configuracoes' && (
@@ -666,7 +720,15 @@ function MediaAttachment({ media, onMediaLoad }) {
   return <div className="media-placeholder" title="O arquivo original ainda não foi disponibilizado pelo canal"><Icon size={20} /><span>{media?.fileName || config.label}</span><small>Prévia indisponível</small></div>;
 }
 
-function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onAssignAgent }) {
+function Conversations({
+  conversations,
+  tenantSlug,
+  onSent,
+  agentsList = [],
+  onAssignAgent,
+  initialConversationId = null,
+  onInitialConversationOpened,
+}) {
   const [selectedId, setSelectedId] = useState(conversations[0]?.id || null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('todas');
@@ -733,6 +795,19 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
     if (!filteredConversations.length) return null;
     return filteredConversations.find((c) => c.id === selectedId) || filteredConversations[0];
   }, [filteredConversations, selectedId]);
+
+  useEffect(() => {
+    if (!initialConversationId) return;
+    const conversation = conversations.find((item) => (
+      item.id === initialConversationId || item.externalConversationId === initialConversationId
+    ));
+    if (!conversation) return;
+    setQuery('');
+    setFilter('todas');
+    setChannelFilter('todos');
+    setSelectedId(conversation.id);
+    onInitialConversationOpened?.();
+  }, [conversations, initialConversationId, onInitialConversationOpened]);
 
   useEffect(() => {
     scrollToLatest();
@@ -1075,11 +1150,22 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   );
 }
 
-function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenantSlug }) {
+function Kanban({
+  kanbanColumns = [],
+  tenantName = '',
+  agentsList = [],
+  tenantSlug = 'clinica_nubia',
+  onOpenChat,
+  onOpenAppointment,
+  onMoveCard,
+  onFinishConversation,
+}) {
   const [agentFilter, setAgentFilter] = useState('todos');
   const [channelFilter, setChannelFilter] = useState('todos');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedCardId, setCopiedCardId] = useState(null);
+  const [draggingCardId, setDraggingCardId] = useState(null);
+  const [dragOverColumnId, setDragOverColumnId] = useState(null);
 
   const schedulingUrl = getTenantSchedulingLink(tenantSlug);
 
@@ -1099,6 +1185,13 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
       return link;
     }
   }
+
+  const getChannelClass = (type = 'telegram') => {
+    const norm = String(type).toLowerCase();
+    if (norm.includes('whats')) return 'channel-whatsapp';
+    if (norm.includes('insta')) return 'channel-instagram';
+    return 'channel-telegram';
+  };
 
   const filteredColumns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -1126,6 +1219,56 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
     });
   }, [kanbanColumns, agentFilter, channelFilter, searchQuery]);
 
+  // Drag & Drop Handlers
+  const handleDragStart = (e, card, column) => {
+    setDraggingCardId(card.id);
+    e.dataTransfer.effectAllowed = 'move';
+    // Usamos text/plain para compatibilidade maxima em todos os browsers
+    e.dataTransfer.setData('text/plain', JSON.stringify({
+      cardId: card.id,
+      sourceColumnId: column.id,
+      card,
+    }));
+  };
+
+  const handleDragEnd = () => {
+    setDraggingCardId(null);
+    setDragOverColumnId(null);
+  };
+
+  const handleDragOver = (e, column) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverColumnId !== column.id) {
+      setDragOverColumnId(column.id);
+    }
+  };
+
+  const handleDragLeave = (e, column) => {
+    if (dragOverColumnId === column.id) {
+      setDragOverColumnId(null);
+    }
+  };
+
+  const handleDrop = (e, targetColumn) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverColumnId(null);
+    setDraggingCardId(null);
+    try {
+      const raw = e.dataTransfer.getData('text/plain');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!data?.card) return;
+      if (data.sourceColumnId === targetColumn.id) return;
+      if (onMoveCard) {
+        onMoveCard(data.card, targetColumn.automationKey || targetColumn.id);
+      }
+    } catch (err) {
+      console.warn('Erro ao processar drop no Kanban:', err);
+    }
+  };
+
   return (
     <section className="kanban-page">
       <div className="kanban-toolbar">
@@ -1133,7 +1276,7 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
           <div className="search-box">
             <Search size={16} />
             <input
-              placeholder="Buscar por contato, mensagem ou intenção..."
+              placeholder="Buscar por contato, serviço ou mensagem..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -1203,102 +1346,171 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
       </div>
 
       <div className="kanban-board">
-        {filteredColumns.map((column) => (
-          <div className="kanban-column" key={column.id}>
-            <div className="column-header">
-              <strong className="column-title">{column.title}</strong>
-              <span className="column-count-badge">{column.cards.length}</span>
-            </div>
+        {filteredColumns.map((column) => {
+          const isWaitingColumn = column.automationKey === 'aguardando_humano' || column.id === 'aguardando_humano';
+          const isFinishedColumn = column.automationKey === 'finalizadas' || column.id === 'finalizadas';
+          const isDragOver = dragOverColumnId === column.id;
 
-            <div className="column-cards-container">
-              {column.cards.map((card) => {
-                const channelClass = getChannelClass(card.channelType || card.channel);
-                return (
-                  <article className={`kanban-card ${channelClass}`} key={card.id}>
-                    <div className="kanban-card-header">
-                      <div className="contact-title-line">
-                        <span className={`channel-indicator-icon ${channelClass}`}>
-                          <ChannelIcon channel={card.channelType || card.channel} size={12} />
-                        </span>
-                        <strong className="contact-name">{card.title}</strong>
-                      </div>
-                      <small className="card-time">{card.lastAt}</small>
-                    </div>
+          return (
+            <div
+              className={`kanban-column ${isDragOver ? 'is-dragover' : ''}`}
+              key={column.id}
+              onDragOver={(e) => handleDragOver(e, column)}
+              onDragLeave={(e) => handleDragLeave(e, column)}
+              onDrop={(e) => handleDrop(e, column)}
+            >
+              <div className="column-header">
+                <strong className="column-title">{column.title}</strong>
+                <span className="column-count-badge">{column.cards.length}</span>
+              </div>
 
-                    <p className="card-subtitle">{card.subtitle}</p>
+              <div
+                className="column-cards-container"
+                onDragOver={(e) => handleDragOver(e, column)}
+                onDrop={(e) => handleDrop(e, column)}
+              >
+                {column.cards.map((card) => {
+                  const channelClass = getChannelClass(card.channelType || card.channel);
+                  const isDragging = draggingCardId === card.id;
 
-                    {card.aiReason && (
-                      <div className="ai-verification-badge">
-                        <Sparkles size={12} className="ai-sparkle-icon" />
-                        <span>{card.aiReason}</span>
-                      </div>
-                    )}
-
-                    {card.hasSchedulingLink && (card.schedulingLink || schedulingUrl) && (
-                      <div className="scheduling-link-box">
-                        <div className="link-info">
-                          <CalendarCheck size={14} className="calendar-icon" />
-                          <span className="link-text" title={card.schedulingLink || schedulingUrl}>
-                            {formatSchedulingLink(card.schedulingLink || schedulingUrl)}
+                  return (
+                    <article
+                      className={`kanban-card ${channelClass} ${isDragging ? 'is-dragging' : ''}`}
+                      key={card.id}
+                      draggable={true}
+                      onDragStart={(e) => handleDragStart(e, card, column)}
+                      onDragEnd={handleDragEnd}
+                    >
+                      <div className="kanban-card-header">
+                        <div className="contact-title-line">
+                          <span className={`channel-indicator-icon ${channelClass}`}>
+                            <ChannelIcon channel={card.channelType || card.channel} size={12} />
                           </span>
+                          <strong className="contact-name">{card.title}</strong>
                         </div>
-                        <div className="link-actions">
+                        <small className="card-time">{card.lastAt}</small>
+                      </div>
+
+                      <p className="card-subtitle">{card.subtitle}</p>
+
+                      {isWaitingColumn && (
+                        <div className="waiting-sla-badge">
+                          <Clock3 size={11} />
+                          <span>Aguardando resposta humana</span>
+                        </div>
+                      )}
+
+                      {card.aiReason && (
+                        <div className="ai-verification-badge">
+                          <Sparkles size={12} className="ai-sparkle-icon" />
+                          <span>{card.aiReason}</span>
+                        </div>
+                      )}
+
+                      {card.hasSchedulingLink && (card.schedulingLink || schedulingUrl) && (
+                        <div className="scheduling-link-box">
+                          <div className="link-info">
+                            <CalendarCheck size={14} className="calendar-icon" />
+                            <span className="link-text" title={card.schedulingLink || schedulingUrl}>
+                              {formatSchedulingLink(card.schedulingLink || schedulingUrl)}
+                            </span>
+                          </div>
+                          <div className="link-actions">
+                            <button
+                              type="button"
+                              className="link-copy-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                copySchedulingLink(card.id, card.schedulingLink);
+                              }}
+                              title="Copiar link de agendamento"
+                            >
+                              {copiedCardId === card.id ? (
+                                <>
+                                  <Check size={12} color="#10b981" /> Copiado!
+                                </>
+                              ) : (
+                                <>
+                                  <Copy size={12} /> Copiar
+                                </>
+                              )}
+                            </button>
+                            <a
+                              href={card.schedulingLink || schedulingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="link-external-btn"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Abrir página de agendamento"
+                            >
+                              <ExternalLink size={12} />
+                            </a>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="kanban-card-footer">
+                        <div className="card-owner-info">
+                          <UserRound size={12} />
+                          <span>{card.owner}</span>
+                        </div>
+                      </div>
+
+                      {/* AÇÕES RÁPIDAS NO CARD (ITEM B) */}
+                      <div className="kanban-card-quick-actions">
+                        {onOpenChat && (
                           <button
                             type="button"
-                            className="link-copy-btn"
+                            className="card-quick-btn chat"
                             onClick={(e) => {
                               e.stopPropagation();
-                              copySchedulingLink(card.id, card.schedulingLink);
+                              onOpenChat(card.externalConversationId || card.id);
                             }}
-                            title="Copiar link de agendamento"
+                            title="Abrir e responder no chat"
                           >
-                            {copiedCardId === card.id ? (
-                              <>
-                                <Check size={12} color="#10b981" /> Copiado!
-                              </>
-                            ) : (
-                              <>
-                                <Copy size={12} /> Copiar
-                              </>
-                            )}
+                            <MessageCircle size={12} />
+                            <span>Responder</span>
                           </button>
-                          <a
-                            href={card.schedulingLink || schedulingUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="link-external-btn"
-                            onClick={(e) => e.stopPropagation()}
-                            title="Abrir página de agendamento"
-                          >
-                            <ExternalLink size={12} />
-                          </a>
-                        </div>
-                      </div>
-                    )}
+                        )}
 
-                    <div className="kanban-card-footer">
-                      <div className="card-owner-info">
-                        <UserRound size={12} />
-                        <span>{card.owner}</span>
+                        {onOpenAppointment && (
+                          <button
+                            type="button"
+                            className="card-quick-btn schedule"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenAppointment(card);
+                            }}
+                            title="Criar agendamento rápido"
+                          >
+                            <CalendarCheck size={12} />
+                            <span>Agendar</span>
+                          </button>
+                        )}
+
+                        {onFinishConversation && !isFinishedColumn && (
+                          <button
+                            type="button"
+                            className="card-quick-btn finish"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onFinishConversation(card);
+                            }}
+                            title="Concluir e mover para Finalizadas"
+                          >
+                            <CheckCircle2 size={12} />
+                            <span>Finalizar</span>
+                          </button>
+                        )}
                       </div>
-                      {onOpenChat && (
-                        <button
-                          type="button"
-                          className="open-chat-action-btn"
-                          onClick={() => onOpenChat(card.externalConversationId || card.id)}
-                          title="Abrir conversa no chat"
-                        >
-                          <MessageCircle size={12} /> Abrir chat
-                        </button>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
-              {!column.cards.length && <div className="column-empty">Sem conversas nesta etapa</div>}
+                    </article>
+                  );
+                })}
+                {!column.cards.length && <div className="column-empty">Sem conversas nesta etapa</div>}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -1346,6 +1558,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   const [stageFilter, setStageFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
+
   const allContacts = useMemo(() => mergeBroadcastContacts(contacts, draftContacts), [contacts, draftContacts]);
   const stages = useMemo(() => Array.from(new Set(conversations.map((item) => item.stage).filter(Boolean))), [conversations]);
   const selectedContacts = allContacts.filter((contact) => selected.has(contact.key));
@@ -1545,7 +1758,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   );
 }
 
-function Appointments({ appointments = [], conversations = [], tenantSlug, onChanged }) {
+function Appointments({ appointments = [], conversations = [], tenantSlug, onChanged, initialData }) {
   const [title, setTitle] = useState('');
   const [contactName, setContactName] = useState('');
   const [startsAt, setStartsAt] = useState('');
@@ -1554,6 +1767,15 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+
+  useEffect(() => {
+    if (!initialData) return;
+    if (initialData.contactName) setContactName(initialData.contactName);
+    if (initialData.title) setTitle(initialData.title);
+    if (initialData.notes) setNotes(initialData.notes);
+    if (initialData.selectedConversationId) setSelectedConversationId(initialData.selectedConversationId);
+  }, [initialData]);
+
   const grouped = useMemo(() => groupAppointmentsByDay(appointments), [appointments]);
 
   function pickConversation(value) {
@@ -1629,7 +1851,7 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
             <div className="appointment-day" key={group.day}>
               <h3>{group.day}</h3>
               {group.items.map((appointment) => (
-                <article className="appointment-card" key={appointment.id}>
+                <article className="appointment-card" key={appointment.id} data-status={appointment.status}>
                   <div className="appointment-time"><strong>{appointment.timeLabel}</strong><span>{appointment.endTimeLabel || '--:--'}</span></div>
                   <div>
                     <strong>{appointment.title}</strong>
