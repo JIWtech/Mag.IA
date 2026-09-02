@@ -85,6 +85,7 @@ import {
   saveTeamAgent,
   updateTeamAgentStatus,
 } from './dataService';
+import noriaLogo from './assets/noria_logo.png';
 import './styles.css';
 
 const menu = [
@@ -246,6 +247,7 @@ function App() {
   };
 
   useEffect(() => {
+    document.title = 'NORIA — Inteligência em movimento';
     try {
       localStorage.removeItem('magia:team-agents');
     } catch (e) { }
@@ -431,11 +433,7 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><Sparkles size={20} /></div>
-          <div>
-            <strong>Mag.ia</strong>
-            <span>Atendimento inteligente</span>
-          </div>
+          <img src={noriaLogo} alt="NORIA" className="brand-logo-img" />
         </div>
 
         <nav className="nav-list">
@@ -827,7 +825,7 @@ function Conversations({
         external_conversation_id: selected.externalConversationId || selected.id.replace(/^conv-/, ''),
         contact_name: selected.contact,
         message_text: text,
-        sent_by_user: 'Operador Mag.IA',
+        sent_by_user: 'Operador NORIA',
       }, tenantSlug);
       setDraft('');
       await onSent?.();
@@ -852,7 +850,7 @@ function Conversations({
         external_conversation_id: selected.externalConversationId || selected.id.replace(/^conv-/, ''),
         contact_name: selected.contact,
         message_text: 'Atendimento encerrado pela interface',
-        sent_by_user: 'Operador Mag.IA',
+        sent_by_user: 'Operador NORIA',
         reason: 'Atendimento finalizado pelo operador',
       }, tenantSlug);
       await onSent?.();
@@ -1086,48 +1084,94 @@ function Conversations({
         <div className="modal-backdrop" onClick={() => setShowAssignModal(false)}>
           <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div>
-                <h3>Atribuir conversa</h3>
-                <p>Selecione um funcionário para assumir o atendimento de <strong>{selected.contact}</strong></p>
+              <div className="modal-header-top">
+                <div className="modal-header-brand">
+                  <img src={noriaLogo} alt="NORIA" className="modal-logo-img" />
+                  <h3 className="modal-title">Atribuir conversa</h3>
+                </div>
+                <button className="icon-button modal-close-btn" type="button" onClick={() => setShowAssignModal(false)} aria-label="Fechar">
+                  <X size={18} />
+                </button>
               </div>
-              <button className="icon-button" type="button" onClick={() => setShowAssignModal(false)}>
-                <X size={16} />
-              </button>
+              <p className="modal-subtitle">
+                Selecione um funcionário da equipe para assumir a continuidade deste atendimento.
+              </p>
+              <div className="modal-target-contact">
+                <MessageCircle size={14} />
+                <span>Atendimento: <strong>{selected.contact || 'Cliente'}</strong></span>
+                {selected.channelLabel && <span className="modal-target-channel">· {selected.channelLabel}</span>}
+              </div>
             </div>
 
             <div className="modal-body">
               <div className="agent-selection-list">
-                {agentsList.map((agent) => (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    className={`agent-selection-card ${selected.owner === agent.name ? 'selected' : ''}`}
-                    onClick={() => {
-                      onAssignAgent?.(selected, agent);
-                      setShowAssignModal(false);
-                      setAssignToast(`Conversa atribuída a ${agent.name}`);
-                      setTimeout(() => setAssignToast(''), 3000);
-                    }}
-                  >
-                    <div className="agent-avatar-circle">
-                      {getInitials(agent.name)}
-                    </div>
-                    <div className="agent-selection-info">
-                      <div className="agent-name-row">
-                        <strong>{agent.name}</strong>
-                        {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                {agentsList.map((agent) => {
+                  const isCurrent = selected.owner === agent.name;
+                  const isOnline = agent.status === 'online';
+                  return (
+                    <div
+                      key={agent.id}
+                      className={`agent-selection-card ${isCurrent ? 'selected' : ''}`}
+                      onClick={() => {
+                        if (!isCurrent) {
+                          onAssignAgent?.(selected, agent);
+                          setShowAssignModal(false);
+                          setAssignToast(`Conversa atribuída a ${agent.name}`);
+                          setTimeout(() => setAssignToast(''), 3000);
+                        }
+                      }}
+                    >
+                      <div className="agent-avatar-circle">
+                        {getInitials(agent.name)}
+                        <span className={`agent-avatar-status ${isOnline ? 'online' : 'standby'}`} title={isOnline ? 'Online' : 'Standby'} />
                       </div>
-                      <small>{agent.unit || 'Geral'} · {agent.shift || 'Horário comercial'} · {agent.status === 'online' ? 'Online' : 'Standby'}</small>
+
+                      <div className="agent-selection-info">
+                        <div className="agent-name-row">
+                          <strong>{agent.name}</strong>
+                          {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                        </div>
+                        <div className="agent-meta-row">
+                          <span>{agent.unit || agent.branch || 'Matriz'}</span>
+                          <span className="dot-sep">·</span>
+                          <span>{agent.shift || 'Integral'}</span>
+                        </div>
+                        <div className="agent-status-workload">
+                          <span className={`agent-status-tag ${isOnline ? 'online' : 'standby'}`}>
+                            <span className="status-dot" />
+                            {isOnline ? 'Online' : 'Standby'}
+                          </span>
+                          <span className="agent-load-tag">
+                            {agent.load || 0} {agent.load === 1 ? 'conversa ativa' : 'conversas ativas'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="agent-selection-action">
+                        {isCurrent ? (
+                          <span className="current-owner-tag">
+                            <CheckCircle2 size={14} /> Atual
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="assign-action-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAssignAgent?.(selected, agent);
+                              setShowAssignModal(false);
+                              setAssignToast(`Conversa atribuída a ${agent.name}`);
+                              setTimeout(() => setAssignToast(''), 3000);
+                            }}
+                          >
+                            <UserCheck size={14} />
+                            <span>Atribuir</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="agent-selection-badge">
-                      {selected.owner === agent.name ? (
-                        <span className="current-owner-tag"><CheckCircle2 size={14} /> Atual</span>
-                      ) : (
-                        <span className="select-action-tag">Atribuir</span>
-                      )}
-                    </div>
-                  </button>
-                ))}
+                  );
+                })}
                 {!agentsList.length && (
                   <EmptyState
                     title="Nenhum funcionário cadastrado"
@@ -1643,7 +1687,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
             external_conversation_id: contact.external_conversation_id || contact.externalConversationId,
             contact_name: contact.name || contact.contact_name || 'Contato',
             message_text: text,
-            sent_by_user: 'Disparo Mag.IA',
+            sent_by_user: 'Disparo NORIA',
           }, tenantSlug);
           sent += 1;
           await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
@@ -2207,11 +2251,7 @@ function AuthShell({ title }) {
     <main className="auth-page">
       <section className="auth-panel">
         <div className="brand auth-brand">
-          <div className="brand-mark"><Sparkles size={18} /></div>
-          <div>
-            <strong>Mag.ia</strong>
-            <span>Automação que parece magia</span>
-          </div>
+          <img src={noriaLogo} alt="NORIA" className="auth-brand-logo-img" />
         </div>
         <h1>{title}</h1>
       </section>
@@ -2242,11 +2282,7 @@ function LoginPage() {
     <main className="auth-page">
       <form className="auth-panel" onSubmit={handleSubmit}>
         <div className="brand auth-brand">
-          <div className="brand-mark"><Sparkles size={18} /></div>
-          <div>
-            <strong>Mag.ia</strong>
-            <span>Automação que parece magia</span>
-          </div>
+          <img src={noriaLogo} alt="NORIA" className="auth-brand-logo-img" />
         </div>
         <h1>Acessar painel</h1>
         <label>

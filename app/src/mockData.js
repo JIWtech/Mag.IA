@@ -3,7 +3,7 @@ export const clientStatus = {
   tenantSlug: 'jiw',
   channel: 'Telegram',
   botUsername: '@jiwtech_bot',
-  n8nWorkflow: 'Mag.ia/JIW - Telegram Atendimento',
+  n8nWorkflow: 'NORIA - Telegram Atendimento',
   webhookPath: '/webhook/telegram-jiw',
   mode: 'Regras de Automação',
   aiStatus: 'Sem IA paga',
