@@ -150,18 +150,12 @@ function formatCurrency(value) {
   }).format(value);
 }
 
-function App() {
-  const [active, setActive] = useState(getInitialActivePage);
-  const [availableTenants, setAvailableTenants] = useState(mockTenants);
-  const [tenantSlug, setTenantSlug] = useState(getInitialTenantSlug);
-  const [session, setSession] = useState(null);
-  const [checkingAuth, setCheckingAuth] = useState(isAuthRequired());
-  const [loading, setLoading] = useState(false);
-  const [appData, setAppData] = useState(() => {
-    const cached = loadCachedAppData(getInitialTenantSlug());
-    if (cached) return cached;
-    if (hasSupabaseConfig()) {
-      return {
+function getInitialAppData(tenantSlug) {
+  const cached = loadCachedAppData(tenantSlug);
+  if (cached) return { data: cached, ready: true };
+  if (hasSupabaseConfig()) {
+    return {
+      data: {
         conversations: [],
         kanbanColumns: emptyKanban(),
         funnelStages: emptyFunnel(),
@@ -179,9 +173,12 @@ function App() {
         appointments: [],
         broadcastContacts: [],
         broadcastCampaigns: [],
-      };
-    }
-    return {
+      },
+      ready: false,
+    };
+  }
+  return {
+    data: {
       conversations,
       kanbanColumns,
       funnelStages,
@@ -190,11 +187,30 @@ function App() {
       appointments: [],
       broadcastContacts: [],
       broadcastCampaigns: [],
-    };
-  });
+    },
+    ready: true,
+  };
+}
 
-  const selectedTenant = availableTenants.find((tenant) => tenant.slug === tenantSlug) || availableTenants[0] || mockTenants[0];
-  const activeTenantSlug = selectedTenant?.slug || tenantSlug || 'jiw';
+function App() {
+  const [active, setActive] = useState(getInitialActivePage);
+  const [tenantSlug, setTenantSlug] = useState(getInitialTenantSlug);
+  const [availableTenants, setAvailableTenants] = useState(() => {
+    const initialSlug = getInitialTenantSlug();
+    const found = mockTenants.find((tenant) => tenant.slug === initialSlug);
+    return found ? mockTenants : [{ slug: initialSlug, name: initialSlug }, ...mockTenants];
+  });
+  const [session, setSession] = useState(null);
+  const [checkingAuth, setCheckingAuth] = useState(isAuthRequired());
+  const [loading, setLoading] = useState(false);
+  const initialSetup = useMemo(() => getInitialAppData(getInitialTenantSlug()), []);
+  const [appData, setAppData] = useState(initialSetup.data);
+  const [appDataReady, setAppDataReady] = useState(initialSetup.ready);
+  const [agentsReady, setAgentsReady] = useState(false);
+
+  const activeTenantSlug = tenantSlug || getInitialTenantSlug() || 'jiw';
+  const selectedTenant = availableTenants.find((tenant) => tenant.slug === activeTenantSlug)
+    || { slug: activeTenantSlug, name: activeTenantSlug };
   const integration = getIntegrationStatus(activeTenantSlug);
 
   const [agentsList, setAgentsList] = useState([]);
@@ -255,9 +271,17 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    loadTeamAgents(activeTenantSlug).then((list) => {
-      if (active) setAgentsList(list);
-    });
+    setAgentsReady(false);
+    loadTeamAgents(activeTenantSlug)
+      .then((list) => {
+        if (active) {
+          setAgentsList(list);
+          setAgentsReady(true);
+        }
+      })
+      .catch(() => {
+        if (active) setAgentsReady(true);
+      });
     return () => {
       active = false;
     };
@@ -367,6 +391,7 @@ function App() {
         appDataSignature(previous) === appDataSignature(data) ? previous : data
       ));
     } finally {
+      setAppDataReady(true);
       if (showLoading) setLoading(false);
     }
   }
@@ -391,8 +416,14 @@ function App() {
     if (isAuthRequired() && !session) return undefined;
     persistTenantSlug(activeTenantSlug);
     const cached = loadCachedAppData(activeTenantSlug);
-    if (cached) setAppData(cached);
-    refreshData();
+    if (cached) {
+      setAppData(cached);
+      setAppDataReady(true);
+    } else {
+      setAppData(getInitialAppData(activeTenantSlug).data);
+      setAppDataReady(false);
+    }
+    refreshData({ showLoading: false });
 
     let lastRealtimeRefresh = 0;
     const refreshFromRealtime = () => {
@@ -493,16 +524,18 @@ function App() {
           </div>
         </header>
 
-        {active === 'dashboard' && <Dashboard conversations={appData.conversations} dataSource={appData.source} status={appData.status} />}
+        {active === 'dashboard' && <Dashboard conversations={appData.conversations} dataSource={appData.source} status={appData.status} ready={appDataReady} />}
         {active === 'conversas' && (
           <Conversations
             conversations={appData.conversations}
             tenantSlug={activeTenantSlug}
             onSent={refreshData}
             agentsList={agentsList}
+            agentsReady={agentsReady}
             onAssignAgent={handleAssignAgent}
             initialConversationId={initialConversationId}
             onInitialConversationOpened={() => setInitialConversationId(null)}
+            ready={appDataReady}
           />
         )}
         {active === 'kanban' && (
@@ -515,9 +548,10 @@ function App() {
             onOpenAppointment={handleOpenAppointmentFromKanban}
             onMoveCard={handleMoveKanbanCard}
             onFinishConversation={handleFinishConversationFromKanban}
+            ready={appDataReady}
           />
         )}
-        {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} />}
+        {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} ready={appDataReady} />}
         {active === 'disparos' && (
           <Broadcasts
             conversations={appData.conversations}
@@ -525,6 +559,7 @@ function App() {
             campaigns={appData.broadcastCampaigns || []}
             tenantSlug={activeTenantSlug}
             onChanged={refreshData}
+            ready={appDataReady}
           />
         )}
         {active === 'agendamentos' && (
@@ -534,11 +569,13 @@ function App() {
             tenantSlug={activeTenantSlug}
             onChanged={refreshData}
             initialData={prefilledAppointment}
+            ready={appDataReady}
           />
         )}
         {active === 'configuracoes' && (
           <SettingsPage
             agents={agentsList}
+            agentsReady={agentsReady}
             onAddAgent={handleAddAgent}
             onToggleAgentStatus={handleToggleAgentStatus}
             onDeleteAgent={handleDeleteAgent}
@@ -551,7 +588,16 @@ function App() {
   );
 }
 
-function Dashboard({ conversations, dataSource, status }) {
+function formatConversationPreview(message) {
+  const text = String(message || '').trim();
+  const lower = text.toLowerCase();
+  if (lower === '/reset' || lower === 'reset') {
+    return 'Conversa reiniciada';
+  }
+  return text;
+}
+
+function Dashboard({ conversations, dataSource, status, ready = true }) {
   const [visibleCount, setVisibleCount] = useState(5);
 
   const stats = useMemo(() => {
@@ -561,7 +607,7 @@ function Dashboard({ conversations, dataSource, status }) {
     return [
       { label: 'Conversas', value: conversations.length.toString(), change: dataSource === 'supabase' ? 'Supabase' : dataSource, icon: Inbox },
       { label: 'Bot ativo', value: activeBot.toString(), change: status?.ai || 'Regras e automações', icon: Bot },
-      { label: 'Humanas', value: human.toString(), change: 'Fila de espera', icon: UsersRound },
+      { label: 'Em atendimento humano', value: human.toString(), change: 'Atendimento ativo', icon: UsersRound },
     ];
   }, [conversations, dataSource, status]);
 
@@ -585,8 +631,17 @@ function Dashboard({ conversations, dataSource, status }) {
             <article className="metric-card" key={stat.label}>
               <div className="metric-icon"><Icon size={20} /></div>
               <span>{stat.label}</span>
-              <strong>{stat.value}</strong>
-              <small>{stat.change}</small>
+              {ready ? (
+                <>
+                  <strong>{stat.value}</strong>
+                  <small>{stat.change}</small>
+                </>
+              ) : (
+                <>
+                  <div className="metric-skeleton-value skeleton-block" />
+                  <SkeletonLine width="60px" height="10px" style={{ marginTop: '4px' }} />
+                </>
+              )}
             </article>
           );
         })}
@@ -594,52 +649,94 @@ function Dashboard({ conversations, dataSource, status }) {
 
       <div className="content-grid two dashboard-middle">
         <section className="panel">
-          <PanelTitle icon={Activity} title="Operação atual" action={status?.channel || 'Telegram'} />
-          <div className="bar-list">
-            {[
-              ['Telegram conectado', status?.telegram === 'conectado' ? 100 : 0],
-              ['Webhook n8n ativo', 100],
-              [status?.ai === 'Gemini' ? 'Gemini ativo' : 'Regras e automações', 100],
-              ['Supabase real', status?.supabase ? 100 : 0],
-            ].map(([label, value]) => (
-              <div className="bar-row" key={label}>
-                <span>{label}</span>
-                <div className="bar-track"><div style={{ width: `${value}%` }} /></div>
-                <strong>{value}%</strong>
+          <PanelTitle icon={Activity} title="Status do sistema" action={status?.channel || 'Telegram'} />
+          <div className="system-status-list">
+            <div className="system-status-row">
+              <div className="system-status-info">
+                <span className={`status-dot ${status?.telegram === 'conectado' ? 'connected' : 'idle'}`} />
+                <span className="system-status-label">Telegram</span>
               </div>
-            ))}
+              <span className={`system-status-badge ${status?.telegram === 'conectado' ? 'connected' : 'idle'}`}>
+                {status?.telegram === 'conectado' ? 'Atividade detectada' : 'Sem eventos'}
+              </span>
+            </div>
+
+            <div className="system-status-row">
+              <div className="system-status-info">
+                <span className={`status-dot ${status?.supabase ? 'connected' : 'idle'}`} />
+                <span className="system-status-label">Supabase</span>
+              </div>
+              <span className={`system-status-badge ${status?.supabase ? 'connected' : 'idle'}`}>
+                {status?.supabase ? 'Conectado' : 'Modo local'}
+              </span>
+            </div>
+
+            <div className="system-status-row">
+              <div className="system-status-info">
+                <span className="status-dot neutral" />
+                <span className="system-status-label">Webhook n8n</span>
+              </div>
+              <span className="system-status-badge neutral">
+                Configurado
+              </span>
+            </div>
+
+            <div className="system-status-row">
+              <div className="system-status-info">
+                <span className="status-dot neutral" />
+                <span className="system-status-label">Modo da IA</span>
+              </div>
+              <span className="system-status-badge neutral">
+                {status?.ai === 'Gemini' ? 'Gemini' : 'Regras e automações'}
+              </span>
+            </div>
           </div>
         </section>
 
         <section className="panel">
           <PanelTitle icon={Gauge} title="Sinais importantes" action="Tempo real" />
           <div className="signal-list">
-            <Signal icon={CheckCircle2} label="Bot Telegram conectado" value={status?.botUsername || '@clinica_nubia_bot'} tone="ok" />
+            <Signal icon={Send} label="Telegram" value={status?.botUsername || '@clinica_nubia_bot'} tone="ok" />
             <Signal icon={Clock3} label="Último evento" value={status?.latestAt || 'Sem eventos'} tone="info" />
-            <Signal icon={PauseCircle} label="Conversas para humano" value={String(status?.humanQueue || 0)} tone="warn" />
-            <Signal icon={Zap} label="IA" value={status?.ai || 'Regras e automações'} tone={status?.ai === 'Gemini' ? 'ok' : 'warn'} />
+            <Signal icon={PauseCircle} label="Solicitações para humano" value={String(status?.humanQueue || 0)} tone="warn" />
+            <Signal icon={Zap} label="Modo da IA" value={status?.ai || 'Regras e automações'} tone={status?.ai === 'Gemini' ? 'ok' : 'info'} />
           </div>
         </section>
       </div>
 
       <section className="panel dashboard-table-panel">
-        <PanelTitle icon={MessageCircle} title="Conversas recentes" action={`${displayedConversations.length} de ${conversations.length}`} />
+        <PanelTitle icon={MessageCircle} title="Conversas recentes" action={ready ? `${displayedConversations.length} de ${conversations.length}` : '—'} />
         <div className="table scrollable-table">
           <div className="table-head">
             <span>Contato</span><span>Canal</span><span>Status</span><span>Etapa</span><span>Responsável</span><span>Última mensagem</span>
           </div>
           <div className="table-body" onScroll={handleTableScroll}>
-            {displayedConversations.map((item) => (
-              <div className="table-row" key={item.id}>
-                <strong>{item.contact}</strong>
-                <span>{item.channel}</span>
-                <Badge value={statusLabels[item.status]} status={item.status} />
-                <span>{item.stage}</span>
-                <span>{item.owner}</span>
-                <small>{item.lastMessage}</small>
-              </div>
-            ))}
-            {!conversations.length && <EmptyState title="Nenhuma conversa real ainda" text="Assim que o bot Telegram receber mensagens, elas aparecerão aqui." />}
+            {!ready ? (
+              [1, 2, 3, 4].map((i) => (
+                <div className="table-row table-row-skeleton" key={i}>
+                  <SkeletonLine width="90px" />
+                  <SkeletonLine width="50px" />
+                  <SkeletonBlock width="70px" height="18px" style={{ borderRadius: '4px' }} />
+                  <SkeletonLine width="75px" />
+                  <SkeletonLine width="60px" />
+                  <SkeletonLine width="130px" />
+                </div>
+              ))
+            ) : (
+              <>
+                {displayedConversations.map((item) => (
+                  <div className="table-row" key={item.id}>
+                    <strong>{item.contact}</strong>
+                    <span>{item.channel}</span>
+                    <Badge value={statusLabels[item.status]} status={item.status} />
+                    <span>{item.stage}</span>
+                    <span>{item.owner}</span>
+                    <small>{formatConversationPreview(item.lastMessage)}</small>
+                  </div>
+                ))}
+                {!conversations.length && <EmptyState title="Nenhuma conversa real ainda" text="Assim que o bot Telegram receber mensagens, elas aparecerão aqui." />}
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -718,14 +815,24 @@ function MediaAttachment({ media, onMediaLoad }) {
   return <div className="media-placeholder" title="O arquivo original ainda não foi disponibilizado pelo canal"><Icon size={20} /><span>{media?.fileName || config.label}</span><small>Prévia indisponível</small></div>;
 }
 
+function SkeletonLine({ width, height, style, className }) {
+  return <span className={`skeleton-line ${className || ''}`} style={{ width, height, ...style }} />;
+}
+
+function SkeletonBlock({ width, height, style, className }) {
+  return <div className={`skeleton-block ${className || ''}`} style={{ width, height, ...style }} />;
+}
+
 function Conversations({
-  conversations,
+  conversations = [],
   tenantSlug,
   onSent,
   agentsList = [],
+  agentsReady = true,
   onAssignAgent,
   initialConversationId = null,
   onInitialConversationOpened,
+  ready = true,
 }) {
   const [selectedId, setSelectedId] = useState(conversations[0]?.id || null);
   const [query, setQuery] = useState('');
@@ -828,7 +935,7 @@ function Conversations({
         sent_by_user: 'Operador NORIA',
       }, tenantSlug);
       setDraft('');
-      await onSent?.();
+      await onSent?.({ showLoading: false });
     } catch (error) {
       setSendError(error.message || 'Não foi possível enviar a resposta.');
     } finally {
@@ -853,20 +960,12 @@ function Conversations({
         sent_by_user: 'Operador NORIA',
         reason: 'Atendimento finalizado pelo operador',
       }, tenantSlug);
-      await onSent?.();
+      await onSent?.({ showLoading: false });
     } catch (error) {
       setSendError(error.message || 'Nao foi possivel encerrar o atendimento.');
     } finally {
       setEnding(false);
     }
-  }
-
-  if (!conversations.length) {
-    return (
-      <section className="panel">
-        <EmptyState title="Nenhuma conversa registrada" text="Envie uma mensagem pelo canal conectado e atualize para visualizar o atendimento em tempo real." />
-      </section>
-    );
   }
 
   return (
@@ -969,45 +1068,77 @@ function Conversations({
         </div>
 
         <div className="conversation-items-scroll">
-          {filteredConversations.map((conversation) => (
-            <button
-              key={conversation.id}
-              type="button"
-              className={`conversation-item ${getChannelClass(conversation.channelType || conversation.channel)} ${selected?.id === conversation.id ? 'active' : ''}`}
-              onClick={() => setSelectedId(conversation.id)}
-            >
-              <div className="conversation-avatar-wrapper">
-                <div className="conversation-avatar">
-                  {getInitials(conversation.contact)}
+          {!ready ? (
+            [1, 2, 3, 4, 5].map((i) => (
+              <div className="conversation-item conversation-item-skeleton" key={i}>
+                <div className="conversation-avatar-wrapper">
+                  <div className="conversation-avatar skeleton-block" />
                 </div>
-                <span className={`channel-avatar-badge ${getChannelClass(conversation.channelType || conversation.channel)}`}>
-                  <ChannelIcon channel={conversation.channelType || conversation.channel} size={10} />
-                </span>
+                <div className="conversation-item-main">
+                  <div className="conversation-item-top">
+                    <SkeletonLine width="90px" />
+                    <SkeletonLine width="40px" />
+                  </div>
+                  <div className="conversation-item-middle">
+                    <SkeletonLine width="130px" />
+                  </div>
+                  <div className="conversation-item-bottom">
+                    <SkeletonBlock width="65px" height="14px" style={{ borderRadius: '4px' }} />
+                  </div>
+                </div>
               </div>
+            ))
+          ) : (
+            <>
+              {filteredConversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  className={`conversation-item ${getChannelClass(conversation.channelType || conversation.channel)} ${selected?.id === conversation.id ? 'active' : ''}`}
+                  onClick={() => setSelectedId(conversation.id)}
+                >
+                  <div className="conversation-avatar-wrapper">
+                    <div className="conversation-avatar">
+                      {getInitials(conversation.contact)}
+                    </div>
+                    <span className={`channel-avatar-badge ${getChannelClass(conversation.channelType || conversation.channel)}`}>
+                      <ChannelIcon channel={conversation.channelType || conversation.channel} size={10} />
+                    </span>
+                  </div>
 
-              <div className="conversation-item-main">
-                <div className="conversation-item-top">
-                  <strong className="contact-name">{conversation.contact}</strong>
-                  <small className="timestamp">{conversation.lastAt}</small>
-                </div>
-                <div className="conversation-item-middle">
-                  <span className="last-message">{conversation.lastMessage}</span>
-                </div>
-                <div className="conversation-item-bottom">
-                  <span className={`stage-tag ${conversation.status === 'atendimento_humano' ? 'human' : 'normal'}`}>
-                    {conversation.stage}
-                  </span>
-                  {(conversation.unread || 0) > 0 && <span className="item-unread-badge">{conversation.unread}</span>}
-                </div>
-              </div>
-            </button>
-          ))}
-          {!filteredConversations.length && <EmptyState title="Nenhum resultado" text="Ajuste a busca ou os filtros para ver outras conversas." compact />}
+                  <div className="conversation-item-main">
+                    <div className="conversation-item-top">
+                      <strong className="contact-name">{conversation.contact}</strong>
+                      <small className="timestamp">{conversation.lastAt}</small>
+                    </div>
+                    <div className="conversation-item-middle">
+                      <span className="last-message">{formatConversationPreview(conversation.lastMessage)}</span>
+                    </div>
+                    <div className="conversation-item-bottom">
+                      <span
+                        className={`stage-tag ${conversation.status === 'atendimento_humano' ? 'human' : 'normal'}`}
+                        data-stage={conversation.stage}
+                      >
+                        {conversation.stage}
+                      </span>
+                      {(conversation.unread || 0) > 0 && <span className="item-unread-badge">{conversation.unread}</span>}
+                    </div>
+                  </div>
+                </button>
+              ))}
+              {!filteredConversations.length && <EmptyState title="Nenhum resultado" text="Ajuste a busca ou os filtros para ver outras conversas." compact />}
+            </>
+          )}
         </div>
       </aside>
 
       <section className="chat-panel panel">
-        {selected ? <>
+        {!ready ? (
+          <div className="chat-empty-panel">
+            <SkeletonBlock width="180px" height="20px" style={{ margin: '0 auto 12px', borderRadius: '4px' }} />
+            <SkeletonLine width="140px" style={{ margin: '0 auto' }} />
+          </div>
+        ) : selected ? <>
           <div className="chat-header">
             <div>
               <div className="chat-header-name-row">
@@ -1105,79 +1236,98 @@ function Conversations({
 
             <div className="modal-body">
               <div className="agent-selection-list">
-                {agentsList.map((agent) => {
-                  const isCurrent = selected.owner === agent.name;
-                  const isOnline = agent.status === 'online';
-                  return (
-                    <div
-                      key={agent.id}
-                      className={`agent-selection-card ${isCurrent ? 'selected' : ''}`}
-                      onClick={() => {
-                        if (!isCurrent) {
-                          onAssignAgent?.(selected, agent);
-                          setShowAssignModal(false);
-                          setAssignToast(`Conversa atribuída a ${agent.name}`);
-                          setTimeout(() => setAssignToast(''), 3000);
-                        }
-                      }}
-                    >
-                      <div className="agent-avatar-circle">
-                        {getInitials(agent.name)}
-                        <span className={`agent-avatar-status ${isOnline ? 'online' : 'standby'}`} title={isOnline ? 'Online' : 'Standby'} />
-                      </div>
-
+                {!agentsReady ? (
+                  [1, 2, 3].map((i) => (
+                    <div className="agent-selection-card agent-selection-card-skeleton" key={i}>
+                      <div className="agent-avatar-circle skeleton-block" />
                       <div className="agent-selection-info">
                         <div className="agent-name-row">
-                          <strong>{agent.name}</strong>
-                          {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                          <SkeletonLine width="100px" />
+                          <SkeletonBlock width="60px" height="16px" style={{ borderRadius: '4px' }} />
                         </div>
                         <div className="agent-meta-row">
-                          <span>{agent.unit || agent.branch || 'Matriz'}</span>
-                          <span className="dot-sep">·</span>
-                          <span>{agent.shift || 'Integral'}</span>
-                        </div>
-                        <div className="agent-status-workload">
-                          <span className={`agent-status-tag ${isOnline ? 'online' : 'standby'}`}>
-                            <span className="status-dot" />
-                            {isOnline ? 'Online' : 'Standby'}
-                          </span>
-                          <span className="agent-load-tag">
-                            {agent.load || 0} {agent.load === 1 ? 'conversa ativa' : 'conversas ativas'}
-                          </span>
+                          <SkeletonLine width="120px" />
                         </div>
                       </div>
-
-                      <div className="agent-selection-action">
-                        {isCurrent ? (
-                          <span className="current-owner-tag">
-                            <CheckCircle2 size={14} /> Atual
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            className="assign-action-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
+                    </div>
+                  ))
+                ) : (
+                  <>
+                    {agentsList.map((agent) => {
+                      const isCurrent = selected.owner === agent.name;
+                      const isOnline = agent.status === 'online';
+                      return (
+                        <div
+                          key={agent.id}
+                          className={`agent-selection-card ${isCurrent ? 'selected' : ''}`}
+                          onClick={() => {
+                            if (!isCurrent) {
                               onAssignAgent?.(selected, agent);
                               setShowAssignModal(false);
                               setAssignToast(`Conversa atribuída a ${agent.name}`);
                               setTimeout(() => setAssignToast(''), 3000);
-                            }}
-                          >
-                            <UserCheck size={14} />
-                            <span>Atribuir</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {!agentsList.length && (
-                  <EmptyState
-                    title="Nenhum funcionário cadastrado"
-                    text="Acesse o menu Configurações para cadastrar os funcionários da equipe."
-                    compact
-                  />
+                            }
+                          }}
+                        >
+                          <div className="agent-avatar-circle">
+                            {getInitials(agent.name)}
+                            <span className={`agent-avatar-status ${isOnline ? 'online' : 'standby'}`} title={isOnline ? 'Online' : 'Standby'} />
+                          </div>
+
+                          <div className="agent-selection-info">
+                            <div className="agent-name-row">
+                              <strong>{agent.name}</strong>
+                              {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                            </div>
+                            <div className="agent-meta-row">
+                              <span>{agent.unit || agent.branch || 'Matriz'}</span>
+                              <span className="dot-sep">·</span>
+                              <span>{agent.shift || 'Integral'}</span>
+                            </div>
+                            <div className="agent-status-workload">
+                              <span className={`agent-status-tag ${isOnline ? 'online' : 'standby'}`}>
+                                <span className="status-dot" />
+                                {isOnline ? 'Online' : 'Standby'}
+                              </span>
+                              <span className="agent-load-tag">
+                                {agent.load || 0} {agent.load === 1 ? 'conversa ativa' : 'conversas ativas'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="agent-selection-action">
+                            {isCurrent ? (
+                              <span className="current-owner-tag">
+                                <CheckCircle2 size={14} /> Atual
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="assign-action-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onAssignAgent?.(selected, agent);
+                                  setShowAssignModal(false);
+                                  setAssignToast(`Conversa atribuída a ${agent.name}`);
+                                  setTimeout(() => setAssignToast(''), 3000);
+                                }}
+                              >
+                                <UserCheck size={14} />
+                                <span>Atribuir</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!agentsList.length && (
+                      <EmptyState
+                        title="Nenhum funcionário cadastrado"
+                        text="Acesse o menu Configurações para cadastrar os funcionários da equipe."
+                        compact
+                      />
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1203,6 +1353,7 @@ function Kanban({
   onOpenAppointment,
   onMoveCard,
   onFinishConversation,
+  ready = true,
 }) {
   const [agentFilter, setAgentFilter] = useState('todos');
   const [channelFilter, setChannelFilter] = useState('todos');
@@ -1405,7 +1556,7 @@ function Kanban({
             >
               <div className="column-header">
                 <strong className="column-title">{column.title}</strong>
-                <span className="column-count-badge">{column.cards.length}</span>
+                <span className="column-count-badge">{ready ? column.cards.length : '—'}</span>
               </div>
 
               <div
@@ -1413,144 +1564,161 @@ function Kanban({
                 onDragOver={(e) => handleDragOver(e, column)}
                 onDrop={(e) => handleDrop(e, column)}
               >
-                {column.cards.map((card) => {
-                  const channelClass = getChannelClass(card.channelType || card.channel);
-                  const isDragging = draggingCardId === card.id;
-
-                  return (
-                    <article
-                      className={`kanban-card ${channelClass} ${isDragging ? 'is-dragging' : ''}`}
-                      key={card.id}
-                      draggable={true}
-                      onDragStart={(e) => handleDragStart(e, card, column)}
-                      onDragEnd={handleDragEnd}
-                    >
+                {!ready ? (
+                  [1, 2].map((i) => (
+                    <article className="kanban-card kanban-card-skeleton" key={i}>
                       <div className="kanban-card-header">
-                        <div className="contact-title-line">
-                          <span className={`channel-indicator-icon ${channelClass}`}>
-                            <ChannelIcon channel={card.channelType || card.channel} size={12} />
-                          </span>
-                          <strong className="contact-name">{card.title}</strong>
-                        </div>
-                        <small className="card-time">{card.lastAt}</small>
+                        <SkeletonLine width="90px" height="14px" />
+                        <SkeletonLine width="35px" height="11px" />
                       </div>
-
-                      <p className="card-subtitle">{card.subtitle}</p>
-
-                      {isWaitingColumn && (
-                        <div className="waiting-sla-badge">
-                          <Clock3 size={11} />
-                          <span>Aguardando resposta humana</span>
-                        </div>
-                      )}
-
-                      {card.aiReason && (
-                        <div className="ai-verification-badge">
-                          <Sparkles size={12} className="ai-sparkle-icon" />
-                          <span>{card.aiReason}</span>
-                        </div>
-                      )}
-
-                      {card.hasSchedulingLink && (card.schedulingLink || schedulingUrl) && (
-                        <div className="scheduling-link-box">
-                          <div className="link-info">
-                            <CalendarCheck size={14} className="calendar-icon" />
-                            <span className="link-text" title={card.schedulingLink || schedulingUrl}>
-                              {formatSchedulingLink(card.schedulingLink || schedulingUrl)}
-                            </span>
-                          </div>
-                          <div className="link-actions">
-                            <button
-                              type="button"
-                              className="link-copy-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                copySchedulingLink(card.id, card.schedulingLink);
-                              }}
-                              title="Copiar link de agendamento"
-                            >
-                              {copiedCardId === card.id ? (
-                                <>
-                                  <Check size={12} color="#10b981" /> Copiado!
-                                </>
-                              ) : (
-                                <>
-                                  <Copy size={12} /> Copiar
-                                </>
-                              )}
-                            </button>
-                            <a
-                              href={card.schedulingLink || schedulingUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="link-external-btn"
-                              onClick={(e) => e.stopPropagation()}
-                              title="Abrir página de agendamento"
-                            >
-                              <ExternalLink size={12} />
-                            </a>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="kanban-card-footer">
-                        <div className="card-owner-info">
-                          <UserRound size={12} />
-                          <span>{card.owner}</span>
-                        </div>
-                      </div>
-
-                      {/* AÇÕES RÁPIDAS NO CARD (ITEM B) */}
-                      <div className="kanban-card-quick-actions">
-                        {onOpenChat && (
-                          <button
-                            type="button"
-                            className="card-quick-btn chat"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenChat(card.externalConversationId || card.id);
-                            }}
-                            title="Abrir e responder no chat"
-                          >
-                            <MessageCircle size={12} />
-                            <span>Responder</span>
-                          </button>
-                        )}
-
-                        {onOpenAppointment && (
-                          <button
-                            type="button"
-                            className="card-quick-btn schedule"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenAppointment(card);
-                            }}
-                            title="Criar agendamento rápido"
-                          >
-                            <CalendarCheck size={12} />
-                            <span>Agendar</span>
-                          </button>
-                        )}
-
-                        {onFinishConversation && !isFinishedColumn && (
-                          <button
-                            type="button"
-                            className="card-quick-btn finish"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onFinishConversation(card);
-                            }}
-                            title="Concluir e mover para Finalizadas"
-                          >
-                            <CheckCircle2 size={12} />
-                            <span>Finalizar</span>
-                          </button>
-                        )}
+                      <SkeletonLine width="130px" height="12px" style={{ marginTop: '8px' }} />
+                      <div className="kanban-card-footer" style={{ marginTop: '12px' }}>
+                        <SkeletonLine width="60px" height="11px" />
                       </div>
                     </article>
-                  );
-                })}
-                {!column.cards.length && <div className="column-empty">Sem conversas nesta etapa</div>}
+                  ))
+                ) : (
+                  <>
+                    {column.cards.map((card) => {
+                      const channelClass = getChannelClass(card.channelType || card.channel);
+                      const isDragging = draggingCardId === card.id;
+
+                      return (
+                        <article
+                          className={`kanban-card ${channelClass} ${isDragging ? 'is-dragging' : ''}`}
+                          key={card.id}
+                          draggable={true}
+                          onDragStart={(e) => handleDragStart(e, card, column)}
+                          onDragEnd={handleDragEnd}
+                        >
+                          <div className="kanban-card-header">
+                            <div className="contact-title-line">
+                              <span className={`channel-indicator-icon ${channelClass}`}>
+                                <ChannelIcon channel={card.channelType || card.channel} size={12} />
+                              </span>
+                              <strong className="contact-name">{card.title}</strong>
+                            </div>
+                            <small className="card-time">{card.lastAt}</small>
+                          </div>
+
+                          <p className="card-subtitle">{formatConversationPreview(card.subtitle)}</p>
+
+                          {isWaitingColumn && (
+                            <div className="waiting-sla-badge">
+                              <Clock3 size={11} />
+                              <span>Aguardando resposta humana</span>
+                            </div>
+                          )}
+
+                          {card.aiReason && (
+                            <div className="ai-verification-badge">
+                              <Sparkles size={12} className="ai-sparkle-icon" />
+                              <span>{card.aiReason}</span>
+                            </div>
+                          )}
+
+                          {card.hasSchedulingLink && (card.schedulingLink || schedulingUrl) && (
+                            <div className="scheduling-link-box">
+                              <div className="link-info">
+                                <CalendarCheck size={14} className="calendar-icon" />
+                                <span className="link-text" title={card.schedulingLink || schedulingUrl}>
+                                  {formatSchedulingLink(card.schedulingLink || schedulingUrl)}
+                                </span>
+                              </div>
+                              <div className="link-actions">
+                                <button
+                                  type="button"
+                                  className="link-copy-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copySchedulingLink(card.id, card.schedulingLink);
+                                  }}
+                                  title="Copiar link de agendamento"
+                                >
+                                  {copiedCardId === card.id ? (
+                                    <>
+                                      <Check size={12} color="#10b981" /> Copiado!
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy size={12} /> Copiar
+                                    </>
+                                  )}
+                                </button>
+                                <a
+                                  href={card.schedulingLink || schedulingUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="link-external-btn"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title="Abrir página de agendamento"
+                                >
+                                  <ExternalLink size={12} />
+                                </a>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="kanban-card-footer">
+                            <div className="card-owner-info">
+                              <UserRound size={12} />
+                              <span>{card.owner}</span>
+                            </div>
+                          </div>
+
+                          {/* AÇÕES RÁPIDAS NO CARD (ITEM B) */}
+                          <div className="kanban-card-quick-actions">
+                            {onOpenChat && (
+                              <button
+                                type="button"
+                                className="card-quick-btn chat"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenChat(card.externalConversationId || card.id);
+                                }}
+                                title="Abrir e responder no chat"
+                              >
+                                <MessageCircle size={12} />
+                                <span>Responder</span>
+                              </button>
+                            )}
+
+                            {onOpenAppointment && (
+                              <button
+                                type="button"
+                                className="card-quick-btn schedule"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenAppointment(card);
+                                }}
+                                title="Criar agendamento rápido"
+                              >
+                                <CalendarCheck size={12} />
+                                <span>Agendar</span>
+                              </button>
+                            )}
+
+                            {onFinishConversation && !isFinishedColumn && (
+                              <button
+                                type="button"
+                                className="card-quick-btn finish"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onFinishConversation(card);
+                                }}
+                                title="Concluir e mover para Finalizadas"
+                              >
+                                <CheckCircle2 size={12} />
+                                <span>Finalizar</span>
+                              </button>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                    {!column.cards.length && <div className="column-empty">Sem conversas nesta etapa</div>}
+                  </>
+                )}
               </div>
             </div>
           );
@@ -1594,7 +1762,7 @@ function Funnel({ funnelStages, tenantName }) {
   );
 }
 
-function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantSlug, onChanged }) {
+function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantSlug, onChanged, ready = true }) {
   const [draftContacts, setDraftContacts] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [messageText, setMessageText] = useState('');
@@ -1674,9 +1842,10 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
       const savedContacts = await upsertBroadcastContacts(tenantSlug, selectedContacts);
       const recipients = mergeBroadcastContacts(savedContacts, selectedContacts);
       campaign = await createBroadcastCampaign(tenantSlug, {
-        name: campaignName.trim() || `Disparo ${new Date().toLocaleString('pt-BR')}`,
-        channelType: 'telegram',
-        messageText: text,
+        name: campaignName.trim() || `Disparo ${new Date().toLocaleDateString('pt-BR')}`,
+        message_template: text,
+        total_recipients: recipients.length,
+        status: 'sending',
       }, recipients);
 
       for (const contact of recipients) {
@@ -1765,36 +1934,64 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
 
       <section className="content-grid two">
         <section className="panel">
-          <PanelTitle icon={UsersRound} title="Contatos selecionaveis" action={`${selectedContacts.length}/${allContacts.length}`} />
+          <PanelTitle icon={UsersRound} title="Contatos selecionaveis" action={ready ? `${selectedContacts.length}/${allContacts.length}` : '—'} />
           <div className="contact-table">
-            {allContacts.map((contact) => {
-              const key = contact.key || contactKey(contact);
-              return (
-                <label className="contact-row" key={key}>
-                  <input type="checkbox" checked={selected.has(key)} onChange={() => toggleContact(key)} />
-                  <div>
-                    <strong>{contact.name || contact.contact_name || 'Contato'}</strong>
-                    <span>{contact.external_conversation_id || contact.externalConversationId} - {contact.channel_type || contact.channelType || 'telegram'}</span>
+            {!ready ? (
+              [1, 2, 3].map((i) => (
+                <div className="contact-row" key={i} style={{ pointerEvents: 'none' }}>
+                  <SkeletonBlock width="16px" height="16px" style={{ borderRadius: '3px' }} />
+                  <div style={{ flex: 1 }}>
+                    <SkeletonLine width="110px" style={{ display: 'block' }} />
+                    <SkeletonLine width="140px" style={{ marginTop: '4px', display: 'block' }} />
                   </div>
-                </label>
-              );
-            })}
-            {!allContacts.length && <EmptyState title="Nenhum contato preparado" text="Importe uma planilha ou adicione contatos recentes." compact />}
+                </div>
+              ))
+            ) : (
+              <>
+                {allContacts.map((contact) => {
+                  const key = contact.key || contactKey(contact);
+                  return (
+                    <label className="contact-row" key={key}>
+                      <input type="checkbox" checked={selected.has(key)} onChange={() => toggleContact(key)} />
+                      <div>
+                        <strong>{contact.name || contact.contact_name || 'Contato'}</strong>
+                        <span>{contact.external_conversation_id || contact.externalConversationId} - {contact.channel_type || contact.channelType || 'telegram'}</span>
+                      </div>
+                    </label>
+                  );
+                })}
+                {!allContacts.length && <EmptyState title="Nenhum contato preparado" text="Importe uma planilha ou adicione contatos recentes." compact />}
+              </>
+            )}
           </div>
         </section>
         <section className="panel">
           <PanelTitle icon={Clock3} title="Historico de campanhas" />
           <div className="campaign-list">
-            {campaigns.map((campaign) => (
-              <article className="campaign-card" key={campaign.id}>
-                <div>
-                  <strong>{campaign.name}</strong>
-                  <span>{campaign.total_recipients || 0} contatos - {campaign.sent_count || 0} enviados - {campaign.failed_count || 0} falhas</span>
-                </div>
-                <Badge value={campaign.status} status={campaign.status === 'sent' ? 'ia_ativa' : 'channel'} />
-              </article>
-            ))}
-            {!campaigns.length && <EmptyState title="Sem campanhas" text="Os disparos realizados ficarao registrados aqui." compact />}
+            {!ready ? (
+              [1, 2].map((i) => (
+                <article className="campaign-card" key={i} style={{ pointerEvents: 'none' }}>
+                  <div style={{ flex: 1 }}>
+                    <SkeletonLine width="120px" style={{ display: 'block' }} />
+                    <SkeletonLine width="160px" style={{ marginTop: '5px', display: 'block' }} />
+                  </div>
+                  <SkeletonBlock width="60px" height="18px" style={{ borderRadius: '4px' }} />
+                </article>
+              ))
+            ) : (
+              <>
+                {campaigns.map((campaign) => (
+                  <article className="campaign-card" key={campaign.id}>
+                    <div>
+                      <strong>{campaign.name}</strong>
+                      <span>{campaign.total_recipients || 0} contatos - {campaign.sent_count || 0} enviados - {campaign.failed_count || 0} falhas</span>
+                    </div>
+                    <Badge value={campaign.status} status={campaign.status === 'sent' ? 'ia_ativa' : 'channel'} />
+                  </article>
+                ))}
+                {!campaigns.length && <EmptyState title="Sem campanhas" text="Os disparos realizados ficarao registrados aqui." compact />}
+              </>
+            )}
           </div>
         </section>
       </section>
@@ -1802,7 +1999,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   );
 }
 
-function Appointments({ appointments = [], conversations = [], tenantSlug, onChanged, initialData }) {
+function Appointments({ appointments = [], conversations = [], tenantSlug, onChanged, initialData, ready = true }) {
   const [title, setTitle] = useState('');
   const [contactName, setContactName] = useState('');
   const [startsAt, setStartsAt] = useState('');
@@ -1889,32 +2086,53 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
       </section>
 
       <section className="panel appointment-list-panel">
-        <PanelTitle icon={Clock3} title="Calendario simples" action={`${appointments.length} registros`} />
+        <PanelTitle icon={Clock3} title="Calendario simples" action={ready ? `${appointments.length} registros` : '— registros'} />
         <div className="appointment-groups">
-          {grouped.map((group) => (
-            <div className="appointment-day" key={group.day}>
-              <h3>{group.day}</h3>
-              {group.items.map((appointment) => (
-                <article className="appointment-card" key={appointment.id} data-status={appointment.status}>
-                  <div className="appointment-time"><strong>{appointment.timeLabel}</strong><span>{appointment.endTimeLabel || '--:--'}</span></div>
-                  <div>
-                    <strong>{appointment.title}</strong>
-                    <span>{appointment.contactName || 'Sem contato'} - {appointment.channelLabel}</span>
-                    {appointment.notes && <p>{appointment.notes}</p>}
+          {!ready ? (
+            <div className="appointment-day appointment-day-skeleton">
+              <SkeletonLine width="110px" height="14px" style={{ marginBottom: '12px', display: 'block' }} />
+              {[1, 2, 3].map((i) => (
+                <article className="appointment-card appointment-card-skeleton" key={i}>
+                  <div className="appointment-time">
+                    <SkeletonLine width="38px" height="14px" />
+                    <SkeletonLine width="38px" height="11px" style={{ marginTop: '4px' }} />
                   </div>
-                  <Badge value={appointment.statusLabel} status="channel" />
+                  <div style={{ flex: 1 }}>
+                    <SkeletonLine width="130px" height="14px" style={{ display: 'block' }} />
+                    <SkeletonLine width="90px" height="12px" style={{ marginTop: '5px', display: 'block' }} />
+                  </div>
+                  <SkeletonBlock width="70px" height="18px" style={{ borderRadius: '4px' }} />
                 </article>
               ))}
             </div>
-          ))}
-          {!appointments.length && <EmptyState title="Nenhum agendamento" text="Crie um agendamento manual para ele aparecer aqui e no Kanban." />}
+          ) : (
+            <>
+              {grouped.map((group) => (
+                <div className="appointment-day" key={group.day}>
+                  <h3>{group.day}</h3>
+                  {group.items.map((appointment) => (
+                    <article className="appointment-card" key={appointment.id} data-status={appointment.status}>
+                      <div className="appointment-time"><strong>{appointment.timeLabel}</strong><span>{appointment.endTimeLabel || '--:--'}</span></div>
+                      <div>
+                        <strong>{appointment.title}</strong>
+                        <span>{appointment.contactName || 'Sem contato'} - {appointment.channelLabel}</span>
+                        {appointment.notes && <p>{appointment.notes}</p>}
+                      </div>
+                      <Badge value={appointment.statusLabel} status="channel" />
+                    </article>
+                  ))}
+                </div>
+              ))}
+              {!appointments.length && <EmptyState title="Nenhum agendamento" text="Crie um agendamento manual para ele aparecer aqui e no Kanban." />}
+            </>
+          )}
         </div>
       </section>
     </section>
   );
 }
 
-function SettingsPage({ agents = [], onAddAgent, onToggleAgentStatus, onDeleteAgent, tenantName }) {
+function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAgentStatus, onDeleteAgent, tenantName, integration }) {
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [phone, setPhone] = useState('');
@@ -2038,51 +2256,68 @@ function SettingsPage({ agents = [], onAddAgent, onToggleAgentStatus, onDeleteAg
         </p>
 
         <div className="agents-list">
-          {agents.map((agent) => (
-            <article className="agent-card" key={agent.id}>
-              <div className="agent-avatar small">
-                <UserRound size={20} />
-              </div>
-              <div className="agent-info">
-                <div className="agent-name-row">
-                  <strong>{agent.name}</strong>
-                  {agent.role && <span className="agent-badge-role">{agent.role}</span>}
-                  <span className={`status-dot-badge ${agent.status}`}>
-                    <span className="pulse-dot" />
-                    {agent.status === 'online' ? 'Online' : 'Standby'}
-                  </span>
+          {!agentsReady ? (
+            [1, 2, 3].map((i) => (
+              <article className="agent-card agent-card-skeleton" key={i}>
+                <div className="agent-avatar small skeleton-block" style={{ width: '36px', height: '36px', borderRadius: '50%' }} />
+                <div className="agent-info">
+                  <div className="agent-name-row">
+                    <SkeletonLine width="110px" />
+                    <SkeletonBlock width="65px" height="18px" style={{ borderRadius: '4px' }} />
+                  </div>
+                  <SkeletonLine width="150px" style={{ marginTop: '6px' }} />
                 </div>
-                <span className="agent-role">
-                  {agent.unit || 'Geral'} · {agent.shift || '08:00 às 18:00'} {agent.phone ? `· ${agent.phone}` : ''}
-                </span>
-              </div>
-              <div className="agent-actions">
-                <span className="agent-load-badge">{agent.load || 0} conversas</span>
-                <button
-                  className="secondary-button compact-btn"
-                  type="button"
-                  title="Alternar status de disponibilidade"
-                  onClick={() => onToggleAgentStatus?.(agent.id)}
-                >
-                  {agent.status === 'online' ? 'Pausar' : 'Ativar'}
-                </button>
-                <button
-                  className="icon-button compact-btn text-danger"
-                  type="button"
-                  title="Remover funcionário"
-                  onClick={() => onDeleteAgent?.(agent.id)}
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </article>
-          ))}
-          {!agents.length && (
-            <EmptyState
-              title="Nenhum funcionário cadastrado"
-              text="Cadastre os atendentes e operadores da equipe no formulário ao lado para poder atribuir conversas a eles."
-              compact
-            />
+              </article>
+            ))
+          ) : (
+            <>
+              {agents.map((agent) => (
+                <article className="agent-card" key={agent.id}>
+                  <div className="agent-avatar small">
+                    <UserRound size={20} />
+                  </div>
+                  <div className="agent-info">
+                    <div className="agent-name-row">
+                      <strong>{agent.name}</strong>
+                      {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                      <span className={`status-dot-badge ${agent.status}`}>
+                        <span className="pulse-dot" />
+                        {agent.status === 'online' ? 'Online' : 'Standby'}
+                      </span>
+                    </div>
+                    <span className="agent-role">
+                      {agent.unit || 'Geral'} · {agent.shift || '08:00 às 18:00'} {agent.phone ? `· ${agent.phone}` : ''}
+                    </span>
+                  </div>
+                  <div className="agent-actions">
+                    <span className="agent-load-badge">{agent.load || 0} conversas</span>
+                    <button
+                      className="secondary-button compact-btn"
+                      type="button"
+                      title="Alternar status de disponibilidade"
+                      onClick={() => onToggleAgentStatus?.(agent.id)}
+                    >
+                      {agent.status === 'online' ? 'Pausar' : 'Ativar'}
+                    </button>
+                    <button
+                      className="icon-button compact-btn text-danger"
+                      type="button"
+                      title="Remover funcionário"
+                      onClick={() => onDeleteAgent?.(agent.id)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {!agents.length && (
+                <EmptyState
+                  title="Nenhum funcionário cadastrado"
+                  text="Cadastre os atendentes e operadores da equipe no formulário ao lado para poder atribuir conversas a eles."
+                  compact
+                />
+              )}
+            </>
           )}
         </div>
       </section>

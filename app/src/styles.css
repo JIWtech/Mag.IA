@@ -538,6 +538,79 @@ button {
   gap: 12px;
 }
 
+.system-status-list {
+  display: grid;
+  gap: 12px;
+}
+
+.system-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  border-radius: 8px;
+  padding: 11px 14px;
+  font-size: 13px;
+}
+
+.system-status-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.system-status-info .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.system-status-info .status-dot.connected {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.4);
+}
+
+.system-status-info .status-dot.idle {
+  background: var(--amber);
+}
+
+.system-status-info .status-dot.neutral {
+  background: var(--muted);
+  opacity: 0.6;
+}
+
+.system-status-label {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.system-status-badge {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.system-status-badge.connected {
+  color: var(--green);
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.2);
+}
+
+.system-status-badge.idle {
+  color: var(--amber);
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+.system-status-badge.neutral {
+  color: var(--muted);
+  background: var(--surface-hover);
+  border: 1px solid var(--line);
+}
+
 .bar-row {
   display: grid;
   grid-template-columns: 110px 1fr 44px;
@@ -1162,10 +1235,44 @@ button {
   text-overflow: ellipsis;
 }
 
-.stage-tag.human {
-  background: rgba(251, 191, 36, 0.15);
+.stage-tag[data-stage="Qualificação"],
+.stage-tag[data-stage="Qualificacao"] {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: rgba(0, 224, 255, 0.25);
+}
+
+.stage-tag[data-stage="Agendamento"] {
+  color: var(--green);
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.30);
+}
+
+.stage-tag.human,
+.stage-tag[data-stage="Atendimento humano"] {
   color: var(--amber);
+  background: rgba(251, 191, 36, 0.14);
   border-color: rgba(251, 191, 36, 0.35);
+}
+
+.stage-tag[data-stage="Orçamento solicitado"],
+.stage-tag[data-stage="Orcamento solicitado"] {
+  color: #7861FF;
+  background: rgba(120, 97, 255, 0.12);
+  border-color: rgba(120, 97, 255, 0.3);
+}
+
+.stage-tag[data-stage="Cliente fechado"] {
+  color: var(--green);
+  background: rgba(52, 211, 153, 0.18);
+  border-color: rgba(52, 211, 153, 0.38);
+}
+
+.stage-tag[data-stage="Finalizado"] {
+  color: var(--muted);
+  background: var(--surface-soft);
+  border-color: var(--line);
+  opacity: 0.75;
 }
 
 .item-unread-badge {
@@ -3250,4 +3357,110 @@ button:disabled {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.3px;
+}
+
+/* ==========================================================================
+   NORIA SKELETON LOADERS & READY STATES
+   ========================================================================== */
+
+@keyframes skeleton-pulse {
+  0% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0.45;
+  }
+}
+
+.skeleton-line,
+.skeleton-block {
+  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  animation: skeleton-pulse 1.8s ease-in-out infinite;
+  pointer-events: none;
+  user-select: none;
+}
+
+.skeleton-line {
+  height: 12px;
+  vertical-align: middle;
+}
+
+.skeleton-block {
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line,
+  .skeleton-block {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* Metric Cards Skeleton */
+.metric-skeleton-value {
+  width: 54px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  margin: 4px 0 2px 0;
+}
+
+/* Table Skeletons */
+.table-row-skeleton {
+  pointer-events: none;
+}
+
+/* Conversation Sidebar Skeletons */
+.conversation-item-skeleton {
+  pointer-events: none;
+  cursor: default;
+}
+
+.conversation-item-skeleton .conversation-avatar.skeleton-block {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+}
+
+/* Chat Panel Placeholder Skeleton */
+.chat-empty-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 320px;
+  color: var(--muted);
+}
+
+/* Kanban Skeletons */
+.kanban-card-skeleton {
+  pointer-events: none;
+  cursor: default;
+  border-color: var(--line) !important;
+  box-shadow: none !important;
+}
+
+/* Appointments Skeletons */
+.appointment-card-skeleton {
+  pointer-events: none;
+  cursor: default;
+  border-color: var(--line) !important;
+}
+
+/* Agent Card Skeletons */
+.agent-card-skeleton {
+  pointer-events: none;
+  cursor: default;
+}
+
+.agent-selection-card-skeleton {
+  pointer-events: none;
+  cursor: default;
+  opacity: 0.75;
 }

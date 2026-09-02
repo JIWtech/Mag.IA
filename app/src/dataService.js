@@ -431,6 +431,7 @@ export async function updateBroadcastRecipient(campaignId, externalConversationI
 
 function normalizeStage(stage) {
   const s = String(stage || '').toLowerCase().trim();
+  if (s === 'reset' || s === '/reset') return 'Qualificação';
   if (s.includes('finaliz') || s.includes('encerr')) return 'Finalizado';
   if (s.includes('qualific') || s === 'qualificacao') return 'Qualificação';
   if (s.includes('agend') || s === 'agendamento') return 'Agendamento';
