@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { canCloseConversation, requirePersistedClosure } from './conversationLifecycle';
 import { CHANNEL_OPTIONS, isTenantAuthorized } from './tenantAccess';
 import { createRoot } from 'react-dom/client';
@@ -103,7 +103,7 @@ const menu = [
   { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
   { id: 'disparos', label: 'Disparos', icon: Megaphone },
   { id: 'agendamentos', label: 'Agendamentos', icon: CalendarDays },
-  { id: 'configuracoes', label: 'Configurações', icon: Settings },
+  { id: 'configuracoes', label: 'ConfiguraÃ§Ãµes', icon: Settings },
 ];
 const activePageStorageKey = 'magia:active-page';
 const appDataCachePrefix = 'magia:app-data:';
@@ -165,7 +165,7 @@ function cacheAppData(tenantSlug, data) {
       localStorage.setItem(`${appDataCachePrefix}${tenantSlug}`, serialized);
     }
   } catch {
-    // Cache local é opcional: quota cheia nunca deve afetar o painel.
+    // Cache local Ã© opcional: quota cheia nunca deve afetar o painel.
   }
 }
 
@@ -175,7 +175,7 @@ const statusLabels = {
   aguardando_cliente: 'Aguardando cliente',
   finalizada: 'Finalizada',
   finalizado: 'Finalizada',
-  erro: 'Atenção',
+  erro: 'AtenÃ§Ã£o',
   bloqueada: 'Bloqueada',
 };
 
@@ -203,7 +203,7 @@ function getInitialAppData(tenantSlug) {
           botUsername: '',
           channel: '',
           supabase: true,
-          ai: 'Regras e automações',
+          ai: 'Regras e automaÃ§Ãµes',
           latestAt: 'Sincronizando...',
           humanQueue: 0,
         },
@@ -294,14 +294,14 @@ function App() {
     setPrefilledAppointment({
       contactName: card.title || '',
       title: card.service || card.subtitle || 'Bronzeamento',
-      notes: `Agendamento via Kanban (${card.stage || 'Qualificação'})`,
+      notes: `Agendamento via Kanban (${card.stage || 'QualificaÃ§Ã£o'})`,
       selectedConversationId: card.externalConversationId || '',
     });
     setActive('agendamentos');
   };
 
   const handleMoveKanbanCard = async (card, targetColumnKey) => {
-    // Atualização otimista no estado local
+    // AtualizaÃ§Ã£o otimista no estado local
     setAppData((prev) => {
       if (!prev?.kanbanColumns) return prev;
       const nextColumns = prev.kanbanColumns.map((col) => {
@@ -321,7 +321,7 @@ function App() {
     try {
       await moveKanbanCard(activeTenantSlug, card, targetColumnKey);
     } catch (err) {
-      console.warn('Falha ao salvar movimentação de card no banco:', err);
+      console.warn('Falha ao salvar movimentaÃ§Ã£o de card no banco:', err);
       refreshData({ showLoading: false });
     }
   };
@@ -331,7 +331,7 @@ function App() {
   };
 
   useEffect(() => {
-    document.title = 'NORIA — Inteligência em movimento';
+    document.title = 'NORIA â€” InteligÃªncia em movimento';
     try {
       localStorage.removeItem('magia:team-agents');
     } catch (e) { }
@@ -387,7 +387,7 @@ function App() {
             ...(conv.messages || []),
             {
               from: 'system',
-              text: `Conversa atribuída a ${agent.name}`,
+              text: `Conversa atribuÃ­da a ${agent.name}`,
               at: 'Agora',
             },
           ];
@@ -607,13 +607,13 @@ function App() {
       {mobileNavOpen && (
         <>
           <div className="mobile-nav-backdrop" onClick={() => setMobileNavOpen(false)} />
-          <aside id="mobile-nav-drawer" className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="Navegação principal">
+          <aside id="mobile-nav-drawer" className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="NavegaÃ§Ã£o principal">
             <div className="mobile-nav-header">
               <div className="mobile-nav-brand">
                 <img src={noriaLogo} alt="NORIA" className="brand-logo-img" />
                 <div className="mobile-brand-text">
                   <strong>NORIA</strong>
-                  <small>Inteligência em movimento</small>
+                  <small>InteligÃªncia em movimento</small>
                 </div>
               </div>
               <button
@@ -666,7 +666,7 @@ function App() {
                 className="mobile-menu-btn icon-button"
                 onClick={() => setMobileNavOpen(true)}
                 title="Menu"
-                aria-label="Abrir navegação"
+                aria-label="Abrir navegaÃ§Ã£o"
                 aria-expanded={mobileNavOpen}
                 aria-controls="mobile-nav-drawer"
               >
@@ -674,7 +674,7 @@ function App() {
               </button>
               <h1>{menu.find((item) => item.id === active)?.label}</h1>
             </div>
-            <p className="topbar-subtitle">{[selectedTenant.name, selectedTenant.industry].filter(Boolean).join(' · ')}</p>
+            <p className="topbar-subtitle">{[selectedTenant.name, selectedTenant.industry].filter(Boolean).join(' Â· ')}</p>
           </div>
           <div className="topbar-actions">
             <label className="select-label" title={selectedTenant.name}>
@@ -847,7 +847,7 @@ function Dashboard({ conversations, dataSource, status, ready = true }) {
           <PanelTitle
             icon={MessageCircle}
             title="Conversas recentes"
-            action={ready ? `${displayedConversations.length} de ${conversations.length}` : '—'}
+            action={ready ? `${displayedConversations.length} de ${conversations.length}` : 'â€”'}
           />
           <div className="table scrollable-table dashboard-table">
             <div className="table-head">
@@ -855,9 +855,9 @@ function Dashboard({ conversations, dataSource, status, ready = true }) {
               <span>Canal</span>
               <span>Status</span>
               <span>Etapa</span>
-              <span>Responsável</span>
-              <span>Última mensagem</span>
-              <span className="th-time">Horário</span>
+              <span>ResponsÃ¡vel</span>
+              <span>Ãšltima mensagem</span>
+              <span className="th-time">HorÃ¡rio</span>
             </div>
             <div className="table-body" onScroll={handleTableScroll}>
               {!ready ? (
@@ -973,8 +973,8 @@ function MediaAttachment({ media, onMediaLoad }) {
   const [expandedImage, setExpandedImage] = useState(false);
   const config = {
     image: { label: 'Imagem recebida', icon: ImageIcon },
-    audio: { label: 'Áudio recebido', icon: Music2 },
-    video: { label: 'Vídeo recebido', icon: Video },
+    audio: { label: 'Ãudio recebido', icon: Music2 },
+    video: { label: 'VÃ­deo recebido', icon: Video },
     document: { label: 'Documento recebido', icon: FileText },
   }[media?.kind] || { label: 'Anexo recebido', icon: FileText };
   const Icon = config.icon;
@@ -993,15 +993,15 @@ function MediaAttachment({ media, onMediaLoad }) {
     </>;
   }
   if (media?.kind === 'audio' && media.url) {
-    return <audio className="media-audio" controls preload="metadata" src={media.url}>Seu navegador não suporta áudio.</audio>;
+    return <audio className="media-audio" controls preload="metadata" src={media.url}>Seu navegador nÃ£o suporta Ã¡udio.</audio>;
   }
   if (media?.kind === 'video' && media.url) {
-    return <video className="media-video" controls preload="metadata" poster={media.thumbnailUrl || undefined} src={media.url}>Seu navegador não suporta vídeo.</video>;
+    return <video className="media-video" controls preload="metadata" poster={media.thumbnailUrl || undefined} src={media.url}>Seu navegador nÃ£o suporta vÃ­deo.</video>;
   }
   if (media?.kind === 'document' && media.url) {
     return <a className="media-placeholder media-download" href={media.url} target="_blank" rel="noreferrer"><Icon size={20} /><span>{media.fileName || config.label}</span><ExternalLink size={15} /></a>;
   }
-  return <div className="media-placeholder" title="O arquivo original ainda não foi disponibilizado pelo canal"><Icon size={20} /><span>{media?.fileName || config.label}</span><small>Prévia indisponível</small></div>;
+  return <div className="media-placeholder" title="O arquivo original ainda nÃ£o foi disponibilizado pelo canal"><Icon size={20} /><span>{media?.fileName || config.label}</span><small>PrÃ©via indisponÃ­vel</small></div>;
 }
 
 function SkeletonLine({ width, height, style, className }) {
@@ -1243,7 +1243,7 @@ function Conversations({
       setDraft('');
       await onSent?.({ showLoading: false });
     } catch (error) {
-      setSendError(error.message || 'Não foi possível enviar a resposta.');
+      setSendError(error.message || 'NÃ£o foi possÃ­vel enviar a resposta.');
     } finally {
       setSending(false);
     }
@@ -1278,7 +1278,7 @@ function Conversations({
         closeActionBtnRef.current?.focus();
       }, 40);
     } catch (error) {
-      setSendError(error.message || 'Não foi possível encerrar o atendimento.');
+      setSendError(error.message || 'NÃ£o foi possÃ­vel encerrar o atendimento.');
     } finally {
       closeInFlight.current = false;
       setEnding(false);
@@ -1362,7 +1362,7 @@ function Conversations({
                     >
                       <div className="filter-item-left">
                         {filter === 'nao_lidas' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
-                        <span>Não lidas</span>
+                        <span>NÃ£o lidas</span>
                       </div>
                       {(unreadCount || 0) > 0 && <span className="count-badge unread-badge">{unreadCount}</span>}
                     </button>
@@ -1451,7 +1451,7 @@ function Conversations({
         <div className="chips">
           <button className={`chip ${filter === 'todas' ? 'active' : ''}`} type="button" onClick={() => setFilter('todas')}>Todas</button>
           <button className={`chip ${filter === 'nao_lidas' ? 'active' : ''}`} type="button" onClick={() => setFilter('nao_lidas')}>
-            Não lidas
+            NÃ£o lidas
             {(unreadCount || 0) > 0 && <span className="chip-unread-count">{unreadCount}</span>}
           </button>
           <button className={`chip ${filter === 'ia' ? 'active' : ''}`} type="button" onClick={() => setFilter('ia')}>IA</button>
@@ -1518,7 +1518,7 @@ function Conversations({
                     <div className="conversation-item-bottom">
                       <span className="last-message">{formatConversationPreview(conversation.lastMessage)}</span>
                       {(conversation.unread || 0) > 0 && (
-                        <span className="item-unread-badge" aria-label={`${conversation.unread} mensagens não lidas`}>
+                        <span className="item-unread-badge" aria-label={`${conversation.unread} mensagens nÃ£o lidas`}>
                           {conversation.unread}
                         </span>
                       )}
@@ -1567,12 +1567,12 @@ function Conversations({
                     <ChannelIcon channel={selected.channelType || selected.channel} size={11} />
                     {selected.channel}
                   </span>
-                  <span className="chat-header-dot">·</span>
+                  <span className="chat-header-dot">Â·</span>
                   <span className="chat-header-stage">{selected.stage}</span>
                   {selected.owner && (
                     <>
-                      <span className="chat-header-dot chat-header-owner-dot">·</span>
-                      <span className="chat-header-owner" title={`Responsável: ${selected.owner}`}>
+                      <span className="chat-header-dot chat-header-owner-dot">Â·</span>
+                      <span className="chat-header-owner" title={`ResponsÃ¡vel: ${selected.owner}`}>
                         {selected.owner}
                       </span>
                     </>
@@ -1693,13 +1693,13 @@ function Conversations({
 
             <div className="confirm-modal-body">
               <p id="close-modal-desc" className="confirm-modal-desc">
-                Esta conversa sairá do atendimento humano. A próxima mensagem do contato voltará a ser atendida pela IA.
+                Esta conversa sairÃ¡ do atendimento humano. A prÃ³xima mensagem do contato voltarÃ¡ a ser atendida pela IA.
               </p>
 
               <div className="modal-target-contact compact">
                 <MessageCircle size={14} />
                 <span>Atendimento: <strong>{selected.contact || 'Cliente'}</strong></span>
-                {selected.channel && <span className="modal-target-channel">· {selected.channel}</span>}
+                {selected.channel && <span className="modal-target-channel">Â· {selected.channel}</span>}
               </div>
 
               {sendError && <div className="inline-error confirm-error">{sendError}</div>}
@@ -1764,12 +1764,12 @@ function Conversations({
                 </button>
               </div>
               <p className="modal-subtitle">
-                Selecione um funcionário da equipe para assumir a continuidade deste atendimento.
+                Selecione um funcionÃ¡rio da equipe para assumir a continuidade deste atendimento.
               </p>
               <div className="modal-target-contact">
                 <MessageCircle size={14} />
                 <span>Atendimento: <strong>{selected.contact || 'Cliente'}</strong></span>
-                {selected.channelLabel && <span className="modal-target-channel">· {selected.channelLabel}</span>}
+                {selected.channelLabel && <span className="modal-target-channel">Â· {selected.channelLabel}</span>}
               </div>
             </div>
 
@@ -1810,7 +1810,7 @@ function Conversations({
                         return agent.status;
                       })();
                       const hasRealLoad = typeof agent.load === 'number' && !Number.isNaN(agent.load);
-                      const metaText = [agent.unit || agent.branch, agent.shift].filter(Boolean).join(' · ');
+                      const metaText = [agent.unit || agent.branch, agent.shift].filter(Boolean).join(' Â· ');
 
                       return (
                         <div
@@ -1820,7 +1820,7 @@ function Conversations({
                             if (!isCurrent) {
                               onAssignAgent?.(selected, agent);
                               handleCloseAssignModal();
-                              setAssignToast(`Conversa atribuída a ${agent.name}`);
+                              setAssignToast(`Conversa atribuÃ­da a ${agent.name}`);
                               setTimeout(() => setAssignToast(''), 3000);
                             }
                           }}
@@ -1878,7 +1878,7 @@ function Conversations({
                                     e.stopPropagation();
                                     onAssignAgent?.(selected, agent);
                                     handleCloseAssignModal();
-                                    setAssignToast(`Conversa atribuída a ${agent.name}`);
+                                    setAssignToast(`Conversa atribuÃ­da a ${agent.name}`);
                                     setTimeout(() => setAssignToast(''), 3000);
                                   }}
                                 >
@@ -1893,8 +1893,8 @@ function Conversations({
                     })}
                     {!agentsList.length && (
                       <EmptyState
-                        title="Nenhum funcionário cadastrado"
-                        text="Acesse o menu Configurações para cadastrar os funcionários da equipe."
+                        title="Nenhum funcionÃ¡rio cadastrado"
+                        text="Acesse o menu ConfiguraÃ§Ãµes para cadastrar os funcionÃ¡rios da equipe."
                         compact
                       />
                     )}
@@ -1984,6 +1984,23 @@ function Kanban({
     if (norm.includes('insta')) return 'channel-instagram';
     return 'channel-telegram';
   };
+  const mobileColumnOrder = (column = {}) => {
+    const key = [column.automationKey, column.id, column.title]
+      .filter(Boolean)
+      .join(' ')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
+    if (/conversas[_\s-]?ia|novas[_\s-]?conversas|conversas[_\s-]?andamento/.test(key)) return 1;
+    if (/aguardando[_\s-]?humano/.test(key)) return 2;
+    if (/com[_\s-]?humano|conversas[_\s-]?humanos/.test(key)) return 3;
+    if (/verificar[_\s-]?sinal/.test(key)) return 4;
+    if (/agendamento/.test(key)) return 5;
+    if (/finalizada/.test(key)) return 6;
+    if (/abandonada/.test(key)) return 7;
+    return 99;
+  };
 
   const filteredColumns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -2013,10 +2030,6 @@ function Kanban({
 
   // Drag & Drop Handlers
   const handleDragStart = (e, card, column) => {
-    if (card?.isFollowUp) {
-      e.preventDefault();
-      return;
-    }
     setDraggingCardId(card.id);
     e.dataTransfer.effectAllowed = 'move';
     // Usamos text/plain para compatibilidade maxima em todos os browsers
@@ -2056,7 +2069,6 @@ function Kanban({
       if (!raw) return;
       const data = JSON.parse(raw);
       if (!data?.card) return;
-      if (data.card.isFollowUp || targetColumn.automationKey === 'follow_ups' || targetColumn.id === 'follow_ups') return;
       if (data.sourceColumnId === targetColumn.id) return;
       if (onMoveCard) {
         onMoveCard(data.card, targetColumn.automationKey || targetColumn.id);
@@ -2073,7 +2085,7 @@ function Kanban({
           <div className="search-box">
             <Search size={16} />
             <input
-              placeholder="Buscar por contato, serviço ou mensagem..."
+              placeholder="Buscar por contato, serviÃ§o ou mensagem..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -2112,7 +2124,7 @@ function Kanban({
         </div>
 
         <div className="kanban-toolbar-agents-row">
-          <span className="filter-label">Responsável:</span>
+          <span className="filter-label">ResponsÃ¡vel:</span>
           <div className="chips">
             <button
               type="button"
@@ -2154,19 +2166,20 @@ function Kanban({
             <div
               className={`kanban-column ${isDragOver ? 'is-dragover' : ''}`}
               key={column.id}
-              onDragOver={(e) => !isFollowUpColumn && handleDragOver(e, column)}
-              onDragLeave={(e) => !isFollowUpColumn && handleDragLeave(e, column)}
-              onDrop={(e) => !isFollowUpColumn && handleDrop(e, column)}
+              style={{ '--kanban-mobile-order': mobileColumnOrder(column) }}
+              onDragOver={(e) => handleDragOver(e, column)}
+              onDragLeave={(e) => handleDragLeave(e, column)}
+              onDrop={(e) => handleDrop(e, column)}
             >
               <div className="column-header">
                 <strong className="column-title">{column.title}</strong>
-                <span className="column-count-badge">{ready ? column.cards.length : '—'}</span>
+                <span className="column-count-badge">{ready ? column.cards.length : 'â€”'}</span>
               </div>
 
               <div
                 className="column-cards-container"
-                onDragOver={(e) => !isFollowUpColumn && handleDragOver(e, column)}
-                onDrop={(e) => !isFollowUpColumn && handleDrop(e, column)}
+                onDragOver={(e) => handleDragOver(e, column)}
+                onDrop={(e) => handleDrop(e, column)}
               >
                 {!ready ? (
                   [1, 2].map((i) => (
@@ -2189,9 +2202,9 @@ function Kanban({
 
                       return (
                         <article
-                          className={`kanban-card ${channelClass} ${card.isFollowUp ? 'kanban-card-follow-up' : ''} ${isDragging ? 'is-dragging' : ''}`}
+                          className={`kanban-card ${channelClass} ${isDragging ? 'is-dragging' : ''}`}
                           key={card.id}
-                          draggable={!card.isFollowUp}
+                          draggable={true}
                           onDragStart={(e) => handleDragStart(e, card, column)}
                           onDragEnd={handleDragEnd}
                         >
@@ -2225,7 +2238,7 @@ function Kanban({
                           {isFollowUpColumn && card.followUpLabel && (
                             <div className={`follow-up-step-badge ${card.followUpStatus === 'processing' ? 'is-processing' : ''}`}>
                               <Clock3 size={12} />
-                              <span>{card.followUpStatus === 'processing' ? 'Em execução: ' : 'Próximo follow-up: '}{card.followUpLabel}</span>
+                              <span>{card.followUpStatus === 'processing' ? 'Em execuÃ§Ã£o: ' : 'PrÃ³ximo follow-up: '}{card.followUpLabel}</span>
                             </div>
                           )}
 
@@ -2277,7 +2290,7 @@ function Kanban({
                                   rel="noopener noreferrer"
                                   className="link-external-btn"
                                   onClick={(e) => e.stopPropagation()}
-                                  title="Abrir página de agendamento"
+                                  title="Abrir pÃ¡gina de agendamento"
                                 >
                                   <ExternalLink size={12} />
                                 </a>
@@ -2308,7 +2321,7 @@ function Kanban({
                             </div>
                           </div>
 
-                          {/* AÇÕES RÁPIDAS NO CARD (ITEM B) */}
+                          {/* AÃ‡Ã•ES RÃPIDAS NO CARD (ITEM B) */}
                           <div className="kanban-card-quick-actions">
                             {onOpenChat && (
                               <button
@@ -2333,7 +2346,7 @@ function Kanban({
                                   e.stopPropagation();
                                   onOpenAppointment(card);
                                 }}
-                                title="Criar agendamento rápido"
+                                title="Criar agendamento rÃ¡pido"
                               >
                                 <CalendarCheck size={12} />
                                 <span>Agendar</span>
@@ -2375,13 +2388,13 @@ function Funnel({ funnelStages, tenantName }) {
   return (
     <section className="content-grid">
       <section className="panel">
-        <PanelTitle icon={GitBranch} title="Funil comercial" action="Mês atual" />
+        <PanelTitle icon={GitBranch} title="Funil comercial" action="MÃªs atual" />
         <div className="funnel-list">
           {funnelStages.map((stage) => (
             <div className="funnel-row" key={stage.id}>
               <div>
                 <strong>{stage.name}</strong>
-                <span>{stage.count} oportunidades · {formatCurrency(stage.value)}</span>
+                <span>{stage.count} oportunidades Â· {formatCurrency(stage.value)}</span>
               </div>
               <div className="funnel-track">
                 <div style={{ width: `${(stage.count / max) * 100}%` }} />
@@ -2392,12 +2405,12 @@ function Funnel({ funnelStages, tenantName }) {
         </div>
       </section>
       <section className="panel">
-        <PanelTitle icon={CalendarCheck} title="Próximas ações" />
+        <PanelTitle icon={CalendarCheck} title="PrÃ³ximas aÃ§Ãµes" />
         <div className="task-list">
-          <Task title="Testar conversa real no Telegram" meta={`${tenantName} · webhook multi-tenant`} />
+          <Task title="Testar conversa real no Telegram" meta={`${tenantName} Â· webhook multi-tenant`} />
           <Task title="Confirmar tenant no Supabase" meta="Banco de dados multi-tenant" />
           <Task title="Acompanhar mensagens reais" meta="Eventos de canais em tempo real" />
-          <Task title="Monitorar IA paga" meta="Gemini com limite diário configurado" />
+          <Task title="Monitorar IA paga" meta="Gemini com limite diÃ¡rio configurado" />
         </div>
       </section>
     </section>
@@ -2544,6 +2557,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
     <section className="broadcast-page">
       <section className="panel">
         <PanelTitle icon={Megaphone} title="Disparo de mensagens" />
+        <PanelTitle icon={Megaphone} title="Disparo de mensagens" />
         <div className="broadcast-grid">
           <div className="broadcast-import">
             <label className="file-drop">
@@ -2579,7 +2593,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
 
       <section className="content-grid two">
         <section className="panel">
-          <PanelTitle icon={UsersRound} title="Contatos selecionaveis" action={ready ? `${selectedContacts.length}/${allContacts.length}` : '—'} />
+          <PanelTitle icon={UsersRound} title="Contatos selecionaveis" action={ready ? `${selectedContacts.length}/${allContacts.length}` : 'â€”'} />
           <div className="contact-table">
             {!ready ? (
               [1, 2, 3].map((i) => (
@@ -2776,7 +2790,7 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
       </section>
 
       <section className="panel appointment-list-panel">
-        <PanelTitle icon={Clock3} title="Calendario simples" action={ready ? `${appointments.length} registros` : '— registros'} />
+        <PanelTitle icon={Clock3} title="Calendario simples" action={ready ? `${appointments.length} registros` : 'â€” registros'} />
         <div className="appointment-groups">
           {!ready ? (
             <div className="appointment-day appointment-day-skeleton">
@@ -2828,7 +2842,7 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
   const [role, setRole] = useState('');
   const [phone, setPhone] = useState('');
   const [unit, setUnit] = useState('Unidade 1');
-  const [shift, setShift] = useState('Integral (08:00 às 18:00)');
+  const [shift, setShift] = useState('Integral (08:00 Ã s 18:00)');
   const [channel, setChannel] = useState('WhatsApp');
 
   function handleSubmit(e) {
@@ -2840,7 +2854,7 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
       role: role.trim() || 'Atendimento / Operador',
       phone: phone.trim(),
       unit: unit.trim() || 'Unidade Geral',
-      shift: shift.trim() || '08:00 às 18:00',
+      shift: shift.trim() || '08:00 Ã s 18:00',
       channel: channel.trim() || 'WhatsApp',
       status: 'online',
       load: 0,
@@ -2853,16 +2867,16 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
   return (
     <section className="content-grid two settings-page">
       <section className="panel settings-form-panel">
-        <PanelTitle icon={UserCheck} title="Cadastrar Funcionário / Agente" />
+        <PanelTitle icon={UserCheck} title="Cadastrar FuncionÃ¡rio / Agente" />
         <p style={{ margin: '4px 0 16px', color: 'var(--muted)', fontSize: '13px' }}>
-          Cadastre os funcionários humanos do estabelecimento para receberem atendimentos transferidos.
+          Cadastre os funcionÃ¡rios humanos do estabelecimento para receberem atendimentos transferidos.
         </p>
 
         <form className="form-grid settings-agent-form" onSubmit={handleSubmit}>
           <label>
-            Nome Completo do Funcionário *
+            Nome Completo do FuncionÃ¡rio *
             <input
-              placeholder="Ex: Núbia Santos, Camila Recepção..."
+              placeholder="Ex: NÃºbia Santos, Camila RecepÃ§Ã£o..."
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -2871,9 +2885,9 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
 
           <div className="form-row-two">
             <label>
-              Cargo / Função
+              Cargo / FunÃ§Ã£o
               <input
-                placeholder="Ex: Responsável Geral, Recepcionista..."
+                placeholder="Ex: ResponsÃ¡vel Geral, Recepcionista..."
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
               />
@@ -2898,18 +2912,18 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
               </select>
             </label>
             <label>
-              Turno / Horário de Trabalho
+              Turno / HorÃ¡rio de Trabalho
               <select value={shift} onChange={(e) => setShift(e.target.value)}>
-                <option value="Integral (08:00 às 18:00)">Integral (08:00 às 18:00)</option>
-                <option value="Manhã (08:00 às 13:00)">Manhã (08:00 às 13:00)</option>
-                <option value="Tarde (13:00 às 18:00)">Tarde (13:00 às 18:00)</option>
-                <option value="Flexível / Plantão">Flexível / Plantão</option>
+                <option value="Integral (08:00 Ã s 18:00)">Integral (08:00 Ã s 18:00)</option>
+                <option value="ManhÃ£ (08:00 Ã s 13:00)">ManhÃ£ (08:00 Ã s 13:00)</option>
+                <option value="Tarde (13:00 Ã s 18:00)">Tarde (13:00 Ã s 18:00)</option>
+                <option value="FlexÃ­vel / PlantÃ£o">FlexÃ­vel / PlantÃ£o</option>
               </select>
             </label>
           </div>
 
           <label>
-            Canal de Atuação Principal
+            Canal de AtuaÃ§Ã£o Principal
             <select value={channel} onChange={(e) => setChannel(e.target.value)}>
               {CHANNEL_OPTIONS.filter(c => allowedChannels.includes(c.id)).map(c => <option key={c.id} value={c.label}>{c.label}</option>)}
               {allowedChannels.length > 1 && <option value="Todos os canais">Todos os canais</option>}
@@ -2925,7 +2939,7 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
       <section className="panel settings-team-panel">
         <PanelTitle icon={UsersRound} title="Equipe de Atendimento Cadastrada" />
         <p style={{ margin: '4px 0 16px', color: 'var(--muted)', fontSize: '13px' }}>
-          Funcionários ativos disponíveis para transferência no botão <strong>Atribuir</strong> do chat.
+          FuncionÃ¡rios ativos disponÃ­veis para transferÃªncia no botÃ£o <strong>Atribuir</strong> do chat.
         </p>
 
         <div className="agents-list">
@@ -2955,7 +2969,7 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
                 const isOnline = String(agent.status || '').toLowerCase() === 'online' || String(agent.status || '').toLowerCase() === 'ativo';
                 const statusLabel = isOnline ? 'Ativo' : 'Pausado';
                 const hasRealLoad = typeof agent.load === 'number' && !Number.isNaN(agent.load);
-                const metaText = [agent.unit || agent.branch, agent.shift].filter(Boolean).join(' · ');
+                const metaText = [agent.unit || agent.branch, agent.shift].filter(Boolean).join(' Â· ');
 
                 return (
                   <article className="agent-card" key={agent.id}>
@@ -3005,7 +3019,7 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
                       <button
                         className="icon-button compact-btn text-danger agent-delete-btn"
                         type="button"
-                        title="Remover funcionário"
+                        title="Remover funcionÃ¡rio"
                         onClick={() => onDeleteAgent?.(agent.id)}
                       >
                         <Trash2 size={15} />
@@ -3017,8 +3031,8 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
               })}
               {!agents.length && (
                 <EmptyState
-                  title="Nenhum funcionário cadastrado"
-                  text="Cadastre os atendentes e operadores da equipe no formulário ao lado para poder atribuir conversas a eles."
+                  title="Nenhum funcionÃ¡rio cadastrado"
+                  text="Cadastre os atendentes e operadores da equipe no formulÃ¡rio ao lado para poder atribuir conversas a eles."
                   compact
                 />
               )}
@@ -3194,7 +3208,7 @@ function AuthShell({ title, children }) {
       <section className="auth-loading-card">
         <div className="brand auth-loading-brand">
           <img src={noriaLogo} alt="NORIA" className="auth-loading-logo-img" />
-          <span className="auth-loading-tagline">INTELIGÊNCIA EM MOVIMENTO</span>
+          <span className="auth-loading-tagline">INTELIGÃŠNCIA EM MOVIMENTO</span>
         </div>
         {!children && <div className="auth-loading-indicator">
           <RefreshCcw size={20} className="spin" />
@@ -3220,7 +3234,7 @@ function LoginPage() {
     try {
       await signInWithPassword(email.trim(), password);
     } catch (loginError) {
-      setError(loginError.message || 'Não foi possível entrar.');
+      setError(loginError.message || 'NÃ£o foi possÃ­vel entrar.');
     } finally {
       setLoading(false);
     }
@@ -3228,19 +3242,19 @@ function LoginPage() {
 
   return (
     <main className="auth-page">
-      {/* Lado Esquerdo: Área Visual e Marca NORIA (Hero Central Inspirado na Ref 1) */}
+      {/* Lado Esquerdo: Ãrea Visual e Marca NORIA (Hero Central Inspirado na Ref 1) */}
       <section className="auth-visual-side" aria-hidden="true">
-        {/* Iluminação Ambiental & Efeitos Difusos */}
+        {/* IluminaÃ§Ã£o Ambiental & Efeitos Difusos */}
         <div className="auth-visual-ambient-aurora cyan" />
         <div className="auth-visual-ambient-aurora violet" />
         <div className="auth-visual-ambient-glow" />
         <div className="auth-visual-grid-overlay" />
 
-        {/* Composição Hero Integrada: Logo Grande + Tagline + Rede de Fluxo */}
+        {/* ComposiÃ§Ã£o Hero Integrada: Logo Grande + Tagline + Rede de Fluxo */}
         <div className="auth-hero-composition">
           <div className="auth-hero-branding">
             <img src={noriaLogo} alt="NORIA" className="auth-hero-logo-img" />
-            <span className="auth-hero-tagline">INTELIGÊNCIA EM MOVIMENTO</span>
+            <span className="auth-hero-tagline">INTELIGÃŠNCIA EM MOVIMENTO</span>
           </div>
 
           <div className="auth-visual-art">
@@ -3283,12 +3297,12 @@ function LoginPage() {
                 </radialGradient>
               </defs>
 
-              {/* Anéis orbitais sutis de fundo */}
+              {/* AnÃ©is orbitais sutis de fundo */}
               <ellipse cx="300" cy="210" rx="270" ry="180" stroke="rgba(0, 224, 255, 0.04)" strokeWidth="1" strokeDasharray="8 8" className="auth-orbital-ring-1 auth-secondary-orbital" />
               <circle cx="300" cy="210" r="140" stroke="rgba(120, 97, 255, 0.05)" strokeWidth="1" strokeDasharray="4 6" className="auth-orbital-ring-2 auth-secondary-orbital" />
               <circle cx="300" cy="210" r="48" stroke="rgba(0, 224, 255, 0.14)" strokeWidth="1" strokeDasharray="3 3" className="auth-core-ring" />
 
-              {/* Malha de conexões secundárias (linhas estáticas finas) */}
+              {/* Malha de conexÃµes secundÃ¡rias (linhas estÃ¡ticas finas) */}
               <line x1="80" y1="130" x2="190" y2="75" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
               <line x1="190" y1="75" x2="360" y2="85" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
               <line x1="360" y1="85" x2="510" y2="140" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
@@ -3301,7 +3315,7 @@ function LoginPage() {
               <line x1="360" y1="85" x2="300" y2="210" stroke="rgba(242, 244, 247, 0.06)" strokeDasharray="3 3" strokeWidth="1" className="auth-secondary-line" />
               <line x1="470" y1="310" x2="300" y2="210" stroke="rgba(242, 244, 247, 0.06)" strokeDasharray="3 3" strokeWidth="1" className="auth-secondary-line" />
 
-              {/* Rotas de fluxo ativo (curvas bezier com traços e gradiente) */}
+              {/* Rotas de fluxo ativo (curvas bezier com traÃ§os e gradiente) */}
               <path
                 id="flowRouteMain"
                 className="auth-flow-line"
@@ -3353,41 +3367,41 @@ function LoginPage() {
                 />
               </circle>
 
-              {/* Nós da Rede Deliberados (hierarquia luminosa controlada) */}
-              {/* 1. Origem Esquerda (Cyan - Primário) */}
+              {/* NÃ³s da Rede Deliberados (hierarquia luminosa controlada) */}
+              {/* 1. Origem Esquerda (Cyan - PrimÃ¡rio) */}
               <circle cx="80" cy="130" r="18" fill="url(#nodeGlowCyan)" className="auth-node-pulse-1" />
               <circle cx="80" cy="130" r="5.5" fill="#00E0FF" />
               <circle cx="80" cy="130" r="2.5" fill="#FFFFFF" />
 
-              {/* 2. Topo Esquerda (Secundário) */}
+              {/* 2. Topo Esquerda (SecundÃ¡rio) */}
               <circle cx="190" cy="75" r="14" fill="url(#nodeGlowCyan)" className="auth-secondary-node" />
               <circle cx="190" cy="75" r="4.5" fill="#00E0FF" className="auth-secondary-node" />
 
-              {/* 3. NÚCLEO CENTRAL NORIA (Primário com aura e anéis) */}
+              {/* 3. NÃšCLEO CENTRAL NORIA (PrimÃ¡rio com aura e anÃ©is) */}
               <circle cx="300" cy="210" r="38" fill="url(#coreAuraGlow)" />
               <circle cx="300" cy="210" r="24" fill="url(#nodeGlowCyan)" className="auth-core-glow" />
               <circle cx="300" cy="210" r="8" fill="#0B1220" stroke="#00E0FF" strokeWidth="2.5" />
               <circle cx="300" cy="210" r="3.5" fill="#00E0FF" />
 
-              {/* 4. Topo Direita (Secundário) */}
+              {/* 4. Topo Direita (SecundÃ¡rio) */}
               <circle cx="360" cy="85" r="14" fill="url(#nodeGlowViolet)" className="auth-secondary-node" />
               <circle cx="360" cy="85" r="4.5" fill="#7861FF" className="auth-secondary-node" />
 
-              {/* 5. Destino Direita (Primário com centro branco) */}
+              {/* 5. Destino Direita (PrimÃ¡rio com centro branco) */}
               <circle cx="510" cy="140" r="20" fill="url(#nodeGlowViolet)" className="auth-node-pulse-2" />
               <circle cx="510" cy="140" r="6" fill="#7861FF" />
               <circle cx="510" cy="140" r="2.5" fill="#FFFFFF" />
 
-              {/* 6. Fundo Esquerda (Secundário) */}
+              {/* 6. Fundo Esquerda (SecundÃ¡rio) */}
               <circle cx="140" cy="280" r="13" fill="url(#nodeGlowCyan)" className="auth-secondary-node" />
               <circle cx="140" cy="280" r="4" fill="#00E0FF" className="auth-secondary-node" />
 
-              {/* 7. Fundo Centro (Primário) */}
+              {/* 7. Fundo Centro (PrimÃ¡rio) */}
               <circle cx="290" cy="350" r="16" fill="url(#nodeGlowViolet)" />
               <circle cx="290" cy="350" r="5" fill="#7861FF" />
               <circle cx="290" cy="350" r="2" fill="#FFFFFF" />
 
-              {/* 8. Fundo Direita (Secundário) */}
+              {/* 8. Fundo Direita (SecundÃ¡rio) */}
               <circle cx="470" cy="310" r="15" fill="url(#nodeGlowViolet)" className="auth-secondary-node" />
               <circle cx="470" cy="310" r="5" fill="#7861FF" className="auth-secondary-node" />
             </svg>
@@ -3395,26 +3409,26 @@ function LoginPage() {
         </div>
       </section>
 
-      {/* Divisor Vertical Dinâmico com Highlight Móvel */}
+      {/* Divisor Vertical DinÃ¢mico com Highlight MÃ³vel */}
       <div className="auth-dynamic-divider" aria-hidden="true">
         <div className="auth-divider-pulse" />
       </div>
 
-      {/* Lado Direito: Formulário de Autenticação com Profundidade & Camadas Glass */}
+      {/* Lado Direito: FormulÃ¡rio de AutenticaÃ§Ã£o com Profundidade & Camadas Glass */}
       <section className="auth-form-side">
-        {/* Iluminação Ambiental & Spotlight Atrás do Card */}
+        {/* IluminaÃ§Ã£o Ambiental & Spotlight AtrÃ¡s do Card */}
         <div className="auth-form-spotlight-cyan" />
         <div className="auth-form-spotlight-violet" />
         <div className="auth-form-ambient-glow" />
         <div className="auth-form-decor-orbit" aria-hidden="true" />
 
         <div className="auth-form-container">
-          {/* Top Accent Line Sutil com Pulso Móvel Mobile */}
+          {/* Top Accent Line Sutil com Pulso MÃ³vel Mobile */}
           <div className="auth-card-top-accent" aria-hidden="true">
             <div className="auth-card-top-pulse" />
           </div>
 
-          <h1 className="auth-title">Bem-vindo de volta</h1>
+          <h1 className="auth-title">Bem-vindo</h1>
 
           <form className="auth-form" onSubmit={handleSubmit} noValidate={false}>
             <label className="auth-label">
@@ -3440,7 +3454,7 @@ function LoginPage() {
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="••••••••"
+                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                   autoComplete="current-password"
                   required
                 />
