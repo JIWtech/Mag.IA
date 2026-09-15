@@ -1983,6 +1983,23 @@ function Kanban({
     if (norm.includes('insta')) return 'channel-instagram';
     return 'channel-telegram';
   };
+  const mobileColumnOrder = (column = {}) => {
+    const key = [column.automationKey, column.id, column.title]
+      .filter(Boolean)
+      .join(' ')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
+    if (/conversas[_\s-]?ia|novas[_\s-]?conversas|conversas[_\s-]?andamento/.test(key)) return 1;
+    if (/aguardando[_\s-]?humano/.test(key)) return 2;
+    if (/com[_\s-]?humano|conversas[_\s-]?humanos/.test(key)) return 3;
+    if (/verificar[_\s-]?sinal/.test(key)) return 4;
+    if (/agendamento/.test(key)) return 5;
+    if (/finalizada/.test(key)) return 6;
+    if (/abandonada/.test(key)) return 7;
+    return 99;
+  };
 
   const filteredColumns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -2012,10 +2029,6 @@ function Kanban({
 
   // Drag & Drop Handlers
   const handleDragStart = (e, card, column) => {
-    if (card?.isFollowUp) {
-      e.preventDefault();
-      return;
-    }
     setDraggingCardId(card.id);
     e.dataTransfer.effectAllowed = 'move';
     // Usamos text/plain para compatibilidade maxima em todos os browsers
@@ -2055,7 +2068,6 @@ function Kanban({
       if (!raw) return;
       const data = JSON.parse(raw);
       if (!data?.card) return;
-      if (data.card.isFollowUp || targetColumn.automationKey === 'follow_ups' || targetColumn.id === 'follow_ups') return;
       if (data.sourceColumnId === targetColumn.id) return;
       if (onMoveCard) {
         onMoveCard(data.card, targetColumn.automationKey || targetColumn.id);
@@ -2146,16 +2158,16 @@ function Kanban({
         {filteredColumns.map((column) => {
           const isWaitingColumn = column.automationKey === 'aguardando_humano' || column.id === 'aguardando_humano';
           const isFinishedColumn = column.automationKey === 'finalizadas' || column.id === 'finalizadas';
-          const isFollowUpColumn = column.automationKey === 'follow_ups' || column.id === 'follow_ups';
           const isDragOver = dragOverColumnId === column.id;
 
           return (
             <div
               className={`kanban-column ${isDragOver ? 'is-dragover' : ''}`}
               key={column.id}
-              onDragOver={(e) => !isFollowUpColumn && handleDragOver(e, column)}
-              onDragLeave={(e) => !isFollowUpColumn && handleDragLeave(e, column)}
-              onDrop={(e) => !isFollowUpColumn && handleDrop(e, column)}
+              style={{ '--kanban-mobile-order': mobileColumnOrder(column) }}
+              onDragOver={(e) => handleDragOver(e, column)}
+              onDragLeave={(e) => handleDragLeave(e, column)}
+              onDrop={(e) => handleDrop(e, column)}
             >
               <div className="column-header">
                 <strong className="column-title">{column.title}</strong>
@@ -2164,8 +2176,8 @@ function Kanban({
 
               <div
                 className="column-cards-container"
-                onDragOver={(e) => !isFollowUpColumn && handleDragOver(e, column)}
-                onDrop={(e) => !isFollowUpColumn && handleDrop(e, column)}
+                onDragOver={(e) => handleDragOver(e, column)}
+                onDrop={(e) => handleDrop(e, column)}
               >
                 {!ready ? (
                   [1, 2].map((i) => (
@@ -2188,9 +2200,9 @@ function Kanban({
 
                       return (
                         <article
-                          className={`kanban-card ${channelClass} ${card.isFollowUp ? 'kanban-card-follow-up' : ''} ${isDragging ? 'is-dragging' : ''}`}
+                          className={`kanban-card ${channelClass} ${isDragging ? 'is-dragging' : ''}`}
                           key={card.id}
-                          draggable={!card.isFollowUp}
+                          draggable={true}
                           onDragStart={(e) => handleDragStart(e, card, column)}
                           onDragEnd={handleDragEnd}
                         >
@@ -2205,13 +2217,6 @@ function Kanban({
                           </div>
 
                           <p className="card-subtitle">{formatConversationPreview(card.subtitle)}</p>
-
-                          {isFollowUpColumn && card.followUpLabel && (
-                            <div className={`follow-up-step-badge ${card.followUpStatus === 'processing' ? 'is-processing' : ''}`}>
-                              <Clock3 size={12} />
-                              <span>{card.followUpStatus === 'processing' ? 'Em execução: ' : 'Próximo follow-up: '}{card.followUpLabel}</span>
-                            </div>
-                          )}
 
                           {isWaitingColumn && (
                             <div className="waiting-sla-badge">
@@ -2527,6 +2532,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   return (
     <section className="broadcast-page">
       <section className="panel">
+        <PanelTitle icon={Megaphone} title="Disparo de mensagens" />
         <PanelTitle icon={Megaphone} title="Disparo de mensagens" />
         <div className="broadcast-grid">
           <div className="broadcast-import">
@@ -3398,7 +3404,7 @@ function LoginPage() {
             <div className="auth-card-top-pulse" />
           </div>
 
-          <h1 className="auth-title">Bem-vindo de volta</h1>
+          <h1 className="auth-title">Bem-vindo</h1>
 
           <form className="auth-form" onSubmit={handleSubmit} noValidate={false}>
             <label className="auth-label">
