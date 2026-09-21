@@ -1520,6 +1520,11 @@ button {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.kanban-action-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .filter-label {
   font-size: 12px;
   font-weight: 600;
@@ -1744,6 +1749,34 @@ button {
 .link-external-btn:hover {
   background: rgba(245, 158, 11, 0.25);
   color: #ffffff;
+}
+
+.confirm-signal-button {
+  width: 100%;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 7px;
+  background: rgba(16, 185, 129, 0.14);
+  color: #86efac;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.confirm-signal-button:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.24);
+  border-color: rgba(16, 185, 129, 0.55);
+  color: #ffffff;
+}
+
+.confirm-signal-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .kanban-card-footer {

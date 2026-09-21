@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { getAuthClient } from './authService';
+import { prepareConversationEvents } from './conversationEvents';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -431,7 +432,14 @@ export async function updateBroadcastRecipient(campaignId, externalConversationI
 
 function normalizeStage(stage) {
   const s = String(stage || '').toLowerCase().trim();
+  if (s.includes('aguardando') && (s.includes('final') || s.includes('pagamento'))) return 'Aguardando finalizacao';
   if (s.includes('finaliz') || s.includes('encerr')) return 'Finalizado';
+  if (s.includes('verificar sinal')) return 'Verificar Sinal';
+  if (s.includes('sinal informado')) return 'Sinal informado';
+  if (s.includes('produto') && (s.includes('apresent') || s.includes('catalog') || s.includes('foto'))) return 'Produtos apresentados';
+  if (s.includes('interesse') && s.includes('compra')) return 'Interesse em compra';
+  if (s.includes('venda') && s.includes('conclu')) return 'Venda concluida';
+  if (s.includes('agendamento confirmado')) return 'Agendamento confirmado';
   if (s.includes('qualific') || s === 'qualificacao') return 'Qualificação';
   if (s.includes('agend') || s === 'agendamento') return 'Agendamento';
   if (s.includes('brief') || s.includes('briefing')) return 'Briefing necessário';
@@ -563,7 +571,7 @@ function isGeneratedMediaLabel(text) {
 function eventsToConversations(events) {
   const byChat = new Map();
 
-  for (const event of [...events].reverse()) {
+  for (const event of prepareConversationEvents(events).reverse()) {
     const channelType = normalizeChannel(event.channel_type);
     const stageName = normalizeStage(event.stage);
     const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.contact_handle || event.id}`;
@@ -637,6 +645,7 @@ const OFFICIAL_KANBAN_COLUMNS = [
   { id: 'novas_conversas', title: 'Novas conversas', automationKey: 'novas_conversas' },
   { id: 'conversas_andamento', title: 'Conversas em andamento', automationKey: 'conversas_andamento' },
   { id: 'conversas_humanos', title: 'Conversas com humanos', automationKey: 'conversas_humanos' },
+  { id: 'verificar_sinal', title: 'Verificar Sinal', automationKey: 'verificar_sinal' },
   { id: 'agendamentos', title: 'Agendamentos', automationKey: 'agendamentos' },
 ];
 
@@ -653,6 +662,20 @@ const KANBAN_KEY_ALIASES = {
   conversa_com_humano: 'com_humano',
   conversas_com_humano: 'com_humano',
   designado_humano: 'com_humano',
+  verificar_sinal: 'verificar_sinal',
+  sinal_pago: 'verificar_sinal',
+  pagamento_sinal: 'verificar_sinal',
+  pagamento_reportado: 'verificar_sinal',
+  sinal_informado: 'verificar_sinal',
+  produtos_apresentados: 'produtos_apresentados',
+  catalogo_enviado: 'produtos_apresentados',
+  fotos_enviadas: 'produtos_apresentados',
+  interesse_compra: 'interesse_compra',
+  interesse_em_compra: 'interesse_compra',
+  aguardando_finalizacao: 'aguardando_finalizacao',
+  aguardando_pagamento: 'aguardando_finalizacao',
+  venda_concluida: 'finalizadas',
+  pedido_finalizado: 'finalizadas',
   finalizadas: 'finalizadas',
   finalizada: 'finalizadas',
   finalizado: 'finalizadas',
@@ -694,6 +717,7 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
   const columns = buildKanbanColumns(kanbanConfig);
   const latestByChat = new Map();
   const eventCountsByChat = new Map();
+  const appointmentsById = new Map(appointments.map((appointment) => [appointment.id, appointment]));
 
   for (const event of events) {
     const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.id}`;
@@ -713,10 +737,27 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
     });
     const target = targetCandidates.find((candidate) => findKanbanColumn(columns, candidate)) || targetCandidates[0];
     const column = findKanbanColumn(columns, target) || columns[0];
+    const relatedAppointmentId = event.raw_payload?.payment_signal?.appointment_update?.appointment?.id
+      || event.raw_payload?.appointment_id
+      || event.raw_payload?.appointment_creation?.appointment?.id
+      || '';
+    const relatedAppointment = appointmentsById.get(relatedAppointmentId);
+
+    if (target === 'verificar_sinal' && relatedAppointment) {
+      continue;
+    }
 
     let aiReason = 'IA conduzindo a conversa';
     if (target === 'agendamentos') {
-      aiReason = 'Agendamento registrado pelo sistema';
+      aiReason = 'Registro operacional do sistema';
+    } else if (target === 'verificar_sinal') {
+      aiReason = 'Sinal informado pela cliente';
+    } else if (target === 'produtos_apresentados') {
+      aiReason = 'Catalogo ou fotos apresentados';
+    } else if (target === 'interesse_compra') {
+      aiReason = 'Cliente demonstrou interesse de compra';
+    } else if (target === 'aguardando_finalizacao') {
+      aiReason = 'Aguardando finalizacao do pedido';
     } else if (target === 'aguardando_humano') {
       aiReason = 'IA encaminhou para a equipe';
     } else if (target === 'com_humano' || target === 'conversas_humanos') {
@@ -741,6 +782,9 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
       value: formatCurrency(estimatedValue(event)),
       owner: ownerFromKanbanTarget(target, event),
       aiReason,
+      appointmentId: relatedAppointmentId,
+      appointmentStatus: relatedAppointment?.status || '',
+      actionType: target === 'verificar_sinal' && relatedAppointmentId ? 'confirm_signal' : '',
       schedulingLink: defaultSchedulingUrl,
       hasSchedulingLink: Boolean(defaultSchedulingUrl) && (target === 'agendamentos' || hasSchedulingSignal(event.message_text)),
       lastAt: formatDate(event.created_at),
@@ -752,22 +796,36 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
     .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt))
     .map((appointment) => ({
       id: `appointment-${appointment.id}`,
+      appointmentId: appointment.id,
       title: appointment.title,
       subtitle: appointment.contactName ? `${appointment.contactName} - ${appointment.when}` : appointment.when,
       channel: appointment.channelLabel,
+      channelType: appointment.channelType,
       value: 'Agenda',
       owner: appointment.statusLabel,
+      appointmentStatus: appointment.status,
+      appointmentMetadata: appointment.raw?.metadata || {},
+      externalConversationId: appointment.externalConversationId,
+      targetColumnId: appointment.status === 'payment_reported' ? 'verificar_sinal' : 'agendamentos',
+      actionType: appointment.status === 'payment_reported' ? 'confirm_signal' : '',
+      aiReason: appointment.status === 'payment_reported'
+        ? 'Sinal informado. Aguardando verificação humana.'
+        : '',
     }));
 
-  const appointmentsColumn = findKanbanColumn(columns, 'agendamentos');
-  if (appointmentsColumn) {
-    appointmentsColumn.cards.push(...appointmentCards);
-  } else {
+  for (const appointmentCard of appointmentCards) {
+    const targetColumn = findKanbanColumn(columns, appointmentCard.targetColumnId) || findKanbanColumn(columns, 'agendamentos');
+    if (targetColumn) {
+      targetColumn.cards.push(appointmentCard);
+    }
+  }
+
+  if (appointmentCards.some((card) => card.targetColumnId === 'agendamentos') && !kanbanConfig?.columns?.length && !findKanbanColumn(columns, 'agendamentos')) {
     columns.push({
       id: 'agendamentos',
       title: 'Agendamentos',
       automationKey: 'agendamentos',
-      cards: appointmentCards,
+      cards: appointmentCards.filter((card) => card.targetColumnId === 'agendamentos'),
     });
   }
 
@@ -851,6 +909,11 @@ function pickColumn(stage, handoff, messageText = '', context = {}) {
   const event = context.event || {};
 
   if (isKanbanClosed(event, norm)) return ['finalizadas', 'conversas_andamento'];
+  if (isKanbanPaymentSignal(event, norm)) return ['verificar_sinal', 'aguardando_humano', 'conversas_humanos'];
+  if (norm === 'Produtos apresentados') return ['produtos_apresentados', 'conversas_andamento'];
+  if (norm === 'Interesse em compra') return ['interesse_compra', 'conversas_andamento'];
+  if (norm === 'Aguardando finalizacao') return ['aguardando_finalizacao', 'conversas_andamento'];
+  if (norm === 'Venda concluida') return ['finalizadas', 'conversas_andamento'];
   if (norm === 'Agendamento confirmado' || text.includes('confirmado') || text.includes('agendado')) return ['agendamentos'];
   if (isKanbanAssignedToHuman(event)) return ['com_humano', 'conversas_humanos'];
   if (isKanbanWaitingHuman(event, handoff, norm)) return ['aguardando_humano', 'conversas_humanos'];
@@ -871,6 +934,14 @@ function isKanbanAssignedToHuman(event) {
     || event?.service === 'manual_reply'
     || event?.service === 'conversation_assigned'
     || Boolean(event?.raw_payload?.assignee);
+}
+
+function isKanbanPaymentSignal(event, normalizedStage = normalizeStage(event?.stage)) {
+  return normalizedStage === 'Verificar Sinal'
+    || normalizedStage === 'Sinal informado'
+    || event?.service === 'pagamento_sinal'
+    || event?.ai_provider === 'payment_signal'
+    || Boolean(event?.raw_payload?.payment_signal);
 }
 
 function isKanbanWaitingHuman(event, handoff, normalizedStage = normalizeStage(event?.stage)) {
@@ -1136,6 +1207,8 @@ function statusAppointmentLabel(status) {
   const labels = {
     scheduled: 'Agendado',
     confirmed: 'Confirmado',
+    pending_payment: 'Aguardando sinal',
+    payment_reported: 'Sinal informado',
     done: 'Concluido',
     cancelled: 'Cancelado',
   };

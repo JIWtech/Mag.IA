@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import readXlsxFile from 'read-excel-file/browser';
 import {
-  Activity,
   Bot,
   Building2,
   CalendarCheck,
@@ -17,7 +16,6 @@ import {
   Copy,
   ExternalLink,
   Filter,
-  Gauge,
   GitBranch,
   Globe,
   Inbox,
@@ -29,7 +27,6 @@ import {
   Megaphone,
   MessageCircle,
   Music2,
-  PauseCircle,
   RefreshCcw,
   Search,
   Send,
@@ -45,11 +42,9 @@ import {
   UsersRound,
   X,
   Video,
-  Zap,
 } from 'lucide-react';
 import {
   agents,
-  channelAccounts,
   clientStatus,
   conversations,
   funnelStages,
@@ -464,6 +459,7 @@ function App() {
             tenantName={selectedTenant.name}
             agentsList={agentsList}
             tenantSlug={activeTenantSlug}
+            onChanged={refreshData}
           />
         )}
         {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} />}
@@ -540,36 +536,6 @@ function Dashboard({ conversations, dataSource, status }) {
         })}
       </div>
 
-      <div className="content-grid two dashboard-middle">
-        <section className="panel">
-          <PanelTitle icon={Activity} title="Operação atual" action={status?.channel || 'Telegram'} />
-          <div className="bar-list">
-            {[
-              ['Telegram conectado', status?.telegram === 'conectado' ? 100 : 0],
-              ['Webhook n8n ativo', 100],
-              [status?.ai === 'Gemini' ? 'Gemini ativo' : 'Regras e automações', 100],
-              ['Supabase real', status?.supabase ? 100 : 0],
-            ].map(([label, value]) => (
-              <div className="bar-row" key={label}>
-                <span>{label}</span>
-                <div className="bar-track"><div style={{ width: `${value}%` }} /></div>
-                <strong>{value}%</strong>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel">
-          <PanelTitle icon={Gauge} title="Sinais importantes" action="Tempo real" />
-          <div className="signal-list">
-            <Signal icon={CheckCircle2} label="Bot Telegram conectado" value={status?.botUsername || '@clinica_nubia_bot'} tone="ok" />
-            <Signal icon={Clock3} label="Último evento" value={status?.latestAt || 'Sem eventos'} tone="info" />
-            <Signal icon={PauseCircle} label="Conversas para humano" value={String(status?.humanQueue || 0)} tone="warn" />
-            <Signal icon={Zap} label="IA" value={status?.ai || 'Regras e automações'} tone={status?.ai === 'Gemini' ? 'ok' : 'warn'} />
-          </div>
-        </section>
-      </div>
-
       <section className="panel dashboard-table-panel">
         <PanelTitle icon={MessageCircle} title="Conversas recentes" action={`${displayedConversations.length} de ${conversations.length}`} />
         <div className="table scrollable-table">
@@ -587,7 +553,7 @@ function Dashboard({ conversations, dataSource, status }) {
                 <small>{item.lastMessage}</small>
               </div>
             ))}
-            {!conversations.length && <EmptyState title="Nenhuma conversa real ainda" text="Assim que o bot Telegram receber mensagens, elas aparecerão aqui." />}
+            {!conversations.length && <EmptyState title="Nenhuma conversa real ainda" text="Assim que os canais conectados receberem mensagens, elas aparecerao aqui." />}
           </div>
         </div>
       </section>
@@ -1075,11 +1041,13 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   );
 }
 
-function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenantSlug }) {
+function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenantSlug, onChanged }) {
   const [agentFilter, setAgentFilter] = useState('todos');
   const [channelFilter, setChannelFilter] = useState('todos');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedCardId, setCopiedCardId] = useState(null);
+  const [confirmingCardId, setConfirmingCardId] = useState('');
+  const [kanbanActionStatus, setKanbanActionStatus] = useState('');
 
   const schedulingUrl = getTenantSchedulingLink(tenantSlug);
 
@@ -1097,6 +1065,29 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
       return new URL(link).host;
     } catch (e) {
       return link;
+    }
+  }
+
+  async function handleConfirmSignal(card) {
+    if (!card?.appointmentId || confirmingCardId) return;
+    const confirmed = window.confirm('Confirmar pagamento do sinal e concluir esta etapa?');
+    if (!confirmed) return;
+    setConfirmingCardId(card.id);
+    setKanbanActionStatus('');
+    try {
+      await sendN8nCommand('confirm_payment_signal', {
+        appointment_id: card.appointmentId,
+        channel_type: card.channelType || card.channel?.toLowerCase() || 'telegram',
+        external_conversation_id: card.externalConversationId,
+        contact_name: card.title,
+        sent_by_user: 'Operador Mag.IA',
+      }, tenantSlug);
+      setKanbanActionStatus('Sinal confirmado e mensagem enviada ao cliente.');
+      await onChanged?.();
+    } catch (error) {
+      setKanbanActionStatus(error.message || 'Nao foi possivel confirmar o sinal.');
+    } finally {
+      setConfirmingCardId('');
     }
   }
 
@@ -1200,6 +1191,7 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
             ))}
           </div>
         </div>
+        {kanbanActionStatus && <small className="kanban-action-status">{kanbanActionStatus}</small>}
       </div>
 
       <div className="kanban-board">
@@ -1274,6 +1266,22 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
                           </a>
                         </div>
                       </div>
+                    )}
+
+                    {card.actionType === 'confirm_signal' && (
+                      <button
+                        type="button"
+                        className="confirm-signal-button"
+                        disabled={confirmingCardId === card.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleConfirmSignal(card);
+                        }}
+                        title="Confirmar pagamento do sinal"
+                      >
+                        <CheckCircle2 size={14} />
+                        {confirmingCardId === card.id ? 'Confirmando...' : 'Confirmar'}
+                      </button>
                     )}
 
                     <div className="kanban-card-footer">
@@ -1747,22 +1755,6 @@ function SettingsPage({ agents = [], onAddAgent, onToggleAgentStatus, onDeleteAg
             <UserCheck size={17} /> Salvar Agente
           </button>
         </form>
-
-        <div style={{ marginTop: '22px', borderTop: '1px solid var(--line)', paddingTop: '18px' }}>
-          <PanelTitle icon={MessageCircle} title={`Canais Conectados (${tenantName})`} action="Omnichannel" />
-          <div className="channel-list" style={{ marginTop: '10px' }}>
-            {channelAccounts.map((ch) => (
-              <article className="channel-card" key={ch.id}>
-                <div>
-                  <strong>{ch.name}</strong>
-                  <span>{ch.type} · {ch.tenant}</span>
-                </div>
-                <Badge value={ch.status} status={ch.status === 'conectado' ? 'ia_ativa' : 'channel'} />
-                <small>{ch.messages} msgs</small>
-              </article>
-            ))}
-          </div>
-        </div>
       </section>
 
       <section className="panel">
