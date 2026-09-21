@@ -3,7 +3,7 @@ export const clientStatus = {
   tenantSlug: 'jiw',
   channel: 'Telegram',
   botUsername: '@jiwtech_bot',
-  n8nWorkflow: 'Mag.ia/JIW - Telegram Atendimento',
+  n8nWorkflow: 'NORIA - Telegram Atendimento',
   webhookPath: '/webhook/telegram-jiw',
   mode: 'Regras de Automação',
   aiStatus: 'Sem IA paga',
@@ -13,6 +13,14 @@ export const clientStatus = {
 
 export const tenants = [
   {
+    id: 'clinica_nubia',
+    name: 'Clínica Núbia',
+    slug: 'clinica_nubia',
+    industry: 'Saúde e Estética',
+    plan: 'Piloto',
+    channels: ['Telegram'],
+  },
+  {
     id: 'tenant-jiw',
     name: 'JIW - Soluções Tecnológicas',
     slug: 'jiw',
@@ -21,6 +29,7 @@ export const tenants = [
     channels: ['Telegram', 'Instagram'],
   },
 ];
+
 
 export const agents = [
   { id: 'agent-1', name: 'Assistente JIW', type: 'mock', status: 'online', load: 6 },

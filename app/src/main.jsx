@@ -1,7 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import readXlsxFile from 'read-excel-file/browser';
 import {
+  Mail,
+  Lock,
+  ArrowRight,
+  AlertCircle,
+  ArrowLeft,
   Bot,
   Building2,
   CalendarCheck,
@@ -15,6 +20,8 @@ import {
   FileSpreadsheet,
   Copy,
   ExternalLink,
+  Eye,
+  EyeOff,
   Filter,
   GitBranch,
   Globe,
@@ -24,8 +31,11 @@ import {
   Instagram,
   KanbanSquare,
   LayoutDashboard,
+  LogOut,
   Megaphone,
+  Menu,
   MessageCircle,
+  MessageSquare,
   Music2,
   RefreshCcw,
   Search,
@@ -69,6 +79,7 @@ import {
   loadAvailableTenants,
   loadClientData,
   loadTeamAgents,
+  moveKanbanCard,
   persistTenantSlug,
   saveAppointment,
   subscribeToClientEvents,
@@ -79,19 +90,44 @@ import {
   saveTeamAgent,
   updateTeamAgentStatus,
 } from './dataService';
+import noriaLogo from './assets/noria_logo.png';
 import './styles.css';
 
 const menu = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'conversas', label: 'Conversas', icon: MessageCircle },
   { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
-  { id: 'funil', label: 'Funil', icon: GitBranch },
   { id: 'disparos', label: 'Disparos', icon: Megaphone },
   { id: 'agendamentos', label: 'Agendamentos', icon: CalendarDays },
   { id: 'configuracoes', label: 'Configurações', icon: Settings },
 ];
 const activePageStorageKey = 'magia:active-page';
 const appDataCachePrefix = 'magia:app-data:';
+const sessionBootstrappedKey = 'noria:session-bootstrapped';
+
+function isSessionBootstrapped() {
+  try {
+    return typeof window !== 'undefined' && window.sessionStorage?.getItem(sessionBootstrappedKey) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+function setSessionBootstrapped() {
+  try {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage?.setItem(sessionBootstrappedKey, '1');
+    }
+  } catch (e) {}
+}
+
+function clearSessionBootstrapped() {
+  try {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage?.removeItem(sessionBootstrappedKey);
+    }
+  } catch (e) {}
+}
 
 function getInitialActivePage() {
   const stored = localStorage.getItem(activePageStorageKey);
@@ -132,9 +168,11 @@ const statusLabels = {
   atendimento_humano: 'Atendimento humano',
   aguardando_cliente: 'Aguardando cliente',
   finalizada: 'Finalizada',
+  finalizado: 'Finalizada',
   erro: 'Atenção',
   bloqueada: 'Bloqueada',
 };
+
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('pt-BR', {
@@ -144,18 +182,12 @@ function formatCurrency(value) {
   }).format(value);
 }
 
-function App() {
-  const [active, setActive] = useState(getInitialActivePage);
-  const [availableTenants, setAvailableTenants] = useState(mockTenants);
-  const [tenantSlug, setTenantSlug] = useState(getInitialTenantSlug);
-  const [session, setSession] = useState(null);
-  const [checkingAuth, setCheckingAuth] = useState(isAuthRequired());
-  const [loading, setLoading] = useState(false);
-  const [appData, setAppData] = useState(() => {
-    const cached = loadCachedAppData(getInitialTenantSlug());
-    if (cached) return cached;
-    if (hasSupabaseConfig()) {
-      return {
+function getInitialAppData(tenantSlug) {
+  const cached = loadCachedAppData(tenantSlug);
+  if (cached) return { data: cached, ready: true };
+  if (hasSupabaseConfig()) {
+    return {
+      data: {
         conversations: [],
         kanbanColumns: emptyKanban(),
         funnelStages: emptyFunnel(),
@@ -173,9 +205,12 @@ function App() {
         appointments: [],
         broadcastContacts: [],
         broadcastCampaigns: [],
-      };
-    }
-    return {
+      },
+      ready: false,
+    };
+  }
+  return {
+    data: {
       conversations,
       kanbanColumns,
       funnelStages,
@@ -184,16 +219,100 @@ function App() {
       appointments: [],
       broadcastContacts: [],
       broadcastCampaigns: [],
-    };
-  });
+    },
+    ready: true,
+  };
+}
 
-  const selectedTenant = availableTenants.find((tenant) => tenant.slug === tenantSlug) || availableTenants[0] || mockTenants[0];
-  const activeTenantSlug = selectedTenant?.slug || tenantSlug || 'jiw';
+function App() {
+  const [active, setActive] = useState(getInitialActivePage);
+  const [tenantSlug, setTenantSlug] = useState(getInitialTenantSlug);
+  const [availableTenants, setAvailableTenants] = useState(() => {
+    const initialSlug = getInitialTenantSlug();
+    const found = mockTenants.find((tenant) => tenant.slug === initialSlug);
+    return found ? mockTenants : [{ slug: initialSlug, name: initialSlug }, ...mockTenants];
+  });
+  const [session, setSession] = useState(null);
+  const [checkingAuth, setCheckingAuth] = useState(isAuthRequired());
+  const [loading, setLoading] = useState(false);
+  const initialSetup = useMemo(() => getInitialAppData(getInitialTenantSlug()), []);
+  const [appData, setAppData] = useState(initialSetup.data);
+  const [appDataReady, setAppDataReady] = useState(initialSetup.ready);
+  const [agentsReady, setAgentsReady] = useState(false);
+
+  const activeTenantSlug = tenantSlug || getInitialTenantSlug() || 'jiw';
+  const selectedTenant = availableTenants.find((tenant) => tenant.slug === activeTenantSlug)
+    || { slug: activeTenantSlug, name: activeTenantSlug };
   const integration = getIntegrationStatus(activeTenantSlug);
 
   const [agentsList, setAgentsList] = useState([]);
+  const [initialConversationId, setInitialConversationId] = useState(null);
+  const [prefilledAppointment, setPrefilledAppointment] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
+    function handleGlobalKeyDown(e) {
+      if (e.key === 'Escape' && mobileNavOpen) {
+        setMobileNavOpen(false);
+      }
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [mobileNavOpen]);
+
+  const handleSignOut = async () => {
+    clearSessionBootstrapped();
+    setSession(null);
+    await signOut();
+  };
+
+  const handleOpenChatFromKanban = (conversationId) => {
+    setInitialConversationId(conversationId);
+    setActive('conversas');
+  };
+
+  const handleOpenAppointmentFromKanban = (card) => {
+    setPrefilledAppointment({
+      contactName: card.title || '',
+      title: card.service || card.subtitle || 'Bronzeamento',
+      notes: `Agendamento via Kanban (${card.stage || 'Qualificação'})`,
+      selectedConversationId: card.externalConversationId || '',
+    });
+    setActive('agendamentos');
+  };
+
+  const handleMoveKanbanCard = async (card, targetColumnKey) => {
+    // Atualização otimista no estado local
+    setAppData((prev) => {
+      if (!prev?.kanbanColumns) return prev;
+      const nextColumns = prev.kanbanColumns.map((col) => {
+        const filteredCards = (col.cards || []).filter((c) => c.id !== card.id);
+        const colKey = col.automationKey || col.id;
+        if (colKey === targetColumnKey || col.id === targetColumnKey) {
+          return {
+            ...col,
+            cards: [{ ...card, stage: targetColumnKey }, ...filteredCards],
+          };
+        }
+        return { ...col, cards: filteredCards };
+      });
+      return { ...prev, kanbanColumns: nextColumns };
+    });
+
+    try {
+      await moveKanbanCard(activeTenantSlug, card, targetColumnKey);
+    } catch (err) {
+      console.warn('Falha ao salvar movimentação de card no banco:', err);
+      refreshData({ showLoading: false });
+    }
+  };
+
+  const handleFinishConversationFromKanban = (card) => {
+    handleMoveKanbanCard(card, 'finalizadas');
+  };
+
+  useEffect(() => {
+    document.title = 'NORIA — Inteligência em movimento';
     try {
       localStorage.removeItem('magia:team-agents');
     } catch (e) { }
@@ -201,9 +320,17 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    loadTeamAgents(activeTenantSlug).then((list) => {
-      if (active) setAgentsList(list);
-    });
+    setAgentsReady(false);
+    loadTeamAgents(activeTenantSlug)
+      .then((list) => {
+        if (active) {
+          setAgentsList(list);
+          setAgentsReady(true);
+        }
+      })
+      .catch(() => {
+        if (active) setAgentsReady(true);
+      });
     return () => {
       active = false;
     };
@@ -287,9 +414,19 @@ function App() {
       if (!mounted) return;
       setSession(currentSession);
       setCheckingAuth(false);
+      if (currentSession) {
+        setSessionBootstrapped();
+      } else {
+        clearSessionBootstrapped();
+      }
     });
     const unsubscribe = subscribeToAuthState((nextSession) => {
       setSession(nextSession);
+      if (nextSession) {
+        setSessionBootstrapped();
+      } else {
+        clearSessionBootstrapped();
+      }
     });
     return () => {
       mounted = false;
@@ -313,6 +450,7 @@ function App() {
         appDataSignature(previous) === appDataSignature(data) ? previous : data
       ));
     } finally {
+      setAppDataReady(true);
       if (showLoading) setLoading(false);
     }
   }
@@ -337,8 +475,14 @@ function App() {
     if (isAuthRequired() && !session) return undefined;
     persistTenantSlug(activeTenantSlug);
     const cached = loadCachedAppData(activeTenantSlug);
-    if (cached) setAppData(cached);
-    refreshData();
+    if (cached) {
+      setAppData(cached);
+      setAppDataReady(true);
+    } else {
+      setAppData(getInitialAppData(activeTenantSlug).data);
+      setAppDataReady(false);
+    }
+    refreshData({ showLoading: false });
 
     let lastRealtimeRefresh = 0;
     const refreshFromRealtime = () => {
@@ -367,11 +511,15 @@ function App() {
     };
   }, [activeTenantSlug, session?.user?.id]);
 
-  if (checkingAuth) {
-    return <AuthShell title="Carregando painel..." />;
+  const hasBootstrapped = isSessionBootstrapped();
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const authPreviewMode = urlParams?.get('auth');
+
+  if (authPreviewMode === 'loading' || (checkingAuth && !hasBootstrapped)) {
+    return <AuthShell title="Carregando NORIA..." />;
   }
 
-  if (isAuthRequired() && !session) {
+  if (authPreviewMode === 'login' || authPreviewMode === '1' || (isAuthRequired() && !checkingAuth && !session)) {
     return <LoginPage />;
   }
 
@@ -379,11 +527,7 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><Sparkles size={20} /></div>
-          <div>
-            <strong>Mag.ia</strong>
-            <span>Atendimento inteligente</span>
-          </div>
+          <img src={noriaLogo} alt="NORIA" className="brand-logo-img" />
         </div>
 
         <nav className="nav-list">
@@ -413,44 +557,117 @@ function App() {
         </div>
       </aside>
 
+      {mobileNavOpen && (
+        <>
+          <div className="mobile-nav-backdrop" onClick={() => setMobileNavOpen(false)} />
+          <aside id="mobile-nav-drawer" className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="Navegação principal">
+            <div className="mobile-nav-header">
+              <div className="mobile-nav-brand">
+                <img src={noriaLogo} alt="NORIA" className="brand-logo-img" />
+                <div className="mobile-brand-text">
+                  <strong>NORIA</strong>
+                  <small>Inteligência em movimento</small>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="icon-button close-drawer-btn"
+                onClick={() => setMobileNavOpen(false)}
+                title="Fechar menu"
+                aria-label="Fechar menu"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <nav className="mobile-nav-list">
+              {menu.map((item) => {
+                const Icon = item.icon;
+                const isSelected = active === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`mobile-nav-item ${isSelected ? 'active' : ''}`}
+                    onClick={() => {
+                      setActive(item.id);
+                      setMobileNavOpen(false);
+                    }}
+                  >
+                    <Icon size={18} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            <div className="mobile-nav-footer">
+              <div className="integration-pill">
+                <span className={`dot ${integration.supabase ? '' : 'warn'}`} />
+                <small>{integration.supabase ? 'Supabase conectado' : 'Modo local'}</small>
+              </div>
+              <small className="mobile-tenant-info"><Building2 size={13} /> {selectedTenant.name}</small>
+            </div>
+          </aside>
+        </>
+      )}
+
       <main className="main" style={{ position: 'relative' }}>
         <div className={`refresh-progress-bar ${loading ? 'active' : ''}`} />
         <header className="topbar">
-          <div>
-            <h1>{menu.find((item) => item.id === active)?.label}</h1>
-            <p>{selectedTenant.name} · {selectedTenant.industry} · Plano {selectedTenant.plan}</p>
+          <div className="topbar-brand-block">
+            <div className="topbar-title-row">
+              <button
+                type="button"
+                className="mobile-menu-btn icon-button"
+                onClick={() => setMobileNavOpen(true)}
+                title="Menu"
+                aria-label="Abrir navegação"
+                aria-expanded={mobileNavOpen}
+                aria-controls="mobile-nav-drawer"
+              >
+                <Menu size={18} />
+              </button>
+              <h1>{menu.find((item) => item.id === active)?.label}</h1>
+            </div>
+            <p className="topbar-subtitle">{selectedTenant.name} · {selectedTenant.industry} · Plano {selectedTenant.plan}</p>
           </div>
           <div className="topbar-actions">
-            <label className="select-label">
-              <Building2 size={16} />
-              <select value={activeTenantSlug} onChange={(event) => setTenantSlug(event.target.value)}>
+            <label className="select-label" title={`Tenant: ${selectedTenant.name}`}>
+              <Building2 size={15} />
+              <select value={activeTenantSlug} onChange={(event) => setTenantSlug(event.target.value)} aria-label="Selecionar Tenant">
                 {availableTenants.map((tenant) => (
                   <option key={tenant.slug} value={tenant.slug}>{tenant.name}</option>
                 ))}
               </select>
               <ChevronDown size={14} />
             </label>
-            <button className="icon-button" type="button" title="Atualizar" onClick={refreshData}>
-              <RefreshCcw size={18} className={loading ? 'spin' : ''} />
-            </button>
-            {isAuthRequired() && (
-              <button className="secondary-button" type="button" onClick={signOut}>
-                <UserRound size={16} />
-                Sair
+            <div className="topbar-utility-buttons">
+              <button className="icon-button" type="button" title="Atualizar" aria-label="Atualizar" onClick={refreshData}>
+                <RefreshCcw size={17} className={loading ? 'spin' : ''} />
               </button>
-            )}
-
+              {isAuthRequired() && (
+                <button className="secondary-button logout-btn" type="button" title="Sair" aria-label="Sair" onClick={handleSignOut}>
+                  <LogOut size={16} />
+                  <span className="logout-text">Sair</span>
+                </button>
+              )}
+            </div>
           </div>
         </header>
 
-        {active === 'dashboard' && <Dashboard conversations={appData.conversations} dataSource={appData.source} status={appData.status} />}
+        {active === 'dashboard' && <Dashboard conversations={appData.conversations} dataSource={appData.source} status={appData.status} ready={appDataReady} />}
         {active === 'conversas' && (
           <Conversations
             conversations={appData.conversations}
             tenantSlug={activeTenantSlug}
             onSent={refreshData}
             agentsList={agentsList}
+            agentsReady={agentsReady}
             onAssignAgent={handleAssignAgent}
+            initialConversationId={initialConversationId}
+            onInitialConversationOpened={() => setInitialConversationId(null)}
+            ready={appDataReady}
           />
         )}
         {active === 'kanban' && (
@@ -460,9 +677,14 @@ function App() {
             agentsList={agentsList}
             tenantSlug={activeTenantSlug}
             onChanged={refreshData}
+            onOpenChat={handleOpenChatFromKanban}
+            onOpenAppointment={handleOpenAppointmentFromKanban}
+            onMoveCard={handleMoveKanbanCard}
+            onFinishConversation={handleFinishConversationFromKanban}
+            ready={appDataReady}
           />
         )}
-        {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} />}
+        {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} ready={appDataReady} />}
         {active === 'disparos' && (
           <Broadcasts
             conversations={appData.conversations}
@@ -470,6 +692,7 @@ function App() {
             campaigns={appData.broadcastCampaigns || []}
             tenantSlug={activeTenantSlug}
             onChanged={refreshData}
+            ready={appDataReady}
           />
         )}
         {active === 'agendamentos' && (
@@ -478,11 +701,14 @@ function App() {
             conversations={appData.conversations}
             tenantSlug={activeTenantSlug}
             onChanged={refreshData}
+            initialData={prefilledAppointment}
+            ready={appDataReady}
           />
         )}
         {active === 'configuracoes' && (
           <SettingsPage
             agents={agentsList}
+            agentsReady={agentsReady}
             onAddAgent={handleAddAgent}
             onToggleAgentStatus={handleToggleAgentStatus}
             onDeleteAgent={handleDeleteAgent}
@@ -495,19 +721,43 @@ function App() {
   );
 }
 
-function Dashboard({ conversations, dataSource, status }) {
-  const [visibleCount, setVisibleCount] = useState(5);
+function formatConversationPreview(message) {
+  const text = String(message || '').trim();
+  const lower = text.toLowerCase();
+  if (lower === '/reset' || lower === 'reset') {
+    return 'Conversa reiniciada';
+  }
+  return text;
+}
+
+function Dashboard({ conversations, dataSource, status, ready = true }) {
+  const [visibleCount, setVisibleCount] = useState(10);
 
   const stats = useMemo(() => {
     const activeBot = conversations.filter((item) => item.status === 'ia_ativa').length;
     const human = conversations.filter((item) => item.status === 'atendimento_humano').length;
 
     return [
-      { label: 'Conversas', value: conversations.length.toString(), change: dataSource === 'supabase' ? 'Supabase' : dataSource, icon: Inbox },
-      { label: 'Bot ativo', value: activeBot.toString(), change: status?.ai || 'Regras e automações', icon: Bot },
-      { label: 'Humanas', value: human.toString(), change: 'Fila de espera', icon: UsersRound },
+      {
+        id: 'conversas',
+        label: 'Conversas',
+        value: conversations.length.toString(),
+        icon: Inbox,
+      },
+      {
+        id: 'bot',
+        label: 'Bot ativo',
+        value: activeBot.toString(),
+        icon: Bot,
+      },
+      {
+        id: 'human',
+        label: 'Em atendimento humano',
+        value: human.toString(),
+        icon: UsersRound,
+      },
     ];
-  }, [conversations, dataSource, status]);
+  }, [conversations]);
 
   function handleTableScroll(e) {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
@@ -526,37 +776,111 @@ function Dashboard({ conversations, dataSource, status }) {
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (
-            <article className="metric-card" key={stat.label}>
-              <div className="metric-icon"><Icon size={20} /></div>
-              <span>{stat.label}</span>
-              <strong>{stat.value}</strong>
-              <small>{stat.change}</small>
+            <article className={`metric-card metric-card-${stat.id}`} key={stat.id || stat.label}>
+              <div className="metric-icon">
+                <Icon size={18} />
+              </div>
+              <span className="metric-label">{stat.label}</span>
+              <div className="metric-value-wrap">
+                {ready ? (
+                  <strong className="metric-value">{stat.value}</strong>
+                ) : (
+                  <div className="metric-skeleton-value skeleton-block" />
+                )}
+              </div>
             </article>
           );
         })}
       </div>
 
-      <section className="panel dashboard-table-panel">
-        <PanelTitle icon={MessageCircle} title="Conversas recentes" action={`${displayedConversations.length} de ${conversations.length}`} />
-        <div className="table scrollable-table">
-          <div className="table-head">
-            <span>Contato</span><span>Canal</span><span>Status</span><span>Etapa</span><span>Responsável</span><span>Última mensagem</span>
+      <div className="dashboard-main-grid">
+        {/* COLUNA ESQUERDA (~74%): Conversas recentes (Painel Principal Dominante) */}
+        <section className="panel dashboard-conversations-panel">
+          <PanelTitle
+            icon={MessageCircle}
+            title="Conversas recentes"
+            action={ready ? `${displayedConversations.length} de ${conversations.length}` : '—'}
+          />
+          <div className="table scrollable-table dashboard-table">
+            <div className="table-head">
+              <span>Contato</span>
+              <span>Canal</span>
+              <span>Status</span>
+              <span>Etapa</span>
+              <span>Responsável</span>
+              <span>Última mensagem</span>
+              <span className="th-time">Horário</span>
+            </div>
+            <div className="table-body" onScroll={handleTableScroll}>
+              {!ready ? (
+                [1, 2, 3, 4, 5, 6, 7].map((i) => (
+                  <div className="table-row table-row-skeleton" key={i}>
+                    <div className="table-contact-cell">
+                      <SkeletonBlock width="32px" height="32px" style={{ borderRadius: '50%', flexShrink: 0 }} />
+                      <div className="table-contact-info">
+                        <SkeletonLine width="95px" />
+                        <SkeletonLine width="60px" style={{ marginTop: '4px' }} />
+                      </div>
+                    </div>
+                    <SkeletonLine width="65px" />
+                    <SkeletonBlock width="76px" height="22px" style={{ borderRadius: '999px' }} />
+                    <SkeletonLine width="80px" />
+                    <SkeletonLine width="90px" />
+                    <SkeletonLine width="160px" />
+                    <SkeletonLine width="55px" style={{ justifySelf: 'end' }} />
+                  </div>
+                ))
+              ) : (
+                <>
+                  {displayedConversations.map((item) => (
+                    <div className="table-row" key={item.id}>
+                      <div className="table-contact-cell">
+                        <div className="conversation-avatar-wrapper compact">
+                          <div className="conversation-avatar">
+                            {getInitials(item.contact)}
+                          </div>
+                        </div>
+                        <div className="table-contact-info">
+                          <strong className="contact-name">{item.contact}</strong>
+                          {item.company && item.company.startsWith('@') && (
+                            <small className="contact-handle">{item.company}</small>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="table-channel-cell">
+                        <div className={`channel-indicator ${getChannelClass(item.channelType || item.channel)}`}>
+                          <ChannelIcon channel={item.channelType || item.channel} size={15} />
+                          <span className="channel-name">{item.channel}</span>
+                        </div>
+                      </div>
+
+                      <Badge value={statusLabels[item.status] || item.status} status={item.status} />
+
+                      <span className="stage-pill-text">{item.stage}</span>
+
+                      <span className="owner-text">{item.owner}</span>
+
+                      <span className="message-preview-text" title={item.lastMessage}>
+                        {formatConversationPreview(item.lastMessage)}
+                      </span>
+
+                      <small className="timestamp-text">{item.lastAt}</small>
+                    </div>
+                  ))}
+                  {!conversations.length && (
+                    <EmptyState
+                      title="Nenhuma conversa real ainda"
+                      text="Assim que o bot Telegram receber mensagens, elas aparecerão aqui."
+                    />
+                  )}
+                </>
+              )}
+            </div>
           </div>
-          <div className="table-body" onScroll={handleTableScroll}>
-            {displayedConversations.map((item) => (
-              <div className="table-row" key={item.id}>
-                <strong>{item.contact}</strong>
-                <span>{item.channel}</span>
-                <Badge value={statusLabels[item.status]} status={item.status} />
-                <span>{item.stage}</span>
-                <span>{item.owner}</span>
-                <small>{item.lastMessage}</small>
-              </div>
-            ))}
-            {!conversations.length && <EmptyState title="Nenhuma conversa real ainda" text="Assim que os canais conectados receberem mensagens, elas aparecerao aqui." />}
-          </div>
-        </div>
-      </section>
+        </section>
+
+      </div>
     </section>
   );
 }
@@ -569,8 +893,8 @@ function ChannelIcon({ channel, size = 14 }) {
   if (type.includes('whats') || type.includes('zap')) {
     return (
       <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 21l1.65-3.8a9 9 0 1 1 3.4 2.9L3 21" />
-        <path d="M9 10a.5.5 0 0 0 1 0V9a.5.5 0 0 0-1 0v1a5 5 0 0 0 5 5h1a.5.5 0 0 0 0-1h-1a.5.5 0 0 0 0 1" />
+        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+        <path d="M9.5 9a.5.5 0 0 0-.5.5v.2a4.8 4.8 0 0 0 4.8 4.8h.2a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5l-1.2-.2a.5.5 0 0 0-.4.1l-.6.6a3.8 3.8 0 0 1-1.8-1.8l.6-.6a.5.5 0 0 0 .1-.4l-.2-1.2A.5.5 0 0 0 10.5 9h-1z" />
       </svg>
     );
   }
@@ -632,20 +956,144 @@ function MediaAttachment({ media, onMediaLoad }) {
   return <div className="media-placeholder" title="O arquivo original ainda não foi disponibilizado pelo canal"><Icon size={20} /><span>{media?.fileName || config.label}</span><small>Prévia indisponível</small></div>;
 }
 
-function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onAssignAgent }) {
+function SkeletonLine({ width, height, style, className }) {
+  return <span className={`skeleton-line ${className || ''}`} style={{ width, height, ...style }} />;
+}
+
+function SkeletonBlock({ width, height, style, className }) {
+  return <div className={`skeleton-block ${className || ''}`} style={{ width, height, ...style }} />;
+}
+
+function Conversations({
+  conversations = [],
+  tenantSlug,
+  onSent,
+  agentsList = [],
+  agentsReady = true,
+  onAssignAgent,
+  initialConversationId = null,
+  onInitialConversationOpened,
+  ready = true,
+}) {
   const [selectedId, setSelectedId] = useState(conversations[0]?.id || null);
+  const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef(null);
+
+  const isSearchExpanded = searchOpen || Boolean(query && query.trim() !== '');
+
+  const handleOpenSearch = () => {
+    setSearchOpen(true);
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 50);
+  };
+
+  const handleCloseSearch = () => {
+    if (query) {
+      setQuery('');
+    } else {
+      setSearchOpen(false);
+    }
+  };
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      if (query) {
+        setQuery('');
+      } else {
+        setSearchOpen(false);
+      }
+    }
+  };
+
   const [filter, setFilter] = useState('todas');
   const [channelFilter, setChannelFilter] = useState('todos');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignToast, setAssignToast] = useState('');
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [ending, setEnding] = useState(false);
   const [sendError, setSendError] = useState('');
-  const [showAssignModal, setShowAssignModal] = useState(false);
-  const [assignToast, setAssignToast] = useState('');
+
+  const cancelCloseBtnRef = useRef(null);
+  const closeActionBtnRef = useRef(null);
+  const assignActionBtnRef = useRef(null);
+  const assignModalCloseBtnRef = useRef(null);
   const messagesEndRef = React.useRef(null);
   const messageStreamRef = React.useRef(null);
+
+  useEffect(() => {
+    if (showCloseModal) {
+      setTimeout(() => {
+        cancelCloseBtnRef.current?.focus();
+      }, 50);
+    }
+  }, [showCloseModal]);
+
+  useEffect(() => {
+    if (showAssignModal) {
+      setTimeout(() => {
+        assignModalCloseBtnRef.current?.focus();
+      }, 50);
+    }
+  }, [showAssignModal]);
+
+  function handleOpenCloseModal() {
+    if (!selected || ending) return;
+    setSendError('');
+    setShowCloseModal(true);
+  }
+
+  function handleCancelCloseModal() {
+    if (ending) return;
+    setShowCloseModal(false);
+    setSendError('');
+    setTimeout(() => {
+      closeActionBtnRef.current?.focus();
+    }, 40);
+  }
+
+  function handleCloseAssignModal() {
+    setShowAssignModal(false);
+    setTimeout(() => {
+      assignActionBtnRef.current?.focus();
+    }, 40);
+  }
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        if (showCloseModal) {
+          e.stopPropagation();
+          if (!ending) {
+            handleCancelCloseModal();
+          }
+          return;
+        }
+        if (showAssignModal) {
+          e.stopPropagation();
+          handleCloseAssignModal();
+          return;
+        }
+        if (showFilterMenu) {
+          e.stopPropagation();
+          setShowFilterMenu(false);
+          return;
+        }
+        if (isSearchExpanded) {
+          e.stopPropagation();
+          handleCloseSearch();
+          return;
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [showCloseModal, showAssignModal, showFilterMenu, isSearchExpanded, ending]);
 
   function scrollToLatest() {
     const stream = messageStreamRef.current;
@@ -701,6 +1149,20 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   }, [filteredConversations, selectedId]);
 
   useEffect(() => {
+    if (!initialConversationId) return;
+    const conversation = conversations.find((item) => (
+      item.id === initialConversationId || item.externalConversationId === initialConversationId
+    ));
+    if (!conversation) return;
+    setQuery('');
+    setFilter('todas');
+    setChannelFilter('todos');
+    setSelectedId(conversation.id);
+    setMobileChatOpen(true);
+    onInitialConversationOpened?.();
+  }, [conversations, initialConversationId, onInitialConversationOpened]);
+
+  useEffect(() => {
     scrollToLatest();
     const timer = window.setTimeout(scrollToLatest, 120);
     return () => window.clearTimeout(timer);
@@ -718,10 +1180,10 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
         external_conversation_id: selected.externalConversationId || selected.id.replace(/^conv-/, ''),
         contact_name: selected.contact,
         message_text: text,
-        sent_by_user: 'Operador Mag.IA',
+        sent_by_user: 'Operador NORIA',
       }, tenantSlug);
       setDraft('');
-      await onSent?.();
+      await onSent?.({ showLoading: false });
     } catch (error) {
       setSendError(error.message || 'Não foi possível enviar a resposta.');
     } finally {
@@ -729,11 +1191,8 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
     }
   }
 
-  async function closeConversation() {
+  async function executeCloseConversation() {
     if (!selected || ending) return;
-
-    const confirmed = window.confirm('Encerrar este atendimento e devolver a proxima mensagem para a IA?');
-    if (!confirmed) return;
 
     setEnding(true);
     setSendError('');
@@ -743,95 +1202,178 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
         external_conversation_id: selected.externalConversationId || selected.id.replace(/^conv-/, ''),
         contact_name: selected.contact,
         message_text: 'Atendimento encerrado pela interface',
-        sent_by_user: 'Operador Mag.IA',
+        sent_by_user: 'Operador NORIA',
         reason: 'Atendimento finalizado pelo operador',
       }, tenantSlug);
-      await onSent?.();
+      await onSent?.({ showLoading: false });
+      setShowCloseModal(false);
+      setTimeout(() => {
+        closeActionBtnRef.current?.focus();
+      }, 40);
     } catch (error) {
-      setSendError(error.message || 'Nao foi possivel encerrar o atendimento.');
+      setSendError(error.message || 'Não foi possível encerrar o atendimento.');
     } finally {
       setEnding(false);
     }
   }
 
-  if (!conversations.length) {
-    return (
-      <section className="panel">
-        <EmptyState title="Nenhuma conversa registrada" text="Envie uma mensagem pelo canal conectado e atualize para visualizar o atendimento em tempo real." />
-      </section>
-    );
-  }
-
   return (
-    <section className="conversation-layout">
+    <section className={`conversation-layout ${mobileChatOpen ? 'mobile-chat-open' : 'mobile-list-open'}`}>
       <aside className="conversation-list panel">
         <div className="toolbar" style={{ position: 'relative' }}>
-          <div className="search-box">
-            <Search size={16} />
-            <input placeholder="Buscar conversa..." value={query} onChange={(event) => setQuery(event.target.value)} />
+          <div className="conversations-search-wrapper">
+            <button
+              type="button"
+              className="icon-button search-expand-btn"
+              onClick={handleOpenSearch}
+              title="Buscar conversa"
+              aria-label="Buscar conversa"
+            >
+              <Search size={16} />
+            </button>
+            <div className="search-box">
+              <Search size={16} className="search-icon-inside" />
+              <input
+                ref={searchInputRef}
+                placeholder="Buscar conversa..."
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                aria-label="Buscar conversa"
+              />
+              {Boolean(query && query.trim() !== '') && (
+                <button
+                  type="button"
+                  className="search-clear-btn"
+                  onClick={handleCloseSearch}
+                  title="Limpar busca"
+                  aria-label="Limpar busca"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
           </div>
           <div className="filter-dropdown-wrapper">
             <button
               className={`icon-button ${channelFilter !== 'todos' ? 'active-filter' : ''}`}
               title="Filtrar por canal"
+              aria-label="Abrir filtros de canais"
               type="button"
               onClick={() => setShowFilterMenu((prev) => !prev)}
             >
               <Filter size={17} />
-              {channelFilter !== 'todos' && <span className={`filter-indicator-dot ${getChannelClass(channelFilter)}`} />}
+              {channelFilter !== 'todos' && (
+                <span className={`filter-indicator-dot ${getChannelClass(channelFilter)}`} />
+              )}
             </button>
 
             {showFilterMenu && (
               <>
                 <div className="dropdown-overlay" onClick={() => setShowFilterMenu(false)} />
-                <div className="filter-popover-menu">
-                  <div className="filter-popover-header">
-                    <span>Filtrar por canal</span>
+                <div className="filter-popover-menu" role="menu">
+                  <div className="filter-primary-section">
+                    <div className="filter-popover-header">
+                      <span>Filtros</span>
+                    </div>
+                    <button
+                      type="button"
+                      className={`filter-menu-item ${filter === 'todas' ? 'selected' : ''}`}
+                      onClick={() => { setFilter('todas'); setShowFilterMenu(false); }}
+                    >
+                      <div className="filter-item-left">
+                        {filter === 'todas' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
+                        <span>Todas</span>
+                      </div>
+                      <span className="count-badge">{conversations.length}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`filter-menu-item ${filter === 'nao_lidas' ? 'selected' : ''}`}
+                      onClick={() => { setFilter('nao_lidas'); setShowFilterMenu(false); }}
+                    >
+                      <div className="filter-item-left">
+                        {filter === 'nao_lidas' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
+                        <span>Não lidas</span>
+                      </div>
+                      {(unreadCount || 0) > 0 && <span className="count-badge unread-badge">{unreadCount}</span>}
+                    </button>
+                    <button
+                      type="button"
+                      className={`filter-menu-item ${filter === 'ia' ? 'selected' : ''}`}
+                      onClick={() => { setFilter('ia'); setShowFilterMenu(false); }}
+                    >
+                      <div className="filter-item-left">
+                        {filter === 'ia' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
+                        <span>IA</span>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      className={`filter-menu-item ${filter === 'humanas' ? 'selected' : ''}`}
+                      onClick={() => { setFilter('humanas'); setShowFilterMenu(false); }}
+                    >
+                      <div className="filter-item-left">
+                        {filter === 'humanas' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
+                        <span>Humanas</span>
+                      </div>
+                    </button>
+                    <div className="filter-popover-divider" />
                   </div>
-                  <button
-                    type="button"
-                    className={`filter-menu-item ${channelFilter === 'todos' ? 'selected' : ''}`}
-                    onClick={() => { setChannelFilter('todos'); setShowFilterMenu(false); }}
-                  >
-                    <div className="filter-item-left">
-                      <span className="channel-indicator-icon channel-webchat"><Sparkles size={12} /></span>
-                      <span>Todos os canais</span>
+
+                  <div className="filter-channel-section">
+                    <div className="filter-popover-header">
+                      <span>Canais</span>
                     </div>
-                    <span className="count-badge">{channelCounts.todos}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`filter-menu-item ${channelFilter === 'telegram' ? 'selected' : ''}`}
-                    onClick={() => { setChannelFilter('telegram'); setShowFilterMenu(false); }}
-                  >
-                    <div className="filter-item-left">
-                      <span className="channel-indicator-icon channel-telegram"><ChannelIcon channel="telegram" size={12} /></span>
-                      <span>Telegram</span>
-                    </div>
-                    <span className="count-badge telegram">{channelCounts.telegram}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`filter-menu-item ${channelFilter === 'whatsapp' ? 'selected' : ''}`}
-                    onClick={() => { setChannelFilter('whatsapp'); setShowFilterMenu(false); }}
-                  >
-                    <div className="filter-item-left">
-                      <span className="channel-indicator-icon channel-whatsapp"><ChannelIcon channel="whatsapp" size={12} /></span>
-                      <span>WhatsApp</span>
-                    </div>
-                    <span className="count-badge whatsapp">{channelCounts.whatsapp}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`filter-menu-item ${channelFilter === 'instagram' ? 'selected' : ''}`}
-                    onClick={() => { setChannelFilter('instagram'); setShowFilterMenu(false); }}
-                  >
-                    <div className="filter-item-left">
-                      <span className="channel-indicator-icon channel-instagram"><ChannelIcon channel="instagram" size={12} /></span>
-                      <span>Instagram</span>
-                    </div>
-                    <span className="count-badge instagram">{channelCounts.instagram}</span>
-                  </button>
+                    <button
+                      type="button"
+                      className={`filter-menu-item ${channelFilter === 'todos' ? 'selected' : ''}`}
+                      onClick={() => { setChannelFilter('todos'); setShowFilterMenu(false); }}
+                    >
+                      <div className="filter-item-left">
+                        {channelFilter === 'todos' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
+                        <span className="channel-indicator-icon channel-webchat"><Sparkles size={12} /></span>
+                        <span>Todos os canais</span>
+                      </div>
+                      <span className="count-badge">{channelCounts.todos}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`filter-menu-item ${channelFilter === 'telegram' ? 'selected' : ''}`}
+                      onClick={() => { setChannelFilter('telegram'); setShowFilterMenu(false); }}
+                    >
+                      <div className="filter-item-left">
+                        {channelFilter === 'telegram' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
+                        <span className="channel-indicator-icon channel-telegram"><ChannelIcon channel="telegram" size={12} /></span>
+                        <span>Telegram</span>
+                      </div>
+                      <span className="count-badge telegram">{channelCounts.telegram}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`filter-menu-item ${channelFilter === 'whatsapp' ? 'selected' : ''}`}
+                      onClick={() => { setChannelFilter('whatsapp'); setShowFilterMenu(false); }}
+                    >
+                      <div className="filter-item-left">
+                        {channelFilter === 'whatsapp' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
+                        <span className="channel-indicator-icon channel-whatsapp"><ChannelIcon channel="whatsapp" size={12} /></span>
+                        <span>WhatsApp</span>
+                      </div>
+                      <span className="count-badge whatsapp">{channelCounts.whatsapp}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`filter-menu-item ${channelFilter === 'instagram' ? 'selected' : ''}`}
+                      onClick={() => { setChannelFilter('instagram'); setShowFilterMenu(false); }}
+                    >
+                      <div className="filter-item-left">
+                        {channelFilter === 'instagram' ? <Check size={14} className="filter-check-icon" /> : <span className="filter-check-placeholder" />}
+                        <span className="channel-indicator-icon channel-instagram"><ChannelIcon channel="instagram" size={12} /></span>
+                        <span>Instagram</span>
+                      </div>
+                      <span className="count-badge instagram">{channelCounts.instagram}</span>
+                    </button>
+                  </div>
                 </div>
               </>
             )}
@@ -861,69 +1403,138 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
           )}
         </div>
 
-        <div className="conversation-items-scroll">
-          {filteredConversations.map((conversation) => (
-            <button
-              key={conversation.id}
-              type="button"
-              className={`conversation-item ${getChannelClass(conversation.channelType || conversation.channel)} ${selected?.id === conversation.id ? 'active' : ''}`}
-              onClick={() => setSelectedId(conversation.id)}
-            >
-              <div className="conversation-avatar-wrapper">
-                <div className="conversation-avatar">
-                  {getInitials(conversation.contact)}
+        <div className="conversation-items-scroll" key={`${filter}-${channelFilter}`}>
+          {!ready ? (
+            [1, 2, 3, 4, 5].map((i) => (
+              <div className="conversation-item conversation-item-skeleton" key={i}>
+                <div className="conversation-avatar-wrapper">
+                  <div className="conversation-avatar skeleton-block" />
                 </div>
-                <span className={`channel-avatar-badge ${getChannelClass(conversation.channelType || conversation.channel)}`}>
-                  <ChannelIcon channel={conversation.channelType || conversation.channel} size={10} />
-                </span>
+                <div className="conversation-item-main">
+                  <div className="conversation-item-top">
+                    <SkeletonLine width="90px" />
+                    <SkeletonLine width="40px" />
+                  </div>
+                  <div className="conversation-item-bottom">
+                    <SkeletonLine width="140px" />
+                  </div>
+                </div>
               </div>
+            ))
+          ) : (
+            <>
+              {filteredConversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  className={`conversation-item ${getChannelClass(conversation.channelType || conversation.channel)} ${selected?.id === conversation.id ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedId(conversation.id);
+                    setMobileChatOpen(true);
+                  }}
+                >
+                  <div className="conversation-avatar-wrapper">
+                    <div className="conversation-avatar">
+                      {getInitials(conversation.contact)}
+                    </div>
+                    <span className={`channel-avatar-badge ${getChannelClass(conversation.channelType || conversation.channel)}`}>
+                      <ChannelIcon channel={conversation.channelType || conversation.channel} size={10} />
+                    </span>
+                  </div>
 
-              <div className="conversation-item-main">
-                <div className="conversation-item-top">
-                  <strong className="contact-name">{conversation.contact}</strong>
-                  <small className="timestamp">{conversation.lastAt}</small>
-                </div>
-                <div className="conversation-item-middle">
-                  <span className="last-message">{conversation.lastMessage}</span>
-                </div>
-                <div className="conversation-item-bottom">
-                  <span className={`stage-tag ${conversation.status === 'atendimento_humano' ? 'human' : 'normal'}`}>
-                    {conversation.stage}
-                  </span>
-                  {(conversation.unread || 0) > 0 && <span className="item-unread-badge">{conversation.unread}</span>}
-                </div>
-              </div>
-            </button>
-          ))}
-          {!filteredConversations.length && <EmptyState title="Nenhum resultado" text="Ajuste a busca ou os filtros para ver outras conversas." compact />}
+                  <div className="conversation-item-main">
+                    <div className="conversation-item-top">
+                      <strong className="contact-name">{conversation.contact}</strong>
+                      <small className="timestamp">{conversation.lastAt}</small>
+                    </div>
+                    <div className="conversation-item-bottom">
+                      <span className="last-message">{formatConversationPreview(conversation.lastMessage)}</span>
+                      {(conversation.unread || 0) > 0 && (
+                        <span className="item-unread-badge" aria-label={`${conversation.unread} mensagens não lidas`}>
+                          {conversation.unread}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              ))}
+              {!filteredConversations.length && <EmptyState title="Nenhum resultado" text="Ajuste a busca ou os filtros para ver outras conversas." compact />}
+            </>
+          )}
         </div>
       </aside>
 
       <section className="chat-panel panel">
-        {selected ? <>
+        {!ready ? (
+          <div className="chat-empty-panel">
+            <SkeletonBlock width="180px" height="20px" style={{ margin: '0 auto 12px', borderRadius: '4px' }} />
+            <SkeletonLine width="140px" style={{ margin: '0 auto' }} />
+          </div>
+        ) : selected ? <>
           <div className="chat-header">
-            <div>
-              <div className="chat-header-name-row">
-                <strong>{selected.contact}</strong>
-                <span className={`channel-pill-tag ${getChannelClass(selected.channelType || selected.channel)}`}>
-                  <ChannelIcon channel={selected.channelType || selected.channel} size={12} />
-                  {selected.channel}
+            <div className="chat-header-left">
+              <button
+                type="button"
+                className="mobile-back-button"
+                onClick={() => setMobileChatOpen(false)}
+                aria-label="Voltar para conversas"
+                title="Voltar"
+              >
+                <ArrowLeft size={18} />
+              </button>
+              <div className="chat-header-avatar-wrap">
+                <div className="conversation-avatar">
+                  {getInitials(selected.contact)}
+                </div>
+                <span className={`channel-avatar-badge ${getChannelClass(selected.channelType || selected.channel)}`}>
+                  <ChannelIcon channel={selected.channelType || selected.channel} size={10} />
                 </span>
               </div>
-              <span>{selected.stage} · Responsável: <strong>{selected.owner || 'Não atribuído'}</strong></span>
+              <div className="chat-header-main-info">
+                <div className="chat-header-name-row">
+                  <strong className="chat-header-name">{selected.contact}</strong>
+                </div>
+                <div className="chat-header-sub">
+                  <span className="chat-header-channel">
+                    <ChannelIcon channel={selected.channelType || selected.channel} size={11} />
+                    {selected.channel}
+                  </span>
+                  <span className="chat-header-dot">·</span>
+                  <span className="chat-header-stage">{selected.stage}</span>
+                  {selected.owner && (
+                    <>
+                      <span className="chat-header-dot chat-header-owner-dot">·</span>
+                      <span className="chat-header-owner" title={`Responsável: ${selected.owner}`}>
+                        {selected.owner}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="header-actions">
               <button
-                className="secondary-button text-danger"
+                ref={closeActionBtnRef}
+                className="secondary-button text-danger chat-action-btn chat-action-close"
                 type="button"
-                onClick={closeConversation}
+                onClick={handleOpenCloseModal}
                 disabled={ending}
-                title="Finaliza o atendimento humano e libera a IA para a proxima mensagem do cliente"
+                title="Encerrar atendimento"
+                aria-label="Encerrar atendimento"
               >
-                <CheckCircle2 size={16} /> {ending ? 'Encerrando...' : 'Encerrar atendimento'}
+                <CheckCircle2 size={16} />
+                <span className="action-text">{ending ? 'Encerrando...' : 'Encerrar'}</span>
               </button>
-              <button className="secondary-button" type="button" onClick={() => setShowAssignModal(true)}>
-                <UserRound size={16} /> Atribuir
+              <button
+                ref={assignActionBtnRef}
+                className="secondary-button chat-action-btn chat-action-assign"
+                type="button"
+                onClick={() => setShowAssignModal(true)}
+                title="Atribuir conversa"
+                aria-label="Atribuir conversa"
+              >
+                <UserRound size={16} />
+                <span className="action-text">Atribuir</span>
               </button>
             </div>
           </div>
@@ -964,67 +1575,262 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
                 }
               }}
             />
-            <button className="primary-button" type="button" onClick={sendManualReply} disabled={sending || !draft.trim()}>
+            <button
+              className="primary-button composer-send-btn"
+              type="button"
+              onClick={sendManualReply}
+              disabled={sending || !draft.trim()}
+              aria-label="Enviar mensagem"
+            >
               <Send size={16} />
-              {sending ? 'Enviando...' : 'Enviar'}
+              <span className="composer-send-text">{sending ? 'Enviando...' : 'Enviar'}</span>
             </button>
           </div>
           {sendError && <div className="inline-error">{sendError}</div>}
         </> : <EmptyState title="Selecione uma conversa" text="Escolha um atendimento na lista lateral para visualizar as mensagens." />}
       </section>
 
-      {showAssignModal && selected && (
-        <div className="modal-backdrop" onClick={() => setShowAssignModal(false)}>
-          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h3>Atribuir conversa</h3>
-                <p>Selecione um funcionário para assumir o atendimento de <strong>{selected.contact}</strong></p>
+      {showCloseModal && selected && (
+        <div
+          className="modal-backdrop"
+          onClick={() => { if (!ending) handleCancelCloseModal(); }}
+          role="presentation"
+        >
+          <div
+            className="modal-panel confirm-modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="close-modal-title"
+            aria-describedby="close-modal-desc"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-modal-header">
+              <div className="confirm-modal-title-row">
+                <div className="confirm-danger-icon" aria-hidden="true">
+                  <AlertCircle size={20} />
+                </div>
+                <h3 id="close-modal-title" className="modal-title">Encerrar atendimento?</h3>
               </div>
-              <button className="icon-button" type="button" onClick={() => setShowAssignModal(false)}>
-                <X size={16} />
+              <button
+                className="icon-button modal-close-btn"
+                type="button"
+                onClick={handleCancelCloseModal}
+                disabled={ending}
+                aria-label="Fechar"
+                title="Fechar"
+              >
+                <X size={18} />
               </button>
+            </div>
+
+            <div className="confirm-modal-body">
+              <p id="close-modal-desc" className="confirm-modal-desc">
+                Esta conversa sairá do atendimento humano. A próxima mensagem do contato voltará a ser atendida pela IA.
+              </p>
+
+              <div className="modal-target-contact compact">
+                <MessageCircle size={14} />
+                <span>Atendimento: <strong>{selected.contact || 'Cliente'}</strong></span>
+                {selected.channel && <span className="modal-target-channel">· {selected.channel}</span>}
+              </div>
+
+              {sendError && <div className="inline-error confirm-error">{sendError}</div>}
+            </div>
+
+            <div className="confirm-modal-footer">
+              <button
+                ref={cancelCloseBtnRef}
+                type="button"
+                className="secondary-button confirm-cancel-btn"
+                onClick={handleCancelCloseModal}
+                disabled={ending}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="danger-button confirm-close-btn"
+                onClick={executeCloseConversation}
+                disabled={ending}
+                aria-label="Encerrar atendimento"
+                title="Encerrar atendimento"
+              >
+                {ending ? (
+                  <>
+                    <RefreshCcw size={15} className="spin" />
+                    <span>Encerrando...</span>
+                  </>
+                ) : (
+                  <span>Encerrar</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAssignModal && selected && (
+        <div className="modal-backdrop" onClick={handleCloseAssignModal} role="presentation">
+          <div
+            className="modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assign-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="modal-header-top">
+                <div className="modal-header-brand">
+                  <img src={noriaLogo} alt="NORIA" className="modal-logo-img" />
+                  <h3 id="assign-modal-title" className="modal-title">Atribuir conversa</h3>
+                </div>
+                <button
+                  ref={assignModalCloseBtnRef}
+                  className="icon-button modal-close-btn"
+                  type="button"
+                  onClick={handleCloseAssignModal}
+                  aria-label="Fechar"
+                  title="Fechar"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <p className="modal-subtitle">
+                Selecione um funcionário da equipe para assumir a continuidade deste atendimento.
+              </p>
+              <div className="modal-target-contact">
+                <MessageCircle size={14} />
+                <span>Atendimento: <strong>{selected.contact || 'Cliente'}</strong></span>
+                {selected.channelLabel && <span className="modal-target-channel">· {selected.channelLabel}</span>}
+              </div>
             </div>
 
             <div className="modal-body">
               <div className="agent-selection-list">
-                {agentsList.map((agent) => (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    className={`agent-selection-card ${selected.owner === agent.name ? 'selected' : ''}`}
-                    onClick={() => {
-                      onAssignAgent?.(selected, agent);
-                      setShowAssignModal(false);
-                      setAssignToast(`Conversa atribuída a ${agent.name}`);
-                      setTimeout(() => setAssignToast(''), 3000);
-                    }}
-                  >
-                    <div className="agent-avatar-circle">
-                      {getInitials(agent.name)}
-                    </div>
-                    <div className="agent-selection-info">
-                      <div className="agent-name-row">
-                        <strong>{agent.name}</strong>
-                        {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                {!agentsReady ? (
+                  [1, 2, 3].map((i) => (
+                    <div className="agent-selection-card agent-selection-card-skeleton" key={i}>
+                      <div className="agent-card-header">
+                        <div className="agent-avatar-circle skeleton-block" />
+                        <div className="agent-identity">
+                          <SkeletonLine width="100px" />
+                          <SkeletonBlock width="60px" height="16px" style={{ borderRadius: '4px' }} />
+                        </div>
                       </div>
-                      <small>{agent.unit || 'Geral'} · {agent.shift || 'Horário comercial'} · {agent.status === 'online' ? 'Online' : 'Standby'}</small>
+                      <div className="agent-card-meta">
+                        <SkeletonLine width="130px" />
+                      </div>
+                      <div className="agent-card-footer">
+                        <SkeletonLine width="90px" />
+                        <SkeletonBlock width="70px" height="28px" style={{ borderRadius: '6px' }} />
+                      </div>
                     </div>
-                    <div className="agent-selection-badge">
-                      {selected.owner === agent.name ? (
-                        <span className="current-owner-tag"><CheckCircle2 size={14} /> Atual</span>
-                      ) : (
-                        <span className="select-action-tag">Atribuir</span>
-                      )}
-                    </div>
-                  </button>
-                ))}
-                {!agentsList.length && (
-                  <EmptyState
-                    title="Nenhum funcionário cadastrado"
-                    text="Acesse o menu Configurações para cadastrar os funcionários da equipe."
-                    compact
-                  />
+                  ))
+                ) : (
+                  <>
+                    {agentsList.map((agent) => {
+                      const isCurrent = selected.owner === agent.name;
+                      const hasStatus = Boolean(agent.status);
+                      const statusNormalized = String(agent.status || '').toLowerCase();
+                      const isOnline = statusNormalized === 'online' || statusNormalized === 'ativo';
+                      const statusLabel = (() => {
+                        if (!agent.status) return null;
+                        if (statusNormalized === 'online') return 'Online';
+                        if (statusNormalized === 'ativo') return 'Ativo';
+                        if (statusNormalized === 'standby' || statusNormalized === 'pausado') return 'Pausado';
+                        if (statusNormalized === 'offline') return 'Offline';
+                        return agent.status;
+                      })();
+                      const hasRealLoad = typeof agent.load === 'number' && !Number.isNaN(agent.load);
+                      const metaText = [agent.unit || agent.branch, agent.shift].filter(Boolean).join(' · ');
+
+                      return (
+                        <div
+                          key={agent.id}
+                          className={`agent-selection-card ${isCurrent ? 'selected' : ''}`}
+                          onClick={() => {
+                            if (!isCurrent) {
+                              onAssignAgent?.(selected, agent);
+                              handleCloseAssignModal();
+                              setAssignToast(`Conversa atribuída a ${agent.name}`);
+                              setTimeout(() => setAssignToast(''), 3000);
+                            }
+                          }}
+                        >
+                          <div className="agent-card-header">
+                            <div className="agent-avatar-circle">
+                              {getInitials(agent.name)}
+                              {hasStatus && statusLabel && (
+                                <span
+                                  className={`agent-avatar-status ${isOnline ? 'online' : 'standby'}`}
+                                  title={statusLabel}
+                                />
+                              )}
+                            </div>
+
+                            <div className="agent-identity">
+                              <strong className="agent-name">{agent.name}</strong>
+                              {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                            </div>
+
+                            {hasStatus && statusLabel && (
+                              <span className={`agent-status-pill ${isOnline ? 'online' : 'standby'}`}>
+                                <span className="status-dot" />
+                                {statusLabel}
+                              </span>
+                            )}
+                          </div>
+
+                          {metaText && (
+                            <div className="agent-card-meta">
+                              <span className="agent-meta-text">{metaText}</span>
+                            </div>
+                          )}
+
+                          <div className="agent-card-bottom">
+                            <div className="agent-workload-info">
+                              {hasRealLoad && (
+                                <span className="agent-load-tag">
+                                  <MessageSquare size={13} />
+                                  <span>{agent.load} {agent.load === 1 ? 'conversa ativa' : 'conversas ativas'}</span>
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="agent-action-wrap">
+                              {isCurrent ? (
+                                <span className="current-owner-tag">
+                                  <CheckCircle2 size={13} /> Atual
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="assign-action-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onAssignAgent?.(selected, agent);
+                                    handleCloseAssignModal();
+                                    setAssignToast(`Conversa atribuída a ${agent.name}`);
+                                    setTimeout(() => setAssignToast(''), 3000);
+                                  }}
+                                >
+                                  <UserCheck size={14} />
+                                  <span>Atribuir</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!agentsList.length && (
+                      <EmptyState
+                        title="Nenhum funcionário cadastrado"
+                        text="Acesse o menu Configurações para cadastrar os funcionários da equipe."
+                        compact
+                      />
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1041,13 +1847,26 @@ function Conversations({ conversations, tenantSlug, onSent, agentsList = [], onA
   );
 }
 
-function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenantSlug, onChanged }) {
+function Kanban({
+  kanbanColumns = [],
+  tenantName = '',
+  agentsList = [],
+  tenantSlug = 'clinica_nubia',
+  onChanged,
+  onOpenChat,
+  onOpenAppointment,
+  onMoveCard,
+  onFinishConversation,
+  ready = true,
+}) {
   const [agentFilter, setAgentFilter] = useState('todos');
   const [channelFilter, setChannelFilter] = useState('todos');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedCardId, setCopiedCardId] = useState(null);
   const [confirmingCardId, setConfirmingCardId] = useState('');
   const [kanbanActionStatus, setKanbanActionStatus] = useState('');
+  const [draggingCardId, setDraggingCardId] = useState(null);
+  const [dragOverColumnId, setDragOverColumnId] = useState(null);
 
   const schedulingUrl = getTenantSchedulingLink(tenantSlug);
 
@@ -1090,6 +1909,12 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
       setConfirmingCardId('');
     }
   }
+  const getChannelClass = (type = 'telegram') => {
+    const norm = String(type).toLowerCase();
+    if (norm.includes('whats')) return 'channel-whatsapp';
+    if (norm.includes('insta')) return 'channel-instagram';
+    return 'channel-telegram';
+  };
 
   const filteredColumns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -1117,6 +1942,56 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
     });
   }, [kanbanColumns, agentFilter, channelFilter, searchQuery]);
 
+  // Drag & Drop Handlers
+  const handleDragStart = (e, card, column) => {
+    setDraggingCardId(card.id);
+    e.dataTransfer.effectAllowed = 'move';
+    // Usamos text/plain para compatibilidade maxima em todos os browsers
+    e.dataTransfer.setData('text/plain', JSON.stringify({
+      cardId: card.id,
+      sourceColumnId: column.id,
+      card,
+    }));
+  };
+
+  const handleDragEnd = () => {
+    setDraggingCardId(null);
+    setDragOverColumnId(null);
+  };
+
+  const handleDragOver = (e, column) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverColumnId !== column.id) {
+      setDragOverColumnId(column.id);
+    }
+  };
+
+  const handleDragLeave = (e, column) => {
+    if (dragOverColumnId === column.id) {
+      setDragOverColumnId(null);
+    }
+  };
+
+  const handleDrop = (e, targetColumn) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverColumnId(null);
+    setDraggingCardId(null);
+    try {
+      const raw = e.dataTransfer.getData('text/plain');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (!data?.card) return;
+      if (data.sourceColumnId === targetColumn.id) return;
+      if (onMoveCard) {
+        onMoveCard(data.card, targetColumn.automationKey || targetColumn.id);
+      }
+    } catch (err) {
+      console.warn('Erro ao processar drop no Kanban:', err);
+    }
+  };
+
   return (
     <section className="kanban-page">
       <div className="kanban-toolbar">
@@ -1124,7 +1999,7 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
           <div className="search-box">
             <Search size={16} />
             <input
-              placeholder="Buscar por contato, mensagem ou intenção..."
+              placeholder="Buscar por contato, serviço ou mensagem..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -1195,118 +2070,204 @@ function Kanban({ kanbanColumns, tenantName, agentsList = [], onOpenChat, tenant
       </div>
 
       <div className="kanban-board">
-        {filteredColumns.map((column) => (
-          <div className="kanban-column" key={column.id}>
-            <div className="column-header">
-              <strong className="column-title">{column.title}</strong>
-              <span className="column-count-badge">{column.cards.length}</span>
-            </div>
+        {filteredColumns.map((column) => {
+          const isWaitingColumn = column.automationKey === 'aguardando_humano' || column.id === 'aguardando_humano';
+          const isFinishedColumn = column.automationKey === 'finalizadas' || column.id === 'finalizadas';
+          const isDragOver = dragOverColumnId === column.id;
 
-            <div className="column-cards-container">
-              {column.cards.map((card) => {
-                const channelClass = getChannelClass(card.channelType || card.channel);
-                return (
-                  <article className={`kanban-card ${channelClass}`} key={card.id}>
-                    <div className="kanban-card-header">
-                      <div className="contact-title-line">
-                        <span className={`channel-indicator-icon ${channelClass}`}>
-                          <ChannelIcon channel={card.channelType || card.channel} size={12} />
-                        </span>
-                        <strong className="contact-name">{card.title}</strong>
+          return (
+            <div
+              className={`kanban-column ${isDragOver ? 'is-dragover' : ''}`}
+              key={column.id}
+              onDragOver={(e) => handleDragOver(e, column)}
+              onDragLeave={(e) => handleDragLeave(e, column)}
+              onDrop={(e) => handleDrop(e, column)}
+            >
+              <div className="column-header">
+                <strong className="column-title">{column.title}</strong>
+                <span className="column-count-badge">{ready ? column.cards.length : '—'}</span>
+              </div>
+
+              <div
+                className="column-cards-container"
+                onDragOver={(e) => handleDragOver(e, column)}
+                onDrop={(e) => handleDrop(e, column)}
+              >
+                {!ready ? (
+                  [1, 2].map((i) => (
+                    <article className="kanban-card kanban-card-skeleton" key={i}>
+                      <div className="kanban-card-header">
+                        <SkeletonLine width="90px" height="14px" />
+                        <SkeletonLine width="35px" height="11px" />
                       </div>
-                      <small className="card-time">{card.lastAt}</small>
-                    </div>
-
-                    <p className="card-subtitle">{card.subtitle}</p>
-
-                    {card.aiReason && (
-                      <div className="ai-verification-badge">
-                        <Sparkles size={12} className="ai-sparkle-icon" />
-                        <span>{card.aiReason}</span>
+                      <SkeletonLine width="130px" height="12px" style={{ marginTop: '8px' }} />
+                      <div className="kanban-card-footer" style={{ marginTop: '12px' }}>
+                        <SkeletonLine width="60px" height="11px" />
                       </div>
-                    )}
+                    </article>
+                  ))
+                ) : (
+                  <>
+                    {column.cards.map((card) => {
+                      const channelClass = getChannelClass(card.channelType || card.channel);
+                      const isDragging = draggingCardId === card.id;
 
-                    {card.hasSchedulingLink && (card.schedulingLink || schedulingUrl) && (
-                      <div className="scheduling-link-box">
-                        <div className="link-info">
-                          <CalendarCheck size={14} className="calendar-icon" />
-                          <span className="link-text" title={card.schedulingLink || schedulingUrl}>
-                            {formatSchedulingLink(card.schedulingLink || schedulingUrl)}
-                          </span>
-                        </div>
-                        <div className="link-actions">
-                          <button
-                            type="button"
-                            className="link-copy-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copySchedulingLink(card.id, card.schedulingLink);
-                            }}
-                            title="Copiar link de agendamento"
-                          >
-                            {copiedCardId === card.id ? (
-                              <>
-                                <Check size={12} color="#10b981" /> Copiado!
-                              </>
-                            ) : (
-                              <>
-                                <Copy size={12} /> Copiar
-                              </>
-                            )}
-                          </button>
-                          <a
-                            href={card.schedulingLink || schedulingUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="link-external-btn"
-                            onClick={(e) => e.stopPropagation()}
-                            title="Abrir página de agendamento"
-                          >
-                            <ExternalLink size={12} />
-                          </a>
-                        </div>
-                      </div>
-                    )}
-
-                    {card.actionType === 'confirm_signal' && (
-                      <button
-                        type="button"
-                        className="confirm-signal-button"
-                        disabled={confirmingCardId === card.id}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleConfirmSignal(card);
-                        }}
-                        title="Confirmar pagamento do sinal"
-                      >
-                        <CheckCircle2 size={14} />
-                        {confirmingCardId === card.id ? 'Confirmando...' : 'Confirmar'}
-                      </button>
-                    )}
-
-                    <div className="kanban-card-footer">
-                      <div className="card-owner-info">
-                        <UserRound size={12} />
-                        <span>{card.owner}</span>
-                      </div>
-                      {onOpenChat && (
-                        <button
-                          type="button"
-                          className="open-chat-action-btn"
-                          onClick={() => onOpenChat(card.externalConversationId || card.id)}
-                          title="Abrir conversa no chat"
+                      return (
+                        <article
+                          className={`kanban-card ${channelClass} ${isDragging ? 'is-dragging' : ''}`}
+                          key={card.id}
+                          draggable={true}
+                          onDragStart={(e) => handleDragStart(e, card, column)}
+                          onDragEnd={handleDragEnd}
                         >
-                          <MessageCircle size={12} /> Abrir chat
-                        </button>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
-              {!column.cards.length && <div className="column-empty">Sem conversas nesta etapa</div>}
+                          <div className="kanban-card-header">
+                            <div className="contact-title-line">
+                              <span className={`channel-indicator-icon ${channelClass}`}>
+                                <ChannelIcon channel={card.channelType || card.channel} size={12} />
+                              </span>
+                              <strong className="contact-name">{card.title}</strong>
+                            </div>
+                            <small className="card-time">{card.lastAt}</small>
+                          </div>
+
+                          <p className="card-subtitle">{formatConversationPreview(card.subtitle)}</p>
+
+                          {isWaitingColumn && (
+                            <div className="waiting-sla-badge">
+                              <Clock3 size={11} />
+                              <span>Aguardando resposta humana</span>
+                            </div>
+                          )}
+
+                          {card.aiReason && (
+                            <div className="ai-verification-badge">
+                              <Sparkles size={12} className="ai-sparkle-icon" />
+                              <span>{card.aiReason}</span>
+                            </div>
+                          )}
+
+                          {card.hasSchedulingLink && (card.schedulingLink || schedulingUrl) && (
+                            <div className="scheduling-link-box">
+                              <div className="link-info">
+                                <CalendarCheck size={14} className="calendar-icon" />
+                                <span className="link-text" title={card.schedulingLink || schedulingUrl}>
+                                  {formatSchedulingLink(card.schedulingLink || schedulingUrl)}
+                                </span>
+                              </div>
+                              <div className="link-actions">
+                                <button
+                                  type="button"
+                                  className="link-copy-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copySchedulingLink(card.id, card.schedulingLink);
+                                  }}
+                                  title="Copiar link de agendamento"
+                                >
+                                  {copiedCardId === card.id ? (
+                                    <>
+                                      <Check size={12} color="#10b981" /> Copiado!
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy size={12} /> Copiar
+                                    </>
+                                  )}
+                                </button>
+                                <a
+                                  href={card.schedulingLink || schedulingUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="link-external-btn"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title="Abrir página de agendamento"
+                                >
+                                  <ExternalLink size={12} />
+                                </a>
+                              </div>
+                            </div>
+                          )}
+
+                          {card.actionType === 'confirm_signal' && (
+                            <button
+                              type="button"
+                              className="confirm-signal-button"
+                              disabled={Boolean(confirmingCardId)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleConfirmSignal(card);
+                              }}
+                              title="Confirmar pagamento do sinal"
+                            >
+                              <CheckCircle2 size={14} />
+                              {confirmingCardId === card.id ? 'Confirmando...' : 'Confirmar'}
+                            </button>
+                          )}
+
+                          <div className="kanban-card-footer">
+                            <div className="card-owner-info">
+                              <UserRound size={12} />
+                              <span>{card.owner}</span>
+                            </div>
+                          </div>
+
+                          {/* AÇÕES RÁPIDAS NO CARD (ITEM B) */}
+                          <div className="kanban-card-quick-actions">
+                            {onOpenChat && (
+                              <button
+                                type="button"
+                                className="card-quick-btn chat"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenChat(card.externalConversationId || card.id);
+                                }}
+                                title="Abrir e responder no chat"
+                              >
+                                <MessageCircle size={12} />
+                                <span>Responder</span>
+                              </button>
+                            )}
+
+                            {onOpenAppointment && kanbanColumns.some((col) => (col.automationKey || col.id) === 'agendamentos') && (
+                              <button
+                                type="button"
+                                className="card-quick-btn schedule"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenAppointment(card);
+                                }}
+                                title="Criar agendamento rápido"
+                              >
+                                <CalendarCheck size={12} />
+                                <span>Agendar</span>
+                              </button>
+                            )}
+
+                            {onFinishConversation && !isFinishedColumn && (
+                              <button
+                                type="button"
+                                className="card-quick-btn finish"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onFinishConversation(card);
+                                }}
+                                title="Concluir e mover para Finalizadas"
+                              >
+                                <CheckCircle2 size={12} />
+                                <span>Finalizar</span>
+                              </button>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                    {!column.cards.length && <div className="column-empty">Sem conversas nesta etapa</div>}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -1346,7 +2307,7 @@ function Funnel({ funnelStages, tenantName }) {
   );
 }
 
-function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantSlug, onChanged }) {
+function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantSlug, onChanged, ready = true }) {
   const [draftContacts, setDraftContacts] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [messageText, setMessageText] = useState('');
@@ -1354,6 +2315,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   const [stageFilter, setStageFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
+
   const allContacts = useMemo(() => mergeBroadcastContacts(contacts, draftContacts), [contacts, draftContacts]);
   const stages = useMemo(() => Array.from(new Set(conversations.map((item) => item.stage).filter(Boolean))), [conversations]);
   const selectedContacts = allContacts.filter((contact) => selected.has(contact.key));
@@ -1425,9 +2387,10 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
       const savedContacts = await upsertBroadcastContacts(tenantSlug, selectedContacts);
       const recipients = mergeBroadcastContacts(savedContacts, selectedContacts);
       campaign = await createBroadcastCampaign(tenantSlug, {
-        name: campaignName.trim() || `Disparo ${new Date().toLocaleString('pt-BR')}`,
-        channelType: 'telegram',
-        messageText: text,
+        name: campaignName.trim() || `Disparo ${new Date().toLocaleDateString('pt-BR')}`,
+        message_template: text,
+        total_recipients: recipients.length,
+        status: 'sending',
       }, recipients);
 
       for (const contact of recipients) {
@@ -1438,7 +2401,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
             external_conversation_id: contact.external_conversation_id || contact.externalConversationId,
             contact_name: contact.name || contact.contact_name || 'Contato',
             message_text: text,
-            sent_by_user: 'Disparo Mag.IA',
+            sent_by_user: 'Disparo NORIA',
           }, tenantSlug);
           sent += 1;
           await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
@@ -1516,36 +2479,64 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
 
       <section className="content-grid two">
         <section className="panel">
-          <PanelTitle icon={UsersRound} title="Contatos selecionaveis" action={`${selectedContacts.length}/${allContacts.length}`} />
+          <PanelTitle icon={UsersRound} title="Contatos selecionaveis" action={ready ? `${selectedContacts.length}/${allContacts.length}` : '—'} />
           <div className="contact-table">
-            {allContacts.map((contact) => {
-              const key = contact.key || contactKey(contact);
-              return (
-                <label className="contact-row" key={key}>
-                  <input type="checkbox" checked={selected.has(key)} onChange={() => toggleContact(key)} />
-                  <div>
-                    <strong>{contact.name || contact.contact_name || 'Contato'}</strong>
-                    <span>{contact.external_conversation_id || contact.externalConversationId} - {contact.channel_type || contact.channelType || 'telegram'}</span>
+            {!ready ? (
+              [1, 2, 3].map((i) => (
+                <div className="contact-row" key={i} style={{ pointerEvents: 'none' }}>
+                  <SkeletonBlock width="16px" height="16px" style={{ borderRadius: '3px' }} />
+                  <div style={{ flex: 1 }}>
+                    <SkeletonLine width="110px" style={{ display: 'block' }} />
+                    <SkeletonLine width="140px" style={{ marginTop: '4px', display: 'block' }} />
                   </div>
-                </label>
-              );
-            })}
-            {!allContacts.length && <EmptyState title="Nenhum contato preparado" text="Importe uma planilha ou adicione contatos recentes." compact />}
+                </div>
+              ))
+            ) : (
+              <>
+                {allContacts.map((contact) => {
+                  const key = contact.key || contactKey(contact);
+                  return (
+                    <label className="contact-row" key={key}>
+                      <input type="checkbox" checked={selected.has(key)} onChange={() => toggleContact(key)} />
+                      <div>
+                        <strong>{contact.name || contact.contact_name || 'Contato'}</strong>
+                        <span>{contact.external_conversation_id || contact.externalConversationId} - {contact.channel_type || contact.channelType || 'telegram'}</span>
+                      </div>
+                    </label>
+                  );
+                })}
+                {!allContacts.length && <EmptyState title="Nenhum contato preparado" text="Importe uma planilha ou adicione contatos recentes." compact />}
+              </>
+            )}
           </div>
         </section>
         <section className="panel">
           <PanelTitle icon={Clock3} title="Historico de campanhas" />
           <div className="campaign-list">
-            {campaigns.map((campaign) => (
-              <article className="campaign-card" key={campaign.id}>
-                <div>
-                  <strong>{campaign.name}</strong>
-                  <span>{campaign.total_recipients || 0} contatos - {campaign.sent_count || 0} enviados - {campaign.failed_count || 0} falhas</span>
-                </div>
-                <Badge value={campaign.status} status={campaign.status === 'sent' ? 'ia_ativa' : 'channel'} />
-              </article>
-            ))}
-            {!campaigns.length && <EmptyState title="Sem campanhas" text="Os disparos realizados ficarao registrados aqui." compact />}
+            {!ready ? (
+              [1, 2].map((i) => (
+                <article className="campaign-card" key={i} style={{ pointerEvents: 'none' }}>
+                  <div style={{ flex: 1 }}>
+                    <SkeletonLine width="120px" style={{ display: 'block' }} />
+                    <SkeletonLine width="160px" style={{ marginTop: '5px', display: 'block' }} />
+                  </div>
+                  <SkeletonBlock width="60px" height="18px" style={{ borderRadius: '4px' }} />
+                </article>
+              ))
+            ) : (
+              <>
+                {campaigns.map((campaign) => (
+                  <article className="campaign-card" key={campaign.id}>
+                    <div>
+                      <strong>{campaign.name}</strong>
+                      <span>{campaign.total_recipients || 0} contatos - {campaign.sent_count || 0} enviados - {campaign.failed_count || 0} falhas</span>
+                    </div>
+                    <Badge value={campaign.status} status={campaign.status === 'sent' ? 'ia_ativa' : 'channel'} />
+                  </article>
+                ))}
+                {!campaigns.length && <EmptyState title="Sem campanhas" text="Os disparos realizados ficarao registrados aqui." compact />}
+              </>
+            )}
           </div>
         </section>
       </section>
@@ -1553,7 +2544,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   );
 }
 
-function Appointments({ appointments = [], conversations = [], tenantSlug, onChanged }) {
+function Appointments({ appointments = [], conversations = [], tenantSlug, onChanged, initialData, ready = true }) {
   const [title, setTitle] = useState('');
   const [contactName, setContactName] = useState('');
   const [startsAt, setStartsAt] = useState('');
@@ -1562,6 +2553,15 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+
+  useEffect(() => {
+    if (!initialData) return;
+    if (initialData.contactName) setContactName(initialData.contactName);
+    if (initialData.title) setTitle(initialData.title);
+    if (initialData.notes) setNotes(initialData.notes);
+    if (initialData.selectedConversationId) setSelectedConversationId(initialData.selectedConversationId);
+  }, [initialData]);
+
   const grouped = useMemo(() => groupAppointmentsByDay(appointments), [appointments]);
 
   function pickConversation(value) {
@@ -1631,32 +2631,53 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
       </section>
 
       <section className="panel appointment-list-panel">
-        <PanelTitle icon={Clock3} title="Calendario simples" action={`${appointments.length} registros`} />
+        <PanelTitle icon={Clock3} title="Calendario simples" action={ready ? `${appointments.length} registros` : '— registros'} />
         <div className="appointment-groups">
-          {grouped.map((group) => (
-            <div className="appointment-day" key={group.day}>
-              <h3>{group.day}</h3>
-              {group.items.map((appointment) => (
-                <article className="appointment-card" key={appointment.id}>
-                  <div className="appointment-time"><strong>{appointment.timeLabel}</strong><span>{appointment.endTimeLabel || '--:--'}</span></div>
-                  <div>
-                    <strong>{appointment.title}</strong>
-                    <span>{appointment.contactName || 'Sem contato'} - {appointment.channelLabel}</span>
-                    {appointment.notes && <p>{appointment.notes}</p>}
+          {!ready ? (
+            <div className="appointment-day appointment-day-skeleton">
+              <SkeletonLine width="110px" height="14px" style={{ marginBottom: '12px', display: 'block' }} />
+              {[1, 2, 3].map((i) => (
+                <article className="appointment-card appointment-card-skeleton" key={i}>
+                  <div className="appointment-time">
+                    <SkeletonLine width="38px" height="14px" />
+                    <SkeletonLine width="38px" height="11px" style={{ marginTop: '4px' }} />
                   </div>
-                  <Badge value={appointment.statusLabel} status="channel" />
+                  <div style={{ flex: 1 }}>
+                    <SkeletonLine width="130px" height="14px" style={{ display: 'block' }} />
+                    <SkeletonLine width="90px" height="12px" style={{ marginTop: '5px', display: 'block' }} />
+                  </div>
+                  <SkeletonBlock width="70px" height="18px" style={{ borderRadius: '4px' }} />
                 </article>
               ))}
             </div>
-          ))}
-          {!appointments.length && <EmptyState title="Nenhum agendamento" text="Crie um agendamento manual para ele aparecer aqui e no Kanban." />}
+          ) : (
+            <>
+              {grouped.map((group) => (
+                <div className="appointment-day" key={group.day}>
+                  <h3>{group.day}</h3>
+                  {group.items.map((appointment) => (
+                    <article className="appointment-card" key={appointment.id} data-status={appointment.status}>
+                      <div className="appointment-time"><strong>{appointment.timeLabel}</strong><span>{appointment.endTimeLabel || '--:--'}</span></div>
+                      <div>
+                        <strong>{appointment.title}</strong>
+                        <span>{appointment.contactName || 'Sem contato'} - {appointment.channelLabel}</span>
+                        {appointment.notes && <p>{appointment.notes}</p>}
+                      </div>
+                      <Badge value={appointment.statusLabel} status="channel" />
+                    </article>
+                  ))}
+                </div>
+              ))}
+              {!appointments.length && <EmptyState title="Nenhum agendamento" text="Crie um agendamento manual para ele aparecer aqui e no Kanban." />}
+            </>
+          )}
         </div>
       </section>
     </section>
   );
 }
 
-function SettingsPage({ agents = [], onAddAgent, onToggleAgentStatus, onDeleteAgent, tenantName }) {
+function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAgentStatus, onDeleteAgent, tenantName, integration }) {
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [phone, setPhone] = useState('');
@@ -1684,14 +2705,14 @@ function SettingsPage({ agents = [], onAddAgent, onToggleAgentStatus, onDeleteAg
   }
 
   return (
-    <section className="content-grid two">
-      <section className="panel">
+    <section className="content-grid two settings-page">
+      <section className="panel settings-form-panel">
         <PanelTitle icon={UserCheck} title="Cadastrar Funcionário / Agente" />
         <p style={{ margin: '4px 0 16px', color: 'var(--muted)', fontSize: '13px' }}>
           Cadastre os funcionários humanos do estabelecimento para receberem atendimentos transferidos.
         </p>
 
-        <form className="form-grid" onSubmit={handleSubmit}>
+        <form className="form-grid settings-agent-form" onSubmit={handleSubmit}>
           <label>
             Nome Completo do Funcionário *
             <input
@@ -1757,58 +2778,107 @@ function SettingsPage({ agents = [], onAddAgent, onToggleAgentStatus, onDeleteAg
         </form>
       </section>
 
-      <section className="panel">
+      <section className="panel settings-team-panel">
         <PanelTitle icon={UsersRound} title="Equipe de Atendimento Cadastrada" />
         <p style={{ margin: '4px 0 16px', color: 'var(--muted)', fontSize: '13px' }}>
           Funcionários ativos disponíveis para transferência no botão <strong>Atribuir</strong> do chat.
         </p>
 
         <div className="agents-list">
-          {agents.map((agent) => (
-            <article className="agent-card" key={agent.id}>
-              <div className="agent-avatar small">
-                <UserRound size={20} />
-              </div>
-              <div className="agent-info">
-                <div className="agent-name-row">
-                  <strong>{agent.name}</strong>
-                  {agent.role && <span className="agent-badge-role">{agent.role}</span>}
-                  <span className={`status-dot-badge ${agent.status}`}>
-                    <span className="pulse-dot" />
-                    {agent.status === 'online' ? 'Online' : 'Standby'}
-                  </span>
+          {!agentsReady ? (
+            [1, 2, 3].map((i) => (
+              <article className="agent-card agent-card-skeleton" key={i}>
+                <div className="agent-avatar-col">
+                  <div className="agent-avatar small skeleton-block" style={{ width: '36px', height: '36px', borderRadius: '8px' }} />
                 </div>
-                <span className="agent-role">
-                  {agent.unit || 'Geral'} · {agent.shift || '08:00 às 18:00'} {agent.phone ? `· ${agent.phone}` : ''}
-                </span>
-              </div>
-              <div className="agent-actions">
-                <span className="agent-load-badge">{agent.load || 0} conversas</span>
-                <button
-                  className="secondary-button compact-btn"
-                  type="button"
-                  title="Alternar status de disponibilidade"
-                  onClick={() => onToggleAgentStatus?.(agent.id)}
-                >
-                  {agent.status === 'online' ? 'Pausar' : 'Ativar'}
-                </button>
-                <button
-                  className="icon-button compact-btn text-danger"
-                  type="button"
-                  title="Remover funcionário"
-                  onClick={() => onDeleteAgent?.(agent.id)}
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </article>
-          ))}
-          {!agents.length && (
-            <EmptyState
-              title="Nenhum funcionário cadastrado"
-              text="Cadastre os atendentes e operadores da equipe no formulário ao lado para poder atribuir conversas a eles."
-              compact
-            />
+                <div className="agent-info">
+                  <div className="agent-top-row">
+                    <SkeletonLine width="110px" height="16px" />
+                    <SkeletonBlock width="54px" height="18px" style={{ borderRadius: '999px' }} />
+                  </div>
+                  <SkeletonLine width="80px" height="18px" style={{ borderRadius: '4px', marginTop: '4px' }} />
+                  <SkeletonLine width="150px" height="14px" style={{ marginTop: '4px' }} />
+                </div>
+                <div className="agent-actions">
+                  <SkeletonBlock width="70px" height="32px" style={{ borderRadius: '6px' }} />
+                  <SkeletonBlock width="32px" height="32px" style={{ borderRadius: '6px' }} />
+                </div>
+              </article>
+            ))
+          ) : (
+            <>
+              {agents.map((agent) => {
+                const isOnline = String(agent.status || '').toLowerCase() === 'online' || String(agent.status || '').toLowerCase() === 'ativo';
+                const statusLabel = isOnline ? 'Ativo' : 'Pausado';
+                const hasRealLoad = typeof agent.load === 'number' && !Number.isNaN(agent.load);
+                const metaText = [agent.unit || agent.branch, agent.shift].filter(Boolean).join(' · ');
+
+                return (
+                  <article className="agent-card" key={agent.id}>
+                    <div className="agent-avatar-col">
+                      <div className="agent-avatar small">
+                        <UserRound size={18} />
+                      </div>
+                    </div>
+                    <div className="agent-info">
+                      <div className="agent-top-row">
+                        <div className="agent-identity">
+                          <strong className="agent-name">{agent.name}</strong>
+                          {agent.role && <span className="agent-badge-role">{agent.role}</span>}
+                        </div>
+                        <span className={`status-dot-badge ${isOnline ? 'online' : 'standby'}`}>
+                          <span className="pulse-dot" />
+                          {statusLabel}
+                        </span>
+                      </div>
+                      {metaText && (
+                        <div className="agent-meta-row">
+                          <span className="agent-meta-text">{metaText}</span>
+                        </div>
+                      )}
+                      {agent.phone && (
+                        <div className="agent-phone-row">
+                          <span className="agent-phone-text">{agent.phone}</span>
+                        </div>
+                      )}
+                      {hasRealLoad && (
+                        <div className="agent-workload-row">
+                          <span className="agent-load-badge">
+                            {agent.load} {agent.load === 1 ? 'conversa ativa' : 'conversas ativas'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="agent-actions">
+                      <button
+                        className="secondary-button compact-btn agent-toggle-btn"
+                        type="button"
+                        title="Alternar status de disponibilidade"
+                        onClick={() => onToggleAgentStatus?.(agent.id)}
+                      >
+                        {isOnline ? 'Pausar' : 'Retomar'}
+                      </button>
+                      <button
+                        className="icon-button compact-btn text-danger agent-delete-btn"
+                        type="button"
+                        title="Remover funcionário"
+                        onClick={() => onDeleteAgent?.(agent.id)}
+                      >
+                        <Trash2 size={15} />
+                        <span className="btn-text-mobile">Excluir</span>
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+              {!agents.length && (
+                <EmptyState
+                  title="Nenhum funcionário cadastrado"
+                  text="Cadastre os atendentes e operadores da equipe no formulário ao lado para poder atribuir conversas a eles."
+                  compact
+                />
+              )}
+            </>
           )}
         </div>
       </section>
@@ -1974,16 +3044,18 @@ function EmptyState({ title, text, compact = false }) {
 
 function AuthShell({ title }) {
   return (
-    <main className="auth-page">
-      <section className="auth-panel">
-        <div className="brand auth-brand">
-          <div className="brand-mark"><Sparkles size={18} /></div>
-          <div>
-            <strong>Mag.ia</strong>
-            <span>Automação que parece magia</span>
-          </div>
+    <main className="auth-page auth-loading-page">
+      <div className="auth-visual-ambient-aurora cyan auth-loading-aurora" />
+      <div className="auth-visual-ambient-aurora violet auth-loading-aurora" />
+      <section className="auth-loading-card">
+        <div className="brand auth-loading-brand">
+          <img src={noriaLogo} alt="NORIA" className="auth-loading-logo-img" />
+          <span className="auth-loading-tagline">INTELIGÊNCIA EM MOVIMENTO</span>
         </div>
-        <h1>{title}</h1>
+        <div className="auth-loading-indicator">
+          <RefreshCcw size={20} className="spin" />
+        </div>
+        <h1 className="auth-loading-title">{title}</h1>
       </section>
     </main>
   );
@@ -1992,6 +3064,7 @@ function AuthShell({ title }) {
 function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -2010,29 +3083,257 @@ function LoginPage() {
 
   return (
     <main className="auth-page">
-      <form className="auth-panel" onSubmit={handleSubmit}>
-        <div className="brand auth-brand">
-          <div className="brand-mark"><Sparkles size={18} /></div>
-          <div>
-            <strong>Mag.ia</strong>
-            <span>Automação que parece magia</span>
+      {/* Lado Esquerdo: Área Visual e Marca NORIA (Hero Central Inspirado na Ref 1) */}
+      <section className="auth-visual-side" aria-hidden="true">
+        {/* Iluminação Ambiental & Efeitos Difusos */}
+        <div className="auth-visual-ambient-aurora cyan" />
+        <div className="auth-visual-ambient-aurora violet" />
+        <div className="auth-visual-ambient-glow" />
+        <div className="auth-visual-grid-overlay" />
+
+        {/* Composição Hero Integrada: Logo Grande + Tagline + Rede de Fluxo */}
+        <div className="auth-hero-composition">
+          <div className="auth-hero-branding">
+            <img src={noriaLogo} alt="NORIA" className="auth-hero-logo-img" />
+            <span className="auth-hero-tagline">INTELIGÊNCIA EM MOVIMENTO</span>
+          </div>
+
+          <div className="auth-visual-art">
+            <svg
+              className="auth-network-svg"
+              viewBox="0 0 600 420"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <defs>
+                <linearGradient id="flowGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#00E0FF" stopOpacity="0.95" />
+                  <stop offset="45%" stopColor="#00E0FF" stopOpacity="0.5" />
+                  <stop offset="100%" stopColor="#7861FF" stopOpacity="0.95" />
+                </linearGradient>
+                <linearGradient id="flowGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#7861FF" stopOpacity="0.85" />
+                  <stop offset="55%" stopColor="#00E0FF" stopOpacity="0.4" />
+                  <stop offset="100%" stopColor="#00E0FF" stopOpacity="0.15" />
+                </linearGradient>
+                <linearGradient id="flowGrad3" x1="0%" y1="100%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#00E0FF" stopOpacity="0.8" />
+                  <stop offset="60%" stopColor="#7861FF" stopOpacity="0.4" />
+                  <stop offset="100%" stopColor="#7861FF" stopOpacity="0.1" />
+                </linearGradient>
+                <radialGradient id="nodeGlowCyan" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#00E0FF" stopOpacity="1" />
+                  <stop offset="35%" stopColor="#00E0FF" stopOpacity="0.4" />
+                  <stop offset="100%" stopColor="#00E0FF" stopOpacity="0" />
+                </radialGradient>
+                <radialGradient id="nodeGlowViolet" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#7861FF" stopOpacity="1" />
+                  <stop offset="35%" stopColor="#7861FF" stopOpacity="0.4" />
+                  <stop offset="100%" stopColor="#7861FF" stopOpacity="0" />
+                </radialGradient>
+                <radialGradient id="coreAuraGlow" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#00E0FF" stopOpacity="0.25" />
+                  <stop offset="60%" stopColor="#7861FF" stopOpacity="0.08" />
+                  <stop offset="100%" stopColor="#00E0FF" stopOpacity="0" />
+                </radialGradient>
+              </defs>
+
+              {/* Anéis orbitais sutis de fundo */}
+              <ellipse cx="300" cy="210" rx="270" ry="180" stroke="rgba(0, 224, 255, 0.04)" strokeWidth="1" strokeDasharray="8 8" className="auth-orbital-ring-1 auth-secondary-orbital" />
+              <circle cx="300" cy="210" r="140" stroke="rgba(120, 97, 255, 0.05)" strokeWidth="1" strokeDasharray="4 6" className="auth-orbital-ring-2 auth-secondary-orbital" />
+              <circle cx="300" cy="210" r="48" stroke="rgba(0, 224, 255, 0.14)" strokeWidth="1" strokeDasharray="3 3" className="auth-core-ring" />
+
+              {/* Malha de conexões secundárias (linhas estáticas finas) */}
+              <line x1="80" y1="130" x2="190" y2="75" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="190" y1="75" x2="360" y2="85" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="360" y1="85" x2="510" y2="140" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="80" y1="130" x2="140" y2="280" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="140" y1="280" x2="290" y2="350" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="290" y1="350" x2="470" y2="310" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="470" y1="310" x2="510" y2="140" stroke="rgba(242, 244, 247, 0.07)" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="190" y1="75" x2="300" y2="210" stroke="rgba(242, 244, 247, 0.06)" strokeDasharray="3 3" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="140" y1="280" x2="300" y2="210" stroke="rgba(242, 244, 247, 0.06)" strokeDasharray="3 3" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="360" y1="85" x2="300" y2="210" stroke="rgba(242, 244, 247, 0.06)" strokeDasharray="3 3" strokeWidth="1" className="auth-secondary-line" />
+              <line x1="470" y1="310" x2="300" y2="210" stroke="rgba(242, 244, 247, 0.06)" strokeDasharray="3 3" strokeWidth="1" className="auth-secondary-line" />
+
+              {/* Rotas de fluxo ativo (curvas bezier com traços e gradiente) */}
+              <path
+                id="flowRouteMain"
+                className="auth-flow-line"
+                d="M 80 130 Q 180 200 300 210 T 510 140"
+                stroke="url(#flowGradient)"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                fill="none"
+              />
+              <path
+                id="flowRouteSecondary"
+                className="auth-flow-line-secondary auth-secondary-route"
+                d="M 190 75 Q 300 210 290 350 T 470 310"
+                stroke="url(#flowGrad2)"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                fill="none"
+              />
+              <path
+                id="flowRouteTertiary"
+                className="auth-flow-line-tertiary auth-secondary-route"
+                d="M 140 280 Q 220 180 300 210 T 360 85"
+                stroke="url(#flowGrad3)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                fill="none"
+              />
+
+              {/* Pulsos luminosos viajando pelas rotas */}
+              <circle className="auth-pulse-particle" r="4.5" fill="#00E0FF">
+                <animateMotion
+                  path="M 80 130 Q 180 200 300 210 T 510 140"
+                  dur="7.5s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle className="auth-pulse-particle-violet auth-secondary-particle" r="4" fill="#7861FF">
+                <animateMotion
+                  path="M 190 75 Q 300 210 290 350 T 470 310"
+                  dur="9.5s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <circle className="auth-pulse-particle-cyan-small auth-secondary-particle" r="3.2" fill="#00E0FF">
+                <animateMotion
+                  path="M 140 280 Q 220 180 300 210 T 360 85"
+                  dur="11s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+
+              {/* Nós da Rede Deliberados (hierarquia luminosa controlada) */}
+              {/* 1. Origem Esquerda (Cyan - Primário) */}
+              <circle cx="80" cy="130" r="18" fill="url(#nodeGlowCyan)" className="auth-node-pulse-1" />
+              <circle cx="80" cy="130" r="5.5" fill="#00E0FF" />
+              <circle cx="80" cy="130" r="2.5" fill="#FFFFFF" />
+
+              {/* 2. Topo Esquerda (Secundário) */}
+              <circle cx="190" cy="75" r="14" fill="url(#nodeGlowCyan)" className="auth-secondary-node" />
+              <circle cx="190" cy="75" r="4.5" fill="#00E0FF" className="auth-secondary-node" />
+
+              {/* 3. NÚCLEO CENTRAL NORIA (Primário com aura e anéis) */}
+              <circle cx="300" cy="210" r="38" fill="url(#coreAuraGlow)" />
+              <circle cx="300" cy="210" r="24" fill="url(#nodeGlowCyan)" className="auth-core-glow" />
+              <circle cx="300" cy="210" r="8" fill="#0B1220" stroke="#00E0FF" strokeWidth="2.5" />
+              <circle cx="300" cy="210" r="3.5" fill="#00E0FF" />
+
+              {/* 4. Topo Direita (Secundário) */}
+              <circle cx="360" cy="85" r="14" fill="url(#nodeGlowViolet)" className="auth-secondary-node" />
+              <circle cx="360" cy="85" r="4.5" fill="#7861FF" className="auth-secondary-node" />
+
+              {/* 5. Destino Direita (Primário com centro branco) */}
+              <circle cx="510" cy="140" r="20" fill="url(#nodeGlowViolet)" className="auth-node-pulse-2" />
+              <circle cx="510" cy="140" r="6" fill="#7861FF" />
+              <circle cx="510" cy="140" r="2.5" fill="#FFFFFF" />
+
+              {/* 6. Fundo Esquerda (Secundário) */}
+              <circle cx="140" cy="280" r="13" fill="url(#nodeGlowCyan)" className="auth-secondary-node" />
+              <circle cx="140" cy="280" r="4" fill="#00E0FF" className="auth-secondary-node" />
+
+              {/* 7. Fundo Centro (Primário) */}
+              <circle cx="290" cy="350" r="16" fill="url(#nodeGlowViolet)" />
+              <circle cx="290" cy="350" r="5" fill="#7861FF" />
+              <circle cx="290" cy="350" r="2" fill="#FFFFFF" />
+
+              {/* 8. Fundo Direita (Secundário) */}
+              <circle cx="470" cy="310" r="15" fill="url(#nodeGlowViolet)" className="auth-secondary-node" />
+              <circle cx="470" cy="310" r="5" fill="#7861FF" className="auth-secondary-node" />
+            </svg>
           </div>
         </div>
-        <h1>Acessar painel</h1>
-        <label>
-          E-mail
-          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-        </label>
-        <label>
-          Senha
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required />
-        </label>
-        {error && <div className="inline-error">{error}</div>}
-        <button className="primary-button wide" type="submit" disabled={loading}>
-          <ShieldCheck size={16} />
-          {loading ? 'Entrando...' : 'Entrar'}
-        </button>
-      </form>
+      </section>
+
+      {/* Divisor Vertical Dinâmico com Highlight Móvel */}
+      <div className="auth-dynamic-divider" aria-hidden="true">
+        <div className="auth-divider-pulse" />
+      </div>
+
+      {/* Lado Direito: Formulário de Autenticação com Profundidade & Camadas Glass */}
+      <section className="auth-form-side">
+        {/* Iluminação Ambiental & Spotlight Atrás do Card */}
+        <div className="auth-form-spotlight-cyan" />
+        <div className="auth-form-spotlight-violet" />
+        <div className="auth-form-ambient-glow" />
+        <div className="auth-form-decor-orbit" aria-hidden="true" />
+
+        <div className="auth-form-container">
+          {/* Top Accent Line Sutil com Pulso Móvel Mobile */}
+          <div className="auth-card-top-accent" aria-hidden="true">
+            <div className="auth-card-top-pulse" />
+          </div>
+
+          <h1 className="auth-title">Bem-vindo de volta</h1>
+
+          <form className="auth-form" onSubmit={handleSubmit} noValidate={false}>
+            <label className="auth-label">
+              <span>E-mail</span>
+              <div className="auth-input-wrapper">
+                <Mail size={17} className="auth-input-icon" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="nome@empresa.com"
+                  autoComplete="email"
+                  required
+                />
+              </div>
+            </label>
+
+            <label className="auth-label">
+              <span>Senha</span>
+              <div className="auth-input-wrapper auth-password-input-wrapper">
+                <Lock size={17} className="auth-input-icon" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  required
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  title={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+                  aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+                >
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+            </label>
+
+            {error && (
+              <div className="inline-error auth-error-box" role="alert">
+                {error}
+              </div>
+            )}
+
+            <button className="primary-button auth-submit-btn" type="submit" disabled={loading}>
+              <span className="auth-submit-shine" aria-hidden="true" />
+              {loading ? (
+                <>
+                  <RefreshCcw size={16} className="spin" />
+                  <span>Entrando...</span>
+                </>
+              ) : (
+                <>
+                  <span>Entrar</span>
+                  <ArrowRight size={17} className="auth-submit-arrow" />
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+      </section>
     </main>
   );
 }
