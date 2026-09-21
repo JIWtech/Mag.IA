@@ -192,7 +192,10 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     };
   }
 
-  const eventsWithMediaUrls = await enrichMediaUrls(data, supabase);
+  const eventsWithMediaUrls = await enrichMediaUrls(
+    data.map((event) => ({ ...event, raw_payload: asObject(event.raw_payload) })),
+    supabase,
+  );
 
   return {
     ...fallback,
