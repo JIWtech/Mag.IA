@@ -287,7 +287,7 @@ on conflict (tenant_id, user_id) do update
 Valores validos:
 
 ```text
-tenant_members.role: owner, admin, manager, agent, viewer
+tenant_members.role: owner, admin, manager, agent, operator, viewer
 tenant_members.status: invited, active, suspended, removed
 ```
 

@@ -4,143 +4,929 @@
   "active": false,
   "nodes": [
     {
-      "parameters": { "httpMethod": "POST", "path": "magia-whatsapp", "responseMode": "responseNode", "options": {} },
-      "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [-1120, 80],
-      "id": "magia-whatsapp-webhook", "name": "Webhook WhatsApp Evolution", "webhookId": "magia-whatsapp-evolution-webhook"
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "magia-whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        80
+      ],
+      "id": "magia-whatsapp-webhook",
+      "name": "Webhook WhatsApp Evolution",
+      "webhookId": "magia-whatsapp-evolution-webhook"
     },
     {
-      "parameters": { "jsCode": "function env(name, fallback = '') { let value = ''; try { value = $env[name] || ''; } catch (e) {} return value || fallback; }\nfunction text(value) { return String(value || '').trim(); }\nconst input = typeof $json.body === 'string' ? JSON.parse($json.body || '{}') : ($json.body || $json);\nconst event = text(input.event || input.type).toLowerCase();\nconst data = input.data || input;\nconst key = data.key || data.message?.key || {};\nconst remoteJid = text(key.remoteJid || key.remoteJidAlt || data.remoteJid);\nconst message = data.message || {};\nconst messageType = text(data.messageType || Object.keys(message)[0] || 'conversation');\nlet messageText = text(message.conversation || message.extendedTextMessage?.text || message.imageMessage?.caption || message.videoMessage?.caption || message.documentMessage?.caption);\nlet contentType = 'text';\nlet base64 = text(data.base64 || message.base64 || message.audioMessage?.base64);\nif (!messageText && messageType.toLowerCase().includes('audio')) { contentType = 'audio'; messageText = '[audio]'; }\nelse if (!messageText) { contentType = messageType.replace(/Message$/i, '').toLowerCase() || 'unknown'; messageText = '[' + contentType + ']'; }\nconst phone = remoteJid.split('@')[0].split(':')[0].replace(/\\D/g, '');\nconst eventSupported = !event || ['messages.upsert', 'messages.update'].includes(event);\nconst ignoredReason = !eventSupported ? 'event_not_supported' : key.fromMe || data.fromMe ? 'outbound_event' : !remoteJid ? 'missing_remote_jid' : remoteJid.includes('@g.us') || remoteJid === 'status@broadcast' ? 'group_or_status' : !phone ? 'missing_phone' : '';\nreturn { json: { shouldProcess: !ignoredReason, ignoredReason, event, tenant_slug: env('WHATSAPP_TENANT_SLUG', 'jiw').toLowerCase(), instance: text(input.instance || input.instanceName || env('EVOLUTION_INSTANCE_JIW')), remoteJid, phone, messageId: text(key.id || data.id || remoteJid + ':' + Date.now()), contactName: text(data.pushName || data.senderName || phone), messageText, contentType, base64, raw_payload: input, channel_type: 'whatsapp' } };" },
-      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-880, 80],
-      "id": "magia-whatsapp-normalize", "name": "Normalizar Entrada WhatsApp"
+      "parameters": {
+        "jsCode": "function env(name, fallback = '') {\n  let value = '';\n  try { value = $env[name] || ''; } catch (e) {}\n  return value || fallback;\n}\nfunction text(value) { return String(value || '').trim(); }\nfunction normalizeSlug(value) {\n  return text(value).toLowerCase().replace(/[^a-z0-9_-]/g, '');\n}\nfunction normalizeEvent(value) {\n  return text(value).toLowerCase().replace(/_/g, '.');\n}\nasync function httpJson(method, url, headers = {}, payload = null) {\n  return await this.helpers.httpRequest({\n    method,\n    url,\n    headers,\n    ...(payload === null ? {} : { body: payload }),\n    json: true,\n    timeout: 7000,\n  });\n}\nfunction serviceHeaders(serviceKey) {\n  return {\n    apikey: serviceKey,\n    Authorization: 'Bearer ' + serviceKey,\n    'Content-Type': 'application/json',\n  };\n}\nfunction sameInstance(channel, instance) {\n  const expected = normalizeSlug(instance);\n  if (!expected) return false;\n  const config = channel?.config && typeof channel.config === 'object' ? channel.config : {};\n  const candidates = [\n    channel?.external_id,\n    config.instance_name,\n    config.instance,\n    config.evolution_instance,\n    config.instance_id,\n    config.instanceId,\n  ].map(normalizeSlug).filter(Boolean);\n  return candidates.includes(expected);\n}\nasync function resolveWhatsappTenant(instance) {\n  const fallbackSlug = normalizeSlug(env('WHATSAPP_TENANT_SLUG', env('DEFAULT_TENANT_SLUG', 'jiw'))) || 'jiw';\n  const supabaseUrl = env('SUPABASE_URL').replace(/\\/$/, '');\n  const serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');\n  const normalizedInstance = normalizeSlug(instance);\n  if (!supabaseUrl || !serviceKey || !normalizedInstance) {\n    return { tenant_slug: fallbackSlug, source: 'env_fallback', reason: 'missing_supabase_or_instance' };\n  }\n\n  try {\n    const direct = await httpJson.call(\n      this,\n      'GET',\n      supabaseUrl\n        + '/rest/v1/channels?select=external_id,config,tenants(slug,status)&type=eq.whatsapp&status=eq.active&external_id=eq.'\n        + encodeURIComponent(instance)\n        + '&limit=1',\n      serviceHeaders(serviceKey),\n    );\n    const directRow = Array.isArray(direct) ? direct[0] : null;\n    const directSlug = directRow?.tenants?.slug;\n    if (directSlug) return { tenant_slug: normalizeSlug(directSlug), source: 'channels.external_id', channel: directRow };\n  } catch (error) {}\n\n  try {\n    const rows = await httpJson.call(\n      this,\n      'GET',\n      supabaseUrl + '/rest/v1/channels?select=external_id,config,tenants(slug,status)&type=eq.whatsapp&status=eq.active&limit=200',\n      serviceHeaders(serviceKey),\n    );\n    const match = (Array.isArray(rows) ? rows : []).find((row) => sameInstance(row, instance));\n    const slug = match?.tenants?.slug;\n    if (slug) return { tenant_slug: normalizeSlug(slug), source: 'channels.config', channel: match };\n  } catch (error) {}\n\n  return { tenant_slug: fallbackSlug, source: 'env_fallback', reason: 'channel_not_found_for_instance' };\n}\n\nconst input = typeof $json.body === 'string' ? JSON.parse($json.body || '{}') : ($json.body || $json);\nconst eventRaw = text(input.event || input.type);\nconst event = normalizeEvent(eventRaw);\nconst data = input.data || input;\nconst key = data.key || data.message?.key || {};\nconst remoteJid = text(key.remoteJid || key.remoteJidAlt || data.remoteJid);\nconst message = data.message || {};\nconst messageType = text(data.messageType || Object.keys(message)[0] || 'conversation');\nlet messageText = text(message.conversation || message.extendedTextMessage?.text || message.imageMessage?.caption || message.videoMessage?.caption || message.documentMessage?.caption);\nlet contentType = 'text';\nlet base64 = text(data.base64 || message.base64 || message.audioMessage?.base64);\nif (!messageText && messageType.toLowerCase().includes('audio')) { contentType = 'audio'; messageText = '[audio]'; }\nelse if (!messageText) { contentType = messageType.replace(/Message$/i, '').toLowerCase() || 'unknown'; messageText = '[' + contentType + ']'; }\nconst phone = remoteJid.split('@')[0].split(':')[0].replace(/\\D/g, '');\nconst instance = text(input.instance || input.instanceName || input.instanceId || data.instance || data.instanceName || data.instanceId || env('EVOLUTION_INSTANCE_JIW'));\nconst tenantResolution = await resolveWhatsappTenant.call(this, instance);\nconst eventSupported = !event || ['messages.upsert', 'messages.update'].includes(event);\nconst ignoredReason = !eventSupported ? 'event_not_supported' : key.fromMe || data.fromMe ? 'outbound_event' : !remoteJid ? 'missing_remote_jid' : remoteJid.includes('@g.us') || remoteJid === 'status@broadcast' ? 'group_or_status' : !phone ? 'missing_phone' : '';\nreturn {\n  json: {\n    shouldProcess: !ignoredReason,\n    ignoredReason,\n    event,\n    eventRaw,\n    tenant_slug: tenantResolution.tenant_slug,\n    tenant_resolution: tenantResolution,\n    instance,\n    remoteJid,\n    phone,\n    messageId: text(key.id || data.id || remoteJid + ':' + Date.now()),\n    contactName: text(data.pushName || data.senderName || phone),\n    messageText,\n    contentType,\n    base64,\n    raw_payload: input,\n    channel_type: 'whatsapp',\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        80
+      ],
+      "id": "magia-whatsapp-normalize",
+      "name": "Normalizar Entrada WhatsApp"
     },
     {
-      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 }, "conditions": [{ "leftValue": "={{ $json.shouldProcess }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }], "combinator": "and" }, "options": {} },
-      "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [-660, 80], "id": "magia-whatsapp-valid", "name": "Mensagem valida?"
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.shouldProcess }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -660,
+        80
+      ],
+      "id": "magia-whatsapp-valid",
+      "name": "Mensagem valida?"
     },
     {
-      "parameters": { "respondWith": "json", "responseBody": "={{ { ok: true, ignored: true, reason: $json.ignoredReason || 'ignored' } }}", "options": {} },
-      "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [-420, 260], "id": "magia-whatsapp-ignored", "name": "Responder Evento Ignorado"
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, ignored: true, reason: $json.ignoredReason || 'ignored' } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        260
+      ],
+      "id": "magia-whatsapp-ignored",
+      "name": "Responder Evento Ignorado"
     },
     {
-      "parameters": { "operation": "get", "key": "={{ 'magia:whatsapp:dedup:' + $json.tenant_slug + ':' + $json.messageId }}", "options": {} },
-      "type": "n8n-nodes-base.redis", "typeVersion": 1, "position": [-420, 40], "id": "magia-whatsapp-dedup-query", "name": "Consultar Deduplicacao no Redis"
+      "parameters": {
+        "operation": "get",
+        "key": "={{ 'magia:whatsapp:dedup:' + $json.tenant_slug + ':' + $json.messageId }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "id": "magia-whatsapp-dedup-query",
+      "name": "Consultar Deduplicacao no Redis"
     },
     {
-      "parameters": { "jsCode": "const original = $('Normalizar Entrada WhatsApp').item.json;\nconst duplicate = Boolean($json.propertyName || $json.value || $json.data);\nreturn { json: { ...original, isDuplicate: duplicate } };" },
-      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-180, 40], "id": "magia-whatsapp-dedup-check", "name": "Verificar Duplicidade"
+      "parameters": {
+        "jsCode": "const original = $('Normalizar Entrada WhatsApp').item.json;\nconst duplicate = Boolean($json.propertyName || $json.value || $json.data);\nreturn { json: { ...original, isDuplicate: duplicate } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        40
+      ],
+      "id": "magia-whatsapp-dedup-check",
+      "name": "Verificar Duplicidade"
     },
     {
-      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 }, "conditions": [{ "leftValue": "={{ $json.isDuplicate }}", "rightValue": false, "operator": { "type": "boolean", "operation": "equals" } }], "combinator": "and" }, "options": {} },
-      "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [60, 40], "id": "magia-whatsapp-new", "name": "Mensagem nova?"
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        60,
+        40
+      ],
+      "id": "magia-whatsapp-new",
+      "name": "Mensagem nova?"
     },
     {
-      "parameters": { "respondWith": "json", "responseBody": "={{ { ok: true, duplicate: true, external_message_id: $json.messageId } }}", "options": {} },
-      "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [300, -100], "id": "magia-whatsapp-duplicate", "name": "Responder Duplicidade"
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, duplicate: true, external_message_id: $json.messageId } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        300,
+        -100
+      ],
+      "id": "magia-whatsapp-duplicate",
+      "name": "Responder Duplicidade"
     },
     {
-      "parameters": { "operation": "set", "key": "={{ 'magia:whatsapp:dedup:' + $json.tenant_slug + ':' + $json.messageId }}", "value": "processing", "expire": true, "ttl": 86400 },
-      "type": "n8n-nodes-base.redis", "typeVersion": 1, "position": [300, 180], "id": "magia-whatsapp-dedup-mark", "name": "Marcar Mensagem no Redis"
+      "parameters": {
+        "operation": "set",
+        "key": "={{ 'magia:whatsapp:dedup:' + $json.tenant_slug + ':' + $json.messageId }}",
+        "value": "processing",
+        "expire": true,
+        "ttl": 86400
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        300,
+        180
+      ],
+      "id": "magia-whatsapp-dedup-mark",
+      "name": "Marcar Mensagem no Redis"
     },
     {
-      "parameters": { "jsCode": "return { json: { ...$('Verificar Duplicidade').item.json, redis_marked: true } };" },
-      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [540, 180], "id": "magia-whatsapp-dedup-restore", "name": "Restaurar Contexto apos Redis"
+      "parameters": {
+        "jsCode": "return { json: { ...$('Verificar Duplicidade').item.json, redis_marked: true } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        180
+      ],
+      "id": "magia-whatsapp-dedup-restore",
+      "name": "Restaurar Contexto apos Redis"
     },
     {
-      "parameters": { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 }, "conditions": [{ "leftValue": "={{ $json.contentType }}", "rightValue": "audio", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "options": {} },
-      "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [300, 100], "id": "magia-whatsapp-audio-check", "name": "E audio?"
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.contentType }}",
+              "rightValue": "audio",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        300,
+        100
+      ],
+      "id": "magia-whatsapp-audio-check",
+      "name": "E audio?"
     },
     {
-      "parameters": { "operation": "toBinary", "sourceProperty": "base64", "options": { "fileName": "audio.ogg", "mimeType": "audio/ogg" } },
-      "type": "n8n-nodes-base.convertToFile", "typeVersion": 1, "position": [540, 0], "id": "magia-whatsapp-audio-file", "name": "Converter Audio para Arquivo"
+      "parameters": {
+        "jsCode": "function env(name, fallback = '') {\n  try { return $env[name] || fallback; } catch (error) { return fallback; }\n}\nfunction normalize(value) { return String(value || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, ''); }\nfunction hasAny(value, values) { return values.some((item) => value.includes(item)); }\nfunction todayKey() { return new Date().toISOString().slice(0, 10); }\nfunction settingsObject(row) { return row?.settings && typeof row.settings === 'object' ? row.settings : {}; }\nfunction objectValue(value) {\n  if (!value) return {};\n  if (typeof value === 'object' && !Array.isArray(value)) return value;\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch (error) {\n    return {};\n  }\n}\nfunction arrayValue(value) { return Array.isArray(value) ? value : []; }\nfunction getMediaCatalog(settings) {\n  const direct = arrayValue(settings.product_media_catalog || settings.productMediaCatalog);\n  if (direct.length) return direct;\n  const nested = settings.product_catalog && typeof settings.product_catalog === 'object'\n    ? arrayValue(settings.product_catalog.categories)\n    : [];\n  return nested;\n}\nfunction mediaItemsForCategory(category) {\n  return arrayValue(category.items || category.media || category.images || category.assets)\n    .filter((item) => item && (item.url || item.media || item.image_url || item.imageUrl))\n    .slice(0, Number(category.max_items || category.maxItems || 3));\n}\nfunction categoryAliases(category) {\n  return [\n    category.category_key,\n    category.key,\n    category.slug,\n    category.label,\n    category.name,\n    ...arrayValue(category.aliases),\n  ].filter(Boolean).map(normalize).filter(Boolean);\n}\nfunction detectMediaCategory(settings, text) {\n  const catalog = getMediaCatalog(settings);\n  if (!catalog.length) return null;\n  const normalizedText = normalize(text);\n  for (const category of catalog) {\n    const aliases = categoryAliases(category);\n    if (aliases.some((alias) => normalizedText.includes(alias))) {\n      const items = mediaItemsForCategory(category);\n      if (items.length) return { ...category, aliases, items };\n    }\n  }\n  return null;\n}\nfunction wantsMediaResend(text) {\n  const normalizedText = normalize(text);\n  return hasAny(normalizedText, [\n    'manda de novo', 'envia de novo', 'reenvia', 'manda tudo', 'manda todas', 'manda as fotos',\n    'envia as fotos', 'quero ver', 'mostra', 'me manda', 'nao chegou', 'nao recebi', 'foto', 'fotos', 'opcoes'\n  ]);\n}\nfunction isConversationBoundary(event) {\n  return event.service === 'conversation_closed'\n    || ['conversation_closed', 'conversation_reset'].includes(event.ai_provider)\n    || ['finalizado', 'finalizada', 'encerrado', 'reset'].includes(normalize(event.stage))\n    || String(event.message_text || '').trim() === '/reset';\n}\nfunction previousMediaCategory(settings, events) {\n  for (const event of arrayValue(events)) {\n    if (isConversationBoundary(event)) break;\n    const payload = objectValue(event.raw_payload);\n    const key = payload.detected_product_category_key || arrayValue(payload.product_media_matches)[0]?.category_key;\n    const category = getMediaCatalog(settings).find((item) => key && (item.category_key || item.key || item.slug) === key);\n    if (category) return { ...category, items: mediaItemsForCategory(category) };\n    if (event.direction === 'inbound') {\n      const detected = detectMediaCategory(settings, event.message_text);\n      if (detected) return detected;\n    }\n  }\n  return null;\n}\n\nconst message = String($json.messageText || '').trim();\nconst value = normalize(message);\nlet service = 'geral'; let stage = 'Qualificacao'; let handoff = false;\nif (hasAny(value, ['orcamento', 'proposta', 'contrato', 'preco', 'valor'])) { service = 'comercial'; stage = 'Orcamento solicitado'; handoff = true; }\nelse if (hasAny(value, ['urgente', 'fora do ar', 'parado', 'caiu', 'nao funciona', 'erro'])) { service = 'suporte_ti'; stage = 'Suporte tecnico'; handoff = true; }\nelse if (hasAny(value, ['sistema', 'software', 'app', 'site', 'dashboard', 'api', 'integracao', 'automacao'])) { service = 'software_automacao'; stage = 'Briefing necessario'; }\nelse if (hasAny(value, ['trafego', 'anuncio', 'google ads', 'meta ads', 'campanha', 'leads'])) { service = 'trafego_pago'; stage = 'Briefing necessario'; }\nelse if (hasAny(value, ['social media', 'instagram', 'conteudo', 'post', 'reels', 'criativo'])) { service = 'social_media'; stage = 'Briefing necessario'; }\nelse if (hasAny(value, ['humano', 'atendente', 'especialista', 'ligar', 'pessoa'])) { service = 'atendimento_humano'; stage = 'Atendimento humano'; handoff = true; }\nelse if (hasAny(value, ['agendar', 'agenda', 'reuniao', 'horario', 'visita'])) { service = 'agendamento'; stage = 'Agendamento'; }\n\nlet previousEvents = [];\nlet tenantSettings = {};\nlet tenantAgent = {};\nlet tenantId = '';\nconst contextLoadErrors = [];\nlet contextLoadStep = 'tenant';\nfunction recordContextError(step, error) {\n  contextLoadErrors.push({ step, status: Number(error?.statusCode || error?.response?.status || error?.httpCode || 0) || null });\n}\nconst supabaseUrl = env('SUPABASE_URL').replace(/\\/$/, '');\nconst serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');\nif (!supabaseUrl || !serviceKey) recordContextError('missing_supabase_env_in_code_node');\nconst headers = { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey, 'Content-Type': 'application/json' };\nlet conversationBoundary = null;\nlet conversationStateOk = false;\nconst conversationFilter = '&tenant_slug=eq.' + encodeURIComponent($json.tenant_slug)\n  + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeURIComponent($json.remoteJid);\nconst boundaryFilter = '&or=(service.eq.conversation_closed,ai_provider.eq.conversation_closed,ai_provider.eq.conversation_reset,stage.eq.Reset,stage.eq.reset,message_text.eq.%2Freset)';\nif (supabaseUrl && serviceKey && $json.remoteJid) {\n  try {\n    const rows = await this.helpers.httpRequest({\n      method: 'GET',\n      url: supabaseUrl + '/rest/v1/channel_events?select=id,external_message_id,created_at'\n        + conversationFilter + boundaryFilter + '&order=created_at.desc,id.desc&limit=1',\n      headers, json: true, timeout: 5000,\n    });\n    if (!Array.isArray(rows)) throw new Error('Invalid conversation boundary response');\n    conversationBoundary = rows[0] || null;\n    conversationStateOk = true;\n  } catch (error) {\n    recordContextError('conversation_boundary', error);\n  }\n}\n// The persisted close event is a stable generation marker, even outside the history window.\nconst conversationSessionId = String(conversationBoundary?.id || 'initial');\nconst memorySessionKey = conversationBoundary\n  ? 'magia:chat:v2:' + [$json.tenant_slug, 'whatsapp', $json.remoteJid, conversationSessionId]\n    .map((part) => encodeURIComponent(String(part || ''))).join(':')\n  : 'magia:chat:' + $json.tenant_slug + ':' + $json.remoteJid;\nif (supabaseUrl && serviceKey && $json.remoteJid) {\n  try {\n    previousEvents = await this.helpers.httpRequest({\n      method: 'GET',\n      url: supabaseUrl\n        + '/rest/v1/channel_events?select=id,direction,stage,service,message_text,response_text,raw_payload,created_at&tenant_slug=eq.' + encodeURIComponent($json.tenant_slug)\n        + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeURIComponent($json.remoteJid)\n        + (conversationBoundary?.created_at ? '&created_at=gt.' + encodeURIComponent(conversationBoundary.created_at) : '')\n        + '&order=created_at.desc&limit=40',\n      headers,\n      json: true,\n      timeout: 5000,\n    });\n  } catch (error) {\n    recordContextError('history', error);\n    previousEvents = [];\n  }\n}\n\npreviousEvents = arrayValue(previousEvents);\nconst boundaryIndex = previousEvents.findIndex(isConversationBoundary);\nif (boundaryIndex >= 0) previousEvents = previousEvents.slice(0, boundaryIndex);\nif (conversationBoundary?.created_at) {\n  previousEvents = previousEvents.filter((event) => Date.parse(event.created_at) > Date.parse(conversationBoundary.created_at));\n}\nif (!conversationStateOk) previousEvents = [];\n\nlet activeSystemPrompt = '';\nif (supabaseUrl && serviceKey && $json.tenant_slug) {\n  try {\n    const tenantRows = await this.helpers.httpRequest({\n      method: 'GET',\n      url: supabaseUrl + '/rest/v1/tenants?select=id,name,industry&slug=eq.' + encodeURIComponent($json.tenant_slug) + '&limit=1',\n      headers,\n      json: true,\n      timeout: 5000,\n    });\n    const tenant = Array.isArray(tenantRows) ? tenantRows[0] : null;\n    tenantId = tenant?.id || '';\n    if (!tenantId) recordContextError('tenant_not_found');\n    if (tenantId) {\n      contextLoadStep = 'tenant_settings';\n      const settingRows = await this.helpers.httpRequest({\n        method: 'GET',\n        url: supabaseUrl + '/rest/v1/tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(tenantId) + '&limit=1',\n        headers,\n        json: true,\n        timeout: 5000,\n      });\n      tenantSettings = settingsObject(Array.isArray(settingRows) ? settingRows[0] : null);\n      if (!Array.isArray(settingRows) || !settingRows.length) recordContextError('tenant_settings_not_found');\n      activeSystemPrompt = String(tenantSettings.system_prompt || '').trim();\n\n      const agentRows = await this.helpers.httpRequest({\n        method: 'GET',\n        url: supabaseUrl + '/rest/v1/ai_agents?select=model,temperature,max_tokens,settings&tenant_id=eq.' + encodeURIComponent(tenantId) + '&provider=eq.gemini&limit=1',\n        headers,\n        json: true,\n        timeout: 5000,\n      }).catch(() => []);\n      tenantAgent = Array.isArray(agentRows) ? (agentRows[0] || {}) : {};\n\n      contextLoadStep = 'prompt_versions';\n      const promptRows = await this.helpers.httpRequest({\n        method: 'GET',\n        url: supabaseUrl + '/rest/v1/ai_prompt_versions?select=prompt&tenant_id=eq.' + encodeURIComponent(tenantId) + '&active=eq.true&order=version.desc&limit=1',\n        headers,\n        json: true,\n        timeout: 5000,\n      });\n      activeSystemPrompt = String(Array.isArray(promptRows) ? promptRows[0]?.prompt || '' : '').trim();\n      if (!activeSystemPrompt) activeSystemPrompt = String(tenantSettings.system_prompt || '').trim();\n    }\n  } catch (error) {\n    recordContextError(contextLoadStep, error);\n    activeSystemPrompt = String(tenantSettings.system_prompt || '').trim();\n  }\n}\nconst paymentSettings = tenantSettings.payment && typeof tenantSettings.payment === 'object' ? tenantSettings.payment : {};\nconst serviceCategories = arrayValue(tenantSettings.service_categories).map(normalize);\nconst commerceMode = tenantSettings.commerce_mode === true\n  || String(tenantSettings.commerce_mode).toLowerCase() === 'true'\n  || serviceCategories.some((item) => ['aneis', 'pulseiras', 'cordoes', 'pedras', 'joias', 'prata'].includes(item));\nif (commerceMode && service === 'comercial' && !hasAny(value, ['orcamento', 'proposta', 'contrato'])) {\n  service = 'catalogo_produtos';\n  stage = 'Qualificacao';\n  handoff = false;\n}\nconst paymentTrigger = normalize(tenantSettings.appointment_payment_trigger || tenantSettings.payment_signal_trigger || paymentSettings.signal_trigger || 'SINAL PAGO');\nconst paymentAliases = [paymentTrigger, 'sinal pago', 'paguei o sinal', 'paguei sinal', 'pagamento realizado', 'pix feito', 'pix realizado'].map(normalize).filter(Boolean);\nconst paymentSignalDetected = paymentAliases.some((alias) => value.includes(alias));\nif (paymentSignalDetected) {\n  service = 'pagamento_sinal';\n  stage = tenantSettings.payment_signal_stage || paymentSettings.stage || 'Verificar Sinal';\n  handoff = true;\n}\nconst directMediaCategory = detectMediaCategory(tenantSettings, message);\nconst detectedMediaCategory = directMediaCategory\n  || (wantsMediaResend(message) ? previousMediaCategory(tenantSettings, previousEvents) : null);\nlet productMediaMatches = detectedMediaCategory ? detectedMediaCategory.items.map((item, index) => ({\n  category_key: detectedMediaCategory.category_key || detectedMediaCategory.key || detectedMediaCategory.slug || detectedMediaCategory.label || detectedMediaCategory.name || 'categoria',\n  category_label: detectedMediaCategory.label || detectedMediaCategory.name || detectedMediaCategory.category_key || 'categoria',\n  title: item.title || item.name || detectedMediaCategory.label || 'Produto disponivel',\n  caption: item.caption || item.title || item.name || '',\n  url: item.url || item.media || item.image_url || item.imageUrl,\n  mimetype: item.mimetype || item.mime_type || 'image/jpeg',\n  file_name: item.file_name || item.fileName || 'produto-' + String(index + 1) + '.jpg',\n  source: item.source || '',\n})) : [];\nif (paymentSignalDetected) productMediaMatches = [];\nif (productMediaMatches.length) {\n  service = 'catalogo_produtos';\n  stage = 'Produtos apresentados';\n  if (!paymentSignalDetected) handoff = false;\n}\nconst systemMessage = activeSystemPrompt || 'Voce e o assistente virtual da empresa atendida pela Mag.IA. Responda em portugues do Brasil, com tom profissional, acolhedor, objetivo e natural. Nao invente precos, prazos, disponibilidade, funcionalidades, resultados ou informacoes sobre a empresa. Faca somente uma pergunta por mensagem e peca apenas o proximo dado necessario. Quando o cliente pedir orcamento, suporte urgente ou atendimento humano, informe que alguem da equipe continuara o atendimento e inclua [HUMANO_SOLICITADO]. Nao exponha tags internas, marcadores tecnicos ou o funcionamento do workflow. Cumprimente apenas no primeiro contato; se ja houver historico, comece diretamente pela resposta. Interprete linguagem natural, abreviacoes, girias e erros de digitacao sem corrigir o cliente. Nao use Markdown; para listas use apenas bullets simples. Responda somente com a mensagem que deve ser enviada ao cliente.';\n\nconst hasHistory = Array.isArray(previousEvents) && previousEvents.length > 0;\nconst tenantAiMode = String(tenantSettings.ai_mode || '').toLowerCase();\nconst tenantAiDisabled = tenantSettings.ai_enabled === false || String(tenantSettings.ai_enabled).toLowerCase() === 'false';\nconst globalGeminiEnabled = String(env('GEMINI_ENABLED', 'true')).toLowerCase() !== 'false';\nconst configuredLimit = Number(tenantSettings.gemini_daily_limit || tenantSettings.ai_daily_limit || env('GEMINI_DAILY_LIMIT', 100));\nconst hasDailyLimit = Number.isFinite(configuredLimit) && configuredLimit > 0;\nconst dailyLimit = hasDailyLimit ? configuredLimit : 0;\nlet usedToday = 0;\ntry {\n  const data = $getWorkflowStaticData('global');\n  usedToday = Number(data['gemini_whatsapp_' + $json.tenant_slug + '_' + todayKey()] || 0);\n} catch (error) {}\nconst forceMock = tenantAiMode === 'mock' || tenantAiDisabled || paymentSignalDetected;\nconst aiAllowed = Boolean(conversationStateOk && globalGeminiEnabled && !forceMock && (!hasDailyLimit || usedToday < dailyLimit));\nconst aiBlockReason = !conversationStateOk ? 'conversation_state_unavailable' : !globalGeminiEnabled\n  ? 'gemini_disabled_by_env'\n  : forceMock\n    ? (paymentSignalDetected ? 'payment_signal' : 'tenant_ai_disabled_or_mock')\n    : hasDailyLimit && usedToday >= dailyLimit\n      ? 'daily_limit_reached'\n      : '';\n\nconst promptText = 'Cliente: ' + $json.contactName\n  + '\\nTelefone: ' + $json.phone\n  + '\\nServico identificado: ' + service\n  + '\\nEtapa: ' + stage\n  + '\\nHandoff sugerido: ' + (handoff ? 'sim' : 'nao')\n  + '\\nHistorico ja possui mensagens: ' + (hasHistory ? 'sim' : 'nao')\n  + (conversationBoundary ? '\\nAtendimento anterior encerrado pelo operador. Use apenas a memoria desta nova sessao; nao retome pedidos, fotos, pagamentos ou encaminhamentos de atendimentos anteriores.' : '')\n  + '\\nInstrucao de saudacao: ' + (hasHistory ? 'nao cumprimente; va direto ao ponto' : 'cumprimente brevemente se fizer sentido')\n  + (!productMediaMatches.length ? '\\nNenhuma foto foi selecionada para envio nesta execucao. Nao prometa enviar fotos nem afirme que fotos foram enviadas. Se a cliente pedir fotos sem categoria, pergunte somente qual categoria deseja. Se o catalogo estiver indisponivel, informe a indisponibilidade sem inventar opcoes.' : '')\n  + (productMediaMatches.length ? '\\nCategoria de produto identificada: ' + productMediaMatches[0].category_label + '\\nAcao do sistema: apos sua resposta, o sistema enviara automaticamente ate 3 fotos desta categoria. Responda curto, sem prometer varias vezes, e nao faca mais de uma pergunta de refinamento. Se o cliente pediu para mandar tudo, diga apenas que esta enviando as opcoes agora e peca para ela escolher a que mais gostou. Nao diga que nao consegue enviar imagens.' : '')\n  + (paymentSignalDetected ? '\\nSinal de pagamento detectado: sim. Nao chame IA generativa; responder apenas com confirmacao curta e encaminhar para verificacao humana.' : '')\n  + '\\nMensagem: ' + message;\n\nconst catalogDiagnostics = {\n  workflow_revision: 'whatsapp-session-reset-2026-09-21',\n  catalog_categories: getMediaCatalog(tenantSettings).length,\n  selected_count: productMediaMatches.length,\n  category_key: productMediaMatches[0]?.category_key || '',\n  selection_source: directMediaCategory ? 'current_message' : detectedMediaCategory ? 'conversation_history' : 'none',\n  context_load_errors: contextLoadErrors,\n};\nconst { apikey: incomingApiKey, ...incomingPayload } = objectValue($json.raw_payload);\nreturn { json: {\n  ...$json, tenant_id: tenantId, tenant_settings: tenantSettings, tenant_agent: tenantAgent,\n  service, stage, handoff, hasHistory, promptText, systemMessage,\n  conversation_session_id: conversationSessionId,\n  conversation_closed_at: conversationBoundary?.created_at || null,\n  conversation_state_ok: conversationStateOk,\n  memory_session_key: memorySessionKey,\n  product_media_matches: productMediaMatches,\n  detected_product_category: productMediaMatches[0]?.category_label || '',\n  catalog_diagnostics: catalogDiagnostics,\n  raw_payload: { ...incomingPayload, catalog_diagnostics: catalogDiagnostics, product_media_matches: productMediaMatches,\n    conversation_session_id: conversationSessionId, conversation_closed_at: conversationBoundary?.created_at || null },\n  payment_signal_detected: paymentSignalDetected,\n  payment_signal_ack_message: tenantSettings.payment_signal_ack_message || paymentSettings.ack_message || 'Ta bom! Vou confirmar aqui, um momento.',\n  ai_allowed: aiAllowed, ai_block_reason: aiBlockReason,\n  gemini_daily_limit: dailyLimit, gemini_used_today_before_request: usedToday,\n} };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        100
+      ],
+      "id": "magia-whatsapp-prepare-ai",
+      "name": "Preparar Contexto JIW"
     },
     {
-      "parameters": { "resource": "audio", "operation": "transcribe", "options": {} },
-      "type": "@n8n/n8n-nodes-langchain.openAi", "typeVersion": 2.1, "position": [780, 0], "id": "magia-whatsapp-transcriber", "name": "Transcrever Audio (OpenAI)"
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.promptText }}",
+        "options": {
+          "systemMessage": "={{ $json.systemMessage }}",
+          "maxIterations": 3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [
+        1500,
+        100
+      ],
+      "id": "magia-whatsapp-agent",
+      "name": "Assistente JIW (Gemini)",
+      "onError": "continueRegularOutput"
     },
     {
-      "parameters": { "jsCode": "const base = $('Verificar Duplicidade').item.json;\nconst transcript = String($json.text || $json.transcription || $json.data?.text || '').trim();\nreturn { json: { ...base, messageText: transcript || '[audio sem transcricao]', contentType: 'text', transcript } };" },
-      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1020, 0], "id": "magia-whatsapp-audio-merge", "name": "Aplicar Transcricao"
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1500,
+        -140
+      ],
+      "id": "magia-whatsapp-gemini",
+      "name": "Gemini Chat Model"
     },
     {
-      "parameters": { "jsCode": "function normalize(value) { return String(value || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, ''); }\nfunction hasAny(value, values) { return values.some((item) => value.includes(item)); }\nconst message = String($json.messageText || '').trim();\nconst value = normalize(message);\nlet service = 'geral'; let stage = 'Qualificacao'; let handoff = false;\nif (hasAny(value, ['orcamento', 'proposta', 'contrato', 'preco', 'valor'])) { service = 'comercial'; stage = 'Orcamento solicitado'; handoff = true; }\nelse if (hasAny(value, ['urgente', 'fora do ar', 'parado', 'caiu', 'nao funciona', 'erro'])) { service = 'suporte_ti'; stage = 'Suporte tecnico'; handoff = true; }\nelse if (hasAny(value, ['sistema', 'software', 'app', 'site', 'dashboard', 'api', 'integracao', 'automacao'])) { service = 'software_automacao'; stage = 'Briefing necessario'; }\nelse if (hasAny(value, ['trafego', 'anuncio', 'google ads', 'meta ads', 'campanha', 'leads'])) { service = 'trafego_pago'; stage = 'Briefing necessario'; }\nelse if (hasAny(value, ['social media', 'instagram', 'conteudo', 'post', 'reels', 'criativo'])) { service = 'social_media'; stage = 'Briefing necessario'; }\nelse if (hasAny(value, ['humano', 'atendente', 'especialista', 'ligar', 'pessoa'])) { service = 'atendimento_humano'; stage = 'Atendimento humano'; handoff = true; }\nelse if (hasAny(value, ['agendar', 'agenda', 'reuniao', 'horario', 'visita'])) { service = 'agendamento'; stage = 'Agendamento'; }\nconst promptText = `Cliente: ${$json.contactName}\\nTelefone: ${$json.phone}\\nServico identificado: ${service}\\nEtapa: ${stage}\\nHandoff sugerido: ${handoff ? 'sim' : 'nao'}\\nMensagem: ${message}`;\nreturn { json: { ...$json, service, stage, handoff, promptText } };" },
-      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1260, 100], "id": "magia-whatsapp-prepare-ai", "name": "Preparar Contexto JIW"
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.memory_session_key }}",
+        "sessionTTL": 86400,
+        "contextWindowLength": 8
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.5,
+      "position": [
+        1740,
+        -140
+      ],
+      "id": "magia-whatsapp-memory",
+      "name": "Memoria Redis da Conversa"
     },
     {
-      "parameters": { "promptType": "define", "text": "={{ $json.promptText }}", "options": { "systemMessage": "Voce e o assistente de atendimento da JIW - Solucoes Tecnologicas. Responda em portugues do Brasil, com tom profissional, acolhedor e objetivo. Atenda software, sites, dashboards, integracoes, automacoes, suporte de TI, trafego pago e social media. Nao invente precos, prazos, funcionalidades ou resultados. Faca apenas uma pergunta por vez. Quando o cliente pedir orcamento, suporte urgente ou atendimento humano, diga que um especialista assumira e inclua [HUMANO_SOLICITADO]. Nao mencione Avvento, carros, estoque ou ferramentas internas. Responda somente a mensagem que deve ser enviada ao cliente.", "maxIterations": 3 } },
-      "type": "@n8n/n8n-nodes-langchain.agent", "typeVersion": 1.6, "position": [1500, 100], "id": "magia-whatsapp-agent", "name": "Assistente JIW (Gemini)"
+      "parameters": {
+        "jsCode": "const base = $('Preparar Contexto JIW').item.json;\nconst raw = String($json.output || $json.text || '').trim();\nconst handoff = base.handoff || raw.includes('[HUMANO_SOLICITADO]');\nfunction removeRepeatedGreeting(value) {\n  if (!base.hasHistory) return value;\n  const withoutGreeting = value\n    .replace(/^(?:oi|ol[?a]|bom dia|boa tarde|boa noite)\\b[^.!?\\n]{0,120}[!?.]\\s*/iu, '')\n    .replace(/^(?:[?????????????]+\\s*)?(?:que bom|bom te ver|seja bem[- ]vind[oa])\\b[^.!?\\n]{0,120}[!?.]\\s*/iu, '')\n    .trim();\n  return withoutGreeting || value;\n}\nconst responseText = removeRepeatedGreeting(raw.replace(/\\[HUMANO_SOLICITADO\\]/gi, '').trim())\n  || 'Recebi sua mensagem. Um especialista continuara o atendimento.';\ntry {\n  if (base.ai_allowed) {\n    const data = $getWorkflowStaticData('global');\n    const key = 'gemini_whatsapp_' + base.tenant_slug + '_' + new Date().toISOString().slice(0, 10);\n    data[key] = Number(data[key] || 0) + 1;\n  }\n} catch (error) {}\nreturn { json: { ...base, responseText, handoff, direction: 'inbound', sender_type: 'contact', delivery_status: 'received', ai_provider: $json.ai_provider || (base.ai_allowed ? 'gemini' : base.ai_block_reason || 'fallback'), ai_model: $json.ai_model || base.tenant_settings?.ai_model || base.tenant_agent?.model || 'gemini', ai_usage: $json.ai_usage || {} } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        100
+      ],
+      "id": "magia-whatsapp-prepare-response",
+      "name": "Preparar Resposta JIW"
     },
     {
-      "parameters": { "modelName": "models/gemini-2.5-flash", "options": { "temperature": 0.3 } },
-      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini", "typeVersion": 1.1, "position": [1500, -140], "id": "magia-whatsapp-gemini", "name": "Gemini Chat Model"
+      "parameters": {
+        "tableId": "channel_events",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "tenant_slug",
+              "fieldValue": "={{ $json.tenant_slug }}"
+            },
+            {
+              "fieldId": "channel_type",
+              "fieldValue": "={{ $json.channel_type }}"
+            },
+            {
+              "fieldId": "external_conversation_id",
+              "fieldValue": "={{ $json.remoteJid }}"
+            },
+            {
+              "fieldId": "external_message_id",
+              "fieldValue": "={{ $json.messageId }}"
+            },
+            {
+              "fieldId": "direction",
+              "fieldValue": "inbound"
+            },
+            {
+              "fieldId": "sender_type",
+              "fieldValue": "contact"
+            },
+            {
+              "fieldId": "contact_name",
+              "fieldValue": "={{ $json.contactName }}"
+            },
+            {
+              "fieldId": "contact_handle",
+              "fieldValue": "={{ $json.phone }}"
+            },
+            {
+              "fieldId": "message_text",
+              "fieldValue": "={{ $json.messageText }}"
+            },
+            {
+              "fieldId": "service",
+              "fieldValue": "={{ $json.service }}"
+            },
+            {
+              "fieldId": "stage",
+              "fieldValue": "={{ $json.stage }}"
+            },
+            {
+              "fieldId": "handoff",
+              "fieldValue": "={{ $json.handoff }}"
+            },
+            {
+              "fieldId": "response_text",
+              "fieldValue": "={{ $json.responseText || null }}"
+            },
+            {
+              "fieldId": "raw_payload",
+              "fieldValue": "={{ $json.raw_payload }}"
+            },
+            {
+              "fieldId": "delivery_status",
+              "fieldValue": "received"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        100
+      ],
+      "id": "magia-whatsapp-save-inbound",
+      "name": "Salvar Evento Recebido",
+      "onError": "continueRegularOutput"
     },
     {
-      "parameters": { "sessionIdType": "customKey", "sessionKey": "=magia:chat:{{ $json.tenant_slug }}:{{ $json.remoteJid }}", "sessionTTL": 86400, "contextWindowLength": 8 },
-      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat", "typeVersion": 1.5, "position": [1740, -140], "id": "magia-whatsapp-memory", "name": "Memoria Redis da Conversa"
+      "parameters": {
+        "jsCode": "return { json: { ...$('Preparar Resposta JIW').item.json, inbound_saved: true } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        100
+      ],
+      "id": "magia-whatsapp-restore-context",
+      "name": "Restaurar Contexto para Envio"
     },
     {
-      "parameters": { "mode": "retrieve-as-tool", "toolDescription": "Pesquise nesta base as informacoes aprovadas da JIW antes de responder sobre servicos, politicas, prazos, processos ou orientacoes. Nunca invente uma informacao que nao esteja na base.", "tableName": { "__rl": true, "value": "ai_knowledge_documents", "mode": "list", "cachedResultName": "ai_knowledge_documents" }, "topK": 4, "options": { "queryName": "match_ai_knowledge", "metadata": { "metadataValues": [ { "name": "tenant_slug", "value": "={{ $('Preparar Contexto JIW').item.json.tenant_slug }}" } ] } } },
-      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase", "typeVersion": 1.3, "position": [1980, -380], "id": "magia-whatsapp-vector-store", "name": "Base de Conhecimento JIW (RAG)"
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $json.instance || $env.EVOLUTION_INSTANCE_JIW }}",
+        "remoteJid": "={{ $json.remoteJid }}",
+        "messageText": "={{ $json.responseText }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        2220,
+        100
+      ],
+      "id": "magia-whatsapp-send",
+      "name": "Enviar Resposta pela Evolution"
     },
     {
-      "parameters": { "model": "text-embedding-3-small", "options": {} },
-      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi", "typeVersion": 1, "position": [2220, -380], "id": "magia-whatsapp-embeddings", "name": "Embeddings da Base JIW"
+      "parameters": {
+        "jsCode": "const base = $('Preparar Resposta JIW').item.json;\nconst sent = $json;\nfunction env(name, fallback = '') {\n  try { return $env[name] || fallback; } catch (error) { return fallback; }\n}\nfunction cleanEnvUrl(value) {\n  const raw = String(value || '').trim();\n  const markdown = raw.match(/\\((https?:\\/\\/[^)]+)\\)/);\n  if (markdown) return markdown[1].replace(/\\/$/, '');\n  const plain = raw.match(/https?:\\/\\/[^\\]\\s)]+/);\n  return (plain ? plain[0] : raw).replace(/\\/$/, '');\n}\nfunction isInvalidEnv(value) {\n  const raw = String(value || '').trim();\n  return !raw || raw.includes('COLE_AQUI') || raw.includes('SEU_TOKEN') || raw.includes('AJUSTAR');\n}\nfunction normalizeKey(value) {\n  return String(value || '')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toUpperCase()\n    .trim()\n    .replace(/[^A-Z0-9]+/g, '_')\n    .replace(/^_+|_+$/g, '');\n}\nasync function sendProductMedia() {\n  const mediaItems = Array.isArray(base.product_media_matches) ? base.product_media_matches.slice(0, 3) : [];\n  if (!mediaItems.length) return { sent: [], skipped: 'no_product_media', diagnostics: base.catalog_diagnostics || null };\n\n  const slugKey = normalizeKey(base.tenant_slug);\n  const baseUrl = cleanEnvUrl(env('EVOLUTION_API_URL_' + slugKey, env('EVOLUTION_API_URL', '')));\n  const apiKey = env('EVOLUTION_API_KEY_' + slugKey, env('EVOLUTION_API_KEY', ''));\n  const instance = base.instance || env('EVOLUTION_INSTANCE_' + slugKey, env('EVOLUTION_INSTANCE', ''));\n  if (isInvalidEnv(baseUrl) || isInvalidEnv(apiKey) || isInvalidEnv(instance)) {\n    return { sent: [], skipped: 'missing_or_placeholder_evolution_media_env', required_env: ['EVOLUTION_API_URL_' + slugKey, 'EVOLUTION_API_KEY_' + slugKey, 'EVOLUTION_INSTANCE_' + slugKey] };\n  }\n\n  const number = String(base.phone || base.remoteJid || '').replace(/@.*/, '');\n  if (!number) return { sent: [], skipped: 'missing_recipient_number' };\n\n  const results = [];\n  for (const item of mediaItems) {\n    try {\n      const response = await this.helpers.httpRequest({\n        method: 'POST',\n        url: baseUrl + '/message/sendMedia/' + encodeURIComponent(instance),\n        headers: { apikey: apiKey, 'Content-Type': 'application/json' },\n        body: {\n          number,\n          mediatype: 'image',\n          mimetype: item.mimetype || 'image/jpeg',\n          caption: item.caption || item.title || item.category_label || '',\n          media: item.url,\n          fileName: item.file_name || 'produto.jpg',\n        },\n        json: true,\n        timeout: 15000,\n      });\n      const messageId = response?.key?.id || response?.data?.key?.id || response?.message?.key?.id;\n      results.push({ ok: Boolean(messageId), status: messageId ? 'accepted' : 'unconfirmed', title: item.title || '', url: item.url, message_id: messageId || null });\n    } catch (error) {\n      const status = Number(error?.statusCode || error?.response?.status || error?.httpCode || 0) || null;\n      results.push({ ok: false, status: 'failed', title: item.title || '', url: item.url, http_status: status, error: status ? 'evolution_http_' + status : 'evolution_request_failed' });\n    }\n  }\n  return { sent: results };\n}\nconst mediaDelivery = await sendProductMedia.call(this);\nconst externalMessageId = String(sent?.key?.id || sent?.message?.key?.id || sent?.id || base.messageId + ':reply');\nreturn { json: { ...base, externalMessageId, direction: 'outbound', sender_type: 'assistant', messageText: base.responseText, delivery_status: 'sent', raw_payload: { provider: 'evolution_api', response: sent, product_media_delivery: mediaDelivery, product_media_matches: base.product_media_matches || [], catalog_diagnostics: base.catalog_diagnostics || null } } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        100
+      ],
+      "id": "magia-whatsapp-outbound-event",
+      "name": "Preparar Evento Enviado"
     },
     {
-      "parameters": { "jsCode": "const base = $('Preparar Contexto JIW').item.json;\nconst raw = String($json.output || $json.text || '').trim();\nconst handoff = base.handoff || raw.includes('[HUMANO_SOLICITADO]');\nconst responseText = raw.replace(/\\[HUMANO_SOLICITADO\\]/gi, '').trim() || 'Recebi sua mensagem. Um especialista da JIW continuara o atendimento.';\nreturn { json: { ...base, responseText, handoff, direction: 'inbound', sender_type: 'contact', delivery_status: 'received' } };" },
-      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1740, 100], "id": "magia-whatsapp-prepare-response", "name": "Preparar Resposta JIW"
+      "parameters": {
+        "tableId": "channel_events",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "tenant_slug",
+              "fieldValue": "={{ $json.tenant_slug }}"
+            },
+            {
+              "fieldId": "channel_type",
+              "fieldValue": "={{ $json.channel_type }}"
+            },
+            {
+              "fieldId": "external_conversation_id",
+              "fieldValue": "={{ $json.remoteJid }}"
+            },
+            {
+              "fieldId": "external_message_id",
+              "fieldValue": "={{ $json.externalMessageId }}"
+            },
+            {
+              "fieldId": "direction",
+              "fieldValue": "outbound"
+            },
+            {
+              "fieldId": "sender_type",
+              "fieldValue": "assistant"
+            },
+            {
+              "fieldId": "contact_name",
+              "fieldValue": "={{ $json.contactName }}"
+            },
+            {
+              "fieldId": "contact_handle",
+              "fieldValue": "={{ $json.phone }}"
+            },
+            {
+              "fieldId": "message_text",
+              "fieldValue": "={{ $json.messageText }}"
+            },
+            {
+              "fieldId": "service",
+              "fieldValue": "={{ $json.service }}"
+            },
+            {
+              "fieldId": "stage",
+              "fieldValue": "={{ $json.stage }}"
+            },
+            {
+              "fieldId": "handoff",
+              "fieldValue": "={{ $json.handoff }}"
+            },
+            {
+              "fieldId": "raw_payload",
+              "fieldValue": "={{ $json.raw_payload }}"
+            },
+            {
+              "fieldId": "delivery_status",
+              "fieldValue": "sent"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2700,
+        100
+      ],
+      "id": "magia-whatsapp-save-outbound",
+      "name": "Salvar Evento Enviado",
+      "onError": "continueRegularOutput"
     },
     {
-      "parameters": { "tableId": "channel_events", "fieldsUi": { "fieldValues": [ { "fieldId": "tenant_slug", "fieldValue": "={{ $json.tenant_slug }}" }, { "fieldId": "channel_type", "fieldValue": "={{ $json.channel_type }}" }, { "fieldId": "external_conversation_id", "fieldValue": "={{ $json.remoteJid }}" }, { "fieldId": "external_message_id", "fieldValue": "={{ $json.messageId }}" }, { "fieldId": "direction", "fieldValue": "inbound" }, { "fieldId": "sender_type", "fieldValue": "contact" }, { "fieldId": "contact_name", "fieldValue": "={{ $json.contactName }}" }, { "fieldId": "contact_handle", "fieldValue": "={{ $json.phone }}" }, { "fieldId": "message_text", "fieldValue": "={{ $json.messageText }}" }, { "fieldId": "service", "fieldValue": "={{ $json.service }}" }, { "fieldId": "stage", "fieldValue": "={{ $json.stage }}" }, { "fieldId": "handoff", "fieldValue": "={{ $json.handoff }}" }, { "fieldId": "response_text", "fieldValue": "={{ $json.responseText }}" }, { "fieldId": "raw_payload", "fieldValue": "={{ JSON.stringify($json.raw_payload) }}" }, { "fieldId": "delivery_status", "fieldValue": "received" } ] } },
-      "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [1980, 100], "id": "magia-whatsapp-save-inbound", "name": "Salvar Evento Recebido", "onError": "continueRegularOutput"
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, channel: 'whatsapp', external_message_id: $('Preparar Evento Enviado').item.json.messageId, response: $('Preparar Evento Enviado').item.json.messageText, delivery_status: 'sent' } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2940,
+        100
+      ],
+      "id": "magia-whatsapp-response",
+      "name": "Responder Evolution API"
     },
     {
-      "parameters": { "jsCode": "return { json: { ...$('Preparar Resposta JIW').item.json, inbound_saved: true } };" },
-      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2100, 100], "id": "magia-whatsapp-restore-context", "name": "Restaurar Contexto para Envio"
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ai_allowed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        120,
+        1408
+      ],
+      "id": "1216e2ca-6947-4f60-8f17-ea7643aa93cc",
+      "name": "IA WhatsApp permitida?"
     },
     {
-      "parameters": { "resource": "messages-api", "instanceName": "={{ $env.EVOLUTION_INSTANCE_JIW || $json.instance }}", "remoteJid": "={{ $json.remoteJid }}", "messageText": "={{ $json.responseText }}", "options_message": {} },
-      "type": "n8n-nodes-evolution-api.evolutionApi", "typeVersion": 1, "position": [2220, 100], "id": "magia-whatsapp-send", "name": "Enviar Resposta pela Evolution"
+      "parameters": {
+        "jsCode": "const base = $json;\nconst paymentAck = String(base.payment_signal_ack_message || base.tenant_settings?.payment_signal_ack_message || base.tenant_settings?.payment?.ack_message || '').trim();\nconst fallback = base.payment_signal_detected\n  ? (paymentAck || 'Ta bom! Vou confirmar aqui, um momento.')\n  : (String(base.tenant_settings?.fallback_message || base.tenant_settings?.whatsapp_fallback_message || '').trim()\n    || 'Recebi sua mensagem. No momento nao consigo acionar a IA, mas ja registrei seu contato para a equipe continuar o atendimento.');\nreturn { json: { ...base, output: fallback, text: fallback, ai_provider: base.payment_signal_detected ? 'payment_signal' : (base.ai_block_reason || 'fallback_daily_limit'), ai_model: null, ai_usage: { daily_limit: base.gemini_daily_limit, used_today_before_request: base.gemini_used_today_before_request, block_reason: base.ai_block_reason } } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        1600
+      ],
+      "id": "35e2f9f8-531d-47a8-b747-67b7009697f7",
+      "name": "Resposta sem Gemini WhatsApp"
     },
     {
-      "parameters": { "jsCode": "const base = $('Preparar Resposta JIW').item.json;\nconst sent = $json;\nconst externalMessageId = String(sent?.key?.id || sent?.message?.key?.id || sent?.id || base.messageId + ':reply');\nreturn { json: { ...base, externalMessageId, direction: 'outbound', sender_type: 'assistant', messageText: base.responseText, delivery_status: 'sent', raw_payload: { provider: 'evolution_api', response: sent } } };" },
-      "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2460, 100], "id": "magia-whatsapp-outbound-event", "name": "Preparar Evento Enviado"
+      "parameters": {
+        "jsCode": "return { json: { ...$('Preparar Contexto JIW').item.json, inbound_saved: Boolean($json.id && !$json.error), inbound_save_failed: Boolean($json.error || !$json.id) } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        100
+      ],
+      "id": "magia-whatsapp-restore-after-inbound-save",
+      "name": "Restaurar Contexto apos Salvar Inbound"
     },
     {
-      "parameters": { "tableId": "channel_events", "fieldsUi": { "fieldValues": [ { "fieldId": "tenant_slug", "fieldValue": "={{ $json.tenant_slug }}" }, { "fieldId": "channel_type", "fieldValue": "={{ $json.channel_type }}" }, { "fieldId": "external_conversation_id", "fieldValue": "={{ $json.remoteJid }}" }, { "fieldId": "external_message_id", "fieldValue": "={{ $json.externalMessageId }}" }, { "fieldId": "direction", "fieldValue": "outbound" }, { "fieldId": "sender_type", "fieldValue": "assistant" }, { "fieldId": "contact_name", "fieldValue": "={{ $json.contactName }}" }, { "fieldId": "contact_handle", "fieldValue": "={{ $json.phone }}" }, { "fieldId": "message_text", "fieldValue": "={{ $json.messageText }}" }, { "fieldId": "service", "fieldValue": "={{ $json.service }}" }, { "fieldId": "stage", "fieldValue": "={{ $json.stage }}" }, { "fieldId": "handoff", "fieldValue": "={{ $json.handoff }}" }, { "fieldId": "raw_payload", "fieldValue": "={{ JSON.stringify($json.raw_payload) }}" }, { "fieldId": "delivery_status", "fieldValue": "sent" } ] } },
-      "type": "n8n-nodes-base.supabase", "typeVersion": 1, "position": [2700, 100], "id": "magia-whatsapp-save-outbound", "name": "Salvar Evento Enviado", "onError": "continueRegularOutput"
+      "id": "magia-whatsapp-validate-session",
+      "name": "Validar Sessao Antes do Envio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const base = $json;\nfunction env(name) {\n  try { return String($env[name] || ''); } catch (_) { return ''; }\n}\nconst supabaseUrl = env('SUPABASE_URL').replace(/\\/$/, '');\nconst serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');\nlet shouldSend = false;\nlet reason = 'conversation_state_unavailable';\nif (base.conversation_state_ok && supabaseUrl && serviceKey) {\n  try {\n    const rows = await this.helpers.httpRequest({\n      method: 'GET',\n      url: supabaseUrl + '/rest/v1/channel_events?select=id,created_at'\n        + '&tenant_slug=eq.' + encodeURIComponent(base.tenant_slug)\n        + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeURIComponent(base.remoteJid)\n        + '&or=(service.eq.conversation_closed,ai_provider.eq.conversation_closed,ai_provider.eq.conversation_reset,stage.eq.Reset,stage.eq.reset,message_text.eq.%2Freset)'\n        + '&order=created_at.desc,id.desc&limit=1',\n      headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey },\n      json: true, timeout: 5000,\n    });\n    if (!Array.isArray(rows)) throw new Error('Invalid conversation boundary response');\n    const sessionId = String(rows[0]?.id || 'initial');\n    shouldSend = sessionId === base.conversation_session_id;\n    reason = shouldSend ? '' : 'conversation_closed_during_processing';\n  } catch (_) {\n    reason = 'conversation_state_unavailable';\n  }\n}\nreturn { json: { ...base, should_send_response: shouldSend, response_discard_reason: reason } };"
+      }
     },
     {
-      "parameters": { "respondWith": "json", "responseBody": "={{ { ok: true, channel: 'whatsapp', external_message_id: $('Preparar Evento Enviado').item.json.messageId, response: $('Preparar Evento Enviado').item.json.messageText, delivery_status: 'sent' } }}", "options": {} },
-      "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1, "position": [2940, 100], "id": "magia-whatsapp-response", "name": "Responder Evolution API"
+      "id": "magia-whatsapp-session-current",
+      "name": "Sessao ainda ativa?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.should_send_response }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "magia-whatsapp-response-cancelled",
+      "name": "Responder Resposta Cancelada",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        340
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, ignored: true, reason: $json.response_discard_reason, external_message_id: $json.messageId } }}",
+        "options": {}
+      }
     }
   ],
   "connections": {
-    "Webhook WhatsApp Evolution": { "main": [[{ "node": "Normalizar Entrada WhatsApp", "type": "main", "index": 0 }]] },
-    "Normalizar Entrada WhatsApp": { "main": [[{ "node": "Mensagem valida?", "type": "main", "index": 0 }]] },
-    "Mensagem valida?": { "main": [[{ "node": "Consultar Deduplicacao no Redis", "type": "main", "index": 0 }], [{ "node": "Responder Evento Ignorado", "type": "main", "index": 0 }]] },
-    "Consultar Deduplicacao no Redis": { "main": [[{ "node": "Verificar Duplicidade", "type": "main", "index": 0 }]] },
-    "Verificar Duplicidade": { "main": [[{ "node": "Mensagem nova?", "type": "main", "index": 0 }]] },
-    "Mensagem nova?": { "main": [[{ "node": "Marcar Mensagem no Redis", "type": "main", "index": 0 }], [{ "node": "Responder Duplicidade", "type": "main", "index": 0 }]] },
-    "Marcar Mensagem no Redis": { "main": [[{ "node": "Restaurar Contexto apos Redis", "type": "main", "index": 0 }]] },
-    "Restaurar Contexto apos Redis": { "main": [[{ "node": "E audio?", "type": "main", "index": 0 }]] },
-    "E audio?": { "main": [[{ "node": "Converter Audio para Arquivo", "type": "main", "index": 0 }], [{ "node": "Preparar Contexto JIW", "type": "main", "index": 0 }]] },
-    "Converter Audio para Arquivo": { "main": [[{ "node": "Transcrever Audio (OpenAI)", "type": "main", "index": 0 }]] },
-    "Transcrever Audio (OpenAI)": { "main": [[{ "node": "Aplicar Transcricao", "type": "main", "index": 0 }]] },
-    "Aplicar Transcricao": { "main": [[{ "node": "Preparar Contexto JIW", "type": "main", "index": 0 }]] },
-    "Preparar Contexto JIW": { "main": [[{ "node": "Assistente JIW (Gemini)", "type": "main", "index": 0 }]] },
-    "Gemini Chat Model": { "ai_languageModel": [[{ "node": "Assistente JIW (Gemini)", "type": "ai_languageModel", "index": 0 }]] },
-    "Memoria Redis da Conversa": { "ai_memory": [[{ "node": "Assistente JIW (Gemini)", "type": "ai_memory", "index": 0 }]] },
-    "Base de Conhecimento JIW (RAG)": { "ai_tool": [[{ "node": "Assistente JIW (Gemini)", "type": "ai_tool", "index": 0 }]] },
-    "Embeddings da Base JIW": { "ai_embedding": [[{ "node": "Base de Conhecimento JIW (RAG)", "type": "ai_embedding", "index": 0 }]] },
-    "Assistente JIW (Gemini)": { "main": [[{ "node": "Preparar Resposta JIW", "type": "main", "index": 0 }]] },
-    "Preparar Resposta JIW": { "main": [[{ "node": "Salvar Evento Recebido", "type": "main", "index": 0 }]] },
-    "Salvar Evento Recebido": { "main": [[{ "node": "Restaurar Contexto para Envio", "type": "main", "index": 0 }]] },
-    "Restaurar Contexto para Envio": { "main": [[{ "node": "Enviar Resposta pela Evolution", "type": "main", "index": 0 }]] },
-    "Enviar Resposta pela Evolution": { "main": [[{ "node": "Preparar Evento Enviado", "type": "main", "index": 0 }]] },
-    "Preparar Evento Enviado": { "main": [[{ "node": "Salvar Evento Enviado", "type": "main", "index": 0 }]] },
-    "Salvar Evento Enviado": { "main": [[{ "node": "Responder Evolution API", "type": "main", "index": 0 }]] }
+    "Webhook WhatsApp Evolution": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Entrada WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Entrada WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Mensagem valida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensagem valida?": {
+      "main": [
+        [
+          {
+            "node": "Consultar Deduplicacao no Redis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Evento Ignorado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Deduplicacao no Redis": {
+      "main": [
+        [
+          {
+            "node": "Verificar Duplicidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Duplicidade": {
+      "main": [
+        [
+          {
+            "node": "Mensagem nova?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensagem nova?": {
+      "main": [
+        [
+          {
+            "node": "Marcar Mensagem no Redis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Duplicidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar Mensagem no Redis": {
+      "main": [
+        [
+          {
+            "node": "Restaurar Contexto apos Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurar Contexto apos Redis": {
+      "main": [
+        [
+          {
+            "node": "E audio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E audio?": {
+      "main": [
+        [
+          {
+            "node": "Preparar Contexto JIW",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar Contexto JIW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Contexto JIW": {
+      "main": [
+        [
+          {
+            "node": "Salvar Evento Recebido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Assistente JIW (Gemini)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memoria Redis da Conversa": {
+      "ai_memory": [
+        [
+          {
+            "node": "Assistente JIW (Gemini)",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assistente JIW (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Preparar Resposta JIW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Resposta JIW": {
+      "main": [
+        [
+          {
+            "node": "Restaurar Contexto para Envio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salvar Evento Recebido": {
+      "main": [
+        [
+          {
+            "node": "Restaurar Contexto apos Salvar Inbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurar Contexto para Envio": {
+      "main": [
+        [
+          {
+            "node": "Validar Sessao Antes do Envio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Resposta pela Evolution": {
+      "main": [
+        [
+          {
+            "node": "Preparar Evento Enviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Evento Enviado": {
+      "main": [
+        [
+          {
+            "node": "Salvar Evento Enviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salvar Evento Enviado": {
+      "main": [
+        [
+          {
+            "node": "Responder Evolution API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA WhatsApp permitida?": {
+      "main": [
+        [
+          {
+            "node": "Assistente JIW (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta sem Gemini WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resposta sem Gemini WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Preparar Resposta JIW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurar Contexto apos Salvar Inbound": {
+      "main": [
+        [
+          {
+            "node": "IA WhatsApp permitida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Sessao Antes do Envio": {
+      "main": [
+        [
+          {
+            "node": "Sessao ainda ativa?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sessao ainda ativa?": {
+      "main": [
+        [
+          {
+            "node": "Enviar Resposta pela Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Resposta Cancelada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "pinData": {},
   "tags": []
 }

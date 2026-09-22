@@ -20,6 +20,7 @@ migrations/010_broadcasts_and_appointments.sql
 migrations/011_ai_knowledge_pgvector.sql
 migrations/012_standard_kanban_four_columns.sql
 migrations/013_security_schema_alignment.sql
+migrations/015_align_tenant_member_roles.sql
 seeds/jiw_seed.sql
 seeds/jiw_service_catalog_seed.sql
 ```

@@ -1,20 +1,134 @@
-Vou falar aqui de maneira mais fácil e direta, meus manos 
+CRIANDO UM NOVO CLIENTE NO NORIA / MAG.IA
+==========================================
+
+Objetivo deste documento
+------------------------
+
+Este arquivo e o passo a passo oficial para cadastrar um novo cliente
+multi-tenant no sistema.
+
+Ele cobre:
+
+1. Criacao do usuario no Supabase Auth.
+2. Criacao do tenant.
+3. Vinculo do usuario ao tenant.
+4. Configuracao de prompt e IA.
+5. Configuracao do Kanban do cliente.
+6. Cadastro do canal WhatsApp via Evolution API.
+7. Configuracao do webhook na Evolution.
+8. Checklist de teste.
+
+Exemplo usado neste documento:
+
+Cliente: Universo Prata
+Slug: universo_prata
+Canal inicial: WhatsApp
+Objetivo: atendimento comercial para joias/prata, apresentacao de produtos,
+conducao de venda e transferencia para humano quando necessario.
+
+
+ANTES DE COMECAR
+-----------------
+
+Confirme que estas etapas ja foram feitas no ambiente:
+
+1. Migration 015 ja rodada no Supabase:
+   supabase/migrations/015_align_tenant_member_roles.sql
+
+2. Workflow WhatsApp atualizado importado no n8n:
+   n8n/workflows/magia_whatsapp_evolution_mvp.json
+
+3. Workflow Command Router atualizado importado no n8n:
+   n8n/workflows/magia_command_router.json
+
+4. Workflow WhatsApp ativo no n8n.
+
+5. URL publica do webhook WhatsApp disponivel:
+   https://auton8n-n8n.tplv5d.easypanel.host/webhook/magia-whatsapp
+
+6. Evolution API acessivel e com permissao para criar/conectar instancias.
+
+
+PADRAO DE SLUG
+--------------
+
+Use sempre slug em minusculo, sem acento e com underline.
+
+Exemplos corretos:
+
+universo_prata
+clinica_nubia
+jiw
+
+Evite:
+
+Universo_Prata
+universo prata
+universo-prata
+universoprata
+
+O slug e usado para filtrar dados do cliente na interface e no n8n.
+
+
+1. CRIAR USUARIO NO SUPABASE AUTH
+---------------------------------
 
 No Supabase:
+
 Authentication > Users > Add user
-Preencha tudo direitinho :) 
 
-Em seguida, devemos criar o tenant. Cada usuário é um tenant,
-por isso nosso sistema é multitenant! :D 
+Preencha:
 
-Pra criar, siga esse SQL no SQL editor do Supabase: 
+- Email do dono/operador.
+- Senha inicial.
+- Confirm email: pode deixar confirmado para teste/onboarding.
+
+Depois de criar, copie o email usado.
+O SQL de membership usa esse email para encontrar o user_id em auth.users.
+
+Exemplo:
+
+email_owner@dominio.com
 
 
-insert into tenants (slug, name, industry, plan, status)
+2. CRIAR TENANT, USUARIO, IA, KANBAN E CANAL WHATSAPP
+-----------------------------------------------------
+
+Rode o SQL abaixo no Supabase SQL Editor.
+
+Antes de rodar, ajuste obrigatoriamente:
+
+- AJUSTAR_EMAIL_OWNER
+- AJUSTAR_INSTANCIA_EVOLUTION
+- AJUSTAR_TELEFONE_WHATSAPP
+
+Para o caso Universo Prata, sugestao:
+
+- slug: universo_prata
+- name: Universo Prata
+- industry: Joias, prata e varejo
+- instancia Evolution: universo_prata
+- telefone: numero conectado na Evolution em formato internacional, so numeros
+
+Formato do telefone:
+
+55 + DDD + numero
+
+Exemplo:
+
+5521999999999
+
+
+SQL COMPLETO - EXEMPLO UNIVERSO PRATA
+-------------------------------------
+
+begin;
+
+insert into public.tenants (slug, name, industry, plan, status)
 values (
-  'slug_do_cliente',
-  'Nome do Cliente',
-  'Segmento',
+  'universo_prata',
+  'Universo Prata',
+  'Joias, prata e varejo',
   'mvp',
   'active'
 )
@@ -26,61 +140,598 @@ set
   status = excluded.status,
   updated_at = now();
 
-
-O que você precisa alterar é simples:
-  'slug_do_cliente',
-  'Nome do Cliente',
-  'Segmento',
-
-Exemplo:
-
-insert into tenants (slug, name, industry, plan, status)
-values (
-  'clinica_nubia',
-  'Clínica da Núbia',
-  'Estética e bronzeamento',
-  'mvp',
-  'active'
-)
-...
-
-
-
-Tudo certo até aqui? 
-Se não tiver, desista. Procure outro rumo na vida. 
-
-Em seguida, precisamos associar o usuário que criamos ao 
-tenant dele. 
-
-Pra fazer isso, vamos rodar outro SQL no Supabase:
-
-
-insert into tenant_members (tenant_id, user_id, role, status)
+insert into public.tenant_members (tenant_id, user_id, email, role, status)
 select
   t.id,
   u.id,
+  u.email,
   'owner',
   'active'
-from tenants t
-join auth.users u on u.email = 'email_do_usuario@dominio.com'
-where t.slug = 'slug_do_cliente'
+from public.tenants t
+join auth.users u on u.email = 'AJUSTAR_EMAIL_OWNER'
+where t.slug = 'universo_prata'
 on conflict (tenant_id, user_id) do update
 set
+  email = excluded.email,
   role = excluded.role,
   status = excluded.status,
   updated_at = now();
 
+insert into public.channels (
+  tenant_id,
+  type,
+  name,
+  external_id,
+  status,
+  credentials_ref,
+  config
+)
+select
+  t.id,
+  'whatsapp',
+  'WhatsApp - Universo Prata',
+  'AJUSTAR_INSTANCIA_EVOLUTION',
+  'active',
+  'evolution_api',
+  jsonb_build_object(
+    'instance_name', 'AJUSTAR_INSTANCIA_EVOLUTION',
+    'phone', 'AJUSTAR_TELEFONE_WHATSAPP',
+    'webhook_url', 'https://auton8n-n8n.tplv5d.easypanel.host/webhook/magia-whatsapp'
+  )
+from public.tenants t
+where t.slug = 'universo_prata'
+on conflict (tenant_id, type, external_id) do update
+set
+  name = excluded.name,
+  status = excluded.status,
+  credentials_ref = excluded.credentials_ref,
+  config = excluded.config,
+  updated_at = now();
 
-Nesse SQL a gente só muda duas coisas:
-  'owner',
-  'active'
+insert into public.tenant_settings (
+  tenant_id,
+  timezone,
+  business_hours,
+  fallback_message,
+  handoff_message,
+  settings
+)
+select
+  t.id,
+  'America/Sao_Paulo',
+  jsonb_build_object(
+    'timezone', 'America/Sao_Paulo',
+    'days', jsonb_build_array('segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'),
+    'start', '09:00',
+    'end', '18:00'
+  ),
+  'Desculpe, nao consegui entender com seguranca. Pode me explicar de outra forma?',
+  'Vou encaminhar sua conversa para uma pessoa da equipe continuar o atendimento por aqui.',
+  jsonb_build_object(
+    'ai_enabled', true,
+    'ai_provider', 'gemini',
+    'ai_model', 'gemini-2.5-flash',
+    'gemini_daily_limit', 80,
+    'media_ai_enabled', false,
+    'debounce_window_ms', 10000,
+    'fragment_debounce_window_ms', 25000,
+    'tone', 'simpatico, comercial, objetivo e natural',
+    'service_categories', jsonb_build_array(
+      'aneis',
+      'colares',
+      'brincos',
+      'pulseiras',
+      'presentes',
+      'colecoes',
+      'lives',
+      'vendas',
+      'atendimento humano'
+    ),
+    'handoff_rules', jsonb_build_array(
+      'cliente pedir atendente humano',
+      'reclamacao',
+      'problema com pagamento',
+      'negociacao especial',
+      'informacao indisponivel na base',
+      'situacao fora das regras cadastradas'
+    ),
+    'system_prompt', $prompt$
+Voce e a assistente virtual de vendas da Universo Prata.
 
-pra primeira opção vamos usar 'owner' pro dono do negócio 
-(tipo a núbia), e 'agent' pra funcionários desse negócio. 
+Seu objetivo e conversar com clientes de forma natural, entender o que estao
+procurando, apresentar produtos compativeis e conduzir a conversa para uma
+possivel compra.
+
+Use portugues brasileiro e mensagens adequadas para WhatsApp.
+
+Seja simpatica, objetiva e comercial, sem pressionar a cliente.
+
+Evite textos muito grandes. Normalmente responda com 1 a 3 frases.
+
+Faca apenas uma pergunta por vez sempre que possivel.
+
+Nao transforme a conversa em um questionario.
+
+Sempre considere tudo o que a cliente ja informou anteriormente.
+
+PRODUTOS
+
+Utilize somente produtos, precos, estoque, colecoes, links e informacoes
+disponiveis na base fornecida pelo sistema ou na conversa.
+
+Nunca invente:
+
+- produto;
+- preco;
+- estoque;
+- promocao;
+- desconto;
+- prazo;
+- condicao de pagamento.
+
+Caso nao tenha uma informacao, diga isso normalmente e encaminhe para uma
+pessoa da equipe quando necessario.
+
+ATENDIMENTO COMERCIAL
+
+Quando a cliente explicar o que procura, apresente poucas opcoes relevantes.
+
+Evite enviar muitas opcoes de uma vez.
+
+Continue a conversa de acordo com a reacao da cliente.
+
+Quando houver sinais claros de interesse em compra, conduza para o proximo
+passo.
+
+Exemplos de intencao forte:
+
+- quero esse;
+- gostei desse;
+- como compro;
+- tem disponivel;
+- tem meu tamanho;
+- me manda o link;
+- quanto fica.
+
+Nao transfira para humano apenas porque a cliente quer comprar.
+Tente conduzir a venda sempre que possuir as informacoes necessarias.
+
+KANBAN
+
+Durante a conversa, identifique mentalmente em qual etapa o atendimento esta:
+
+NOVO_CONTATO:
+quando ainda nao souber o que a cliente procura.
+
+INTERESSE_IDENTIFICADO:
+quando entender o tipo de produto ou necessidade.
+
+PRODUTOS_APRESENTADOS:
+quando ja tiver apresentado produtos.
+
+INTERESSE_COMPRA:
+quando a cliente demonstrar intencao real de comprar.
+
+AGUARDANDO_FINALIZACAO:
+quando a cliente ja tiver escolhido e estiver finalizando a compra.
+
+VENDA_CONCLUIDA:
+somente quando houver confirmacao real de venda concluida.
+
+AGUARDANDO_HUMANO:
+quando a cliente pedir atendente, houver reclamacao, problema de pagamento,
+negociacao especial, falta de informacao ou situacao fora das regras.
+
+ATENDIMENTO HUMANO
+
+Use atendimento humano quando:
+
+- a cliente pedir uma pessoa;
+- voce nao tiver informacao suficiente;
+- houver problema;
+- houver reclamacao;
+- houver negociacao especial;
+- houver situacao fora das regras cadastradas.
+
+Quando precisar transferir, responda de forma natural e inclua a tag interna:
+[HUMANO_SOLICITADO]
+
+FORMATO
+
+- Nao diga que e inteligencia artificial.
+- Nao explique o funcionamento interno do sistema.
+- Nao exponha tags tecnicas para a cliente.
+- Nao use Markdown.
+- Para listas, use bullets simples apenas quando necessario.
+- Responda somente com a mensagem que deve ser enviada ao cliente.
+$prompt$
+  )
+from public.tenants t
+where t.slug = 'universo_prata'
+on conflict (tenant_id) do update
+set
+  timezone = excluded.timezone,
+  business_hours = excluded.business_hours,
+  fallback_message = excluded.fallback_message,
+  handoff_message = excluded.handoff_message,
+  settings = excluded.settings,
+  updated_at = now();
+
+with tenant_row as (
+  select id
+  from public.tenants
+  where slug = 'universo_prata'
+),
+updated_agent as (
+  update public.ai_agents a
+  set
+    provider = 'gemini',
+    model = 'gemini-2.5-flash',
+    temperature = 0.4,
+    max_tokens = 700,
+    active_prompt_version = 1,
+    settings = jsonb_build_object(
+      'purpose', 'atendimento comercial e vendas por WhatsApp',
+      'channel', 'whatsapp'
+    ),
+    updated_at = now()
+  from tenant_row t
+  where a.tenant_id = t.id
+    and a.name = 'Atendente Universo Prata'
+  returning a.id
+)
+insert into public.ai_agents (
+  tenant_id,
+  name,
+  provider,
+  model,
+  temperature,
+  max_tokens,
+  active_prompt_version,
+  settings
+)
+select
+  t.id,
+  'Atendente Universo Prata',
+  'gemini',
+  'gemini-2.5-flash',
+  0.4,
+  700,
+  1,
+  jsonb_build_object(
+    'purpose', 'atendimento comercial e vendas por WhatsApp',
+    'channel', 'whatsapp'
+  )
+from tenant_row t
+where not exists (select 1 from updated_agent);
+
+insert into public.ai_prompt_versions (
+  tenant_id,
+  ai_agent_id,
+  version,
+  prompt,
+  guardrails,
+  tools,
+  active
+)
+select
+  t.id,
+  a.id,
+  1,
+  ts.settings->>'system_prompt',
+  jsonb_build_array(
+    'nao_inventar_produtos',
+    'nao_inventar_precos',
+    'nao_inventar_estoque',
+    'nao_expor_tags_internas',
+    'transferir_quando_faltar_informacao'
+  ),
+  jsonb_build_array(
+    'handoff',
+    'kanban_stage_update',
+    'product_catalog'
+  ),
+  true
+from public.tenants t
+join lateral (
+  select *
+  from public.ai_agents a
+  where a.tenant_id = t.id
+    and a.name = 'Atendente Universo Prata'
+  order by a.created_at desc
+  limit 1
+) a on true
+join public.tenant_settings ts on ts.tenant_id = t.id
+where t.slug = 'universo_prata'
+on conflict (ai_agent_id, version) do update
+set
+  prompt = excluded.prompt,
+  guardrails = excluded.guardrails,
+  tools = excluded.tools,
+  active = excluded.active;
+
+update public.kanban_boards
+set is_default = false
+where tenant_id = (select id from public.tenants where slug = 'universo_prata');
+
+insert into public.kanban_boards (tenant_id, name, is_default)
+select
+  t.id,
+  'Kanban Comercial - Universo Prata',
+  true
+from public.tenants t
+where t.slug = 'universo_prata'
+  and not exists (
+    select 1
+    from public.kanban_boards b
+    where b.tenant_id = t.id
+      and b.name = 'Kanban Comercial - Universo Prata'
+  );
+
+update public.kanban_boards b
+set is_default = true
+from public.tenants t
+where t.id = b.tenant_id
+  and t.slug = 'universo_prata'
+  and b.name = 'Kanban Comercial - Universo Prata';
+
+delete from public.kanban_columns
+where board_id = (
+  select b.id
+  from public.kanban_boards b
+  join public.tenants t on t.id = b.tenant_id
+  where t.slug = 'universo_prata'
+    and b.name = 'Kanban Comercial - Universo Prata'
+  limit 1
+);
+
+insert into public.kanban_columns (tenant_id, board_id, name, position, automation_key)
+select
+  b.tenant_id,
+  b.id,
+  col.name,
+  col.position,
+  col.automation_key
+from public.kanban_boards b
+join public.tenants t on t.id = b.tenant_id
+cross join (values
+  ('Novo contato', 1, 'conversas_ia'),
+  ('Interesse identificado', 2, 'conversas_andamento'),
+  ('Produtos apresentados', 3, 'produtos_apresentados'),
+  ('Interesse em compra', 4, 'interesse_compra'),
+  ('Aguardando finalizacao', 5, 'aguardando_finalizacao'),
+  ('Aguardando humano', 6, 'aguardando_humano'),
+  ('Venda concluida', 7, 'finalizadas')
+) as col(name, position, automation_key)
+where t.slug = 'universo_prata'
+  and b.name = 'Kanban Comercial - Universo Prata';
+
+notify pgrst, 'reload schema';
+
+commit;
 
 
-pra segunda opção, podemos usar 'active' para clientes que
-estão ativos e 'suspended' para clientes suspensos. 
+3. CONFIGURAR A INSTANCIA NO EVOLUTION API
+------------------------------------------
+
+Na Evolution API:
+
+1. Crie uma nova instancia para o cliente.
+2. Use como nome da instancia o mesmo valor cadastrado em channels.external_id.
+3. Exemplo recomendado:
+
+   universo_prata
+
+4. Conecte o WhatsApp escaneando o QR Code.
+5. Confirme que a instancia esta como conectada/open.
+
+Atencao:
+
+O nome da instancia precisa bater com o Supabase.
+O workflow WhatsApp resolve o tenant comparando a instancia recebida da Evolution
+com:
+
+- channels.external_id
+- channels.config.instance_name
+- channels.config.instance
+- channels.config.evolution_instance
+
+Se isso nao bater, o workflow pode cair no tenant fallback.
 
 
+4. CONFIGURAR WEBHOOK DO WHATSAPP NA EVOLUTION
+----------------------------------------------
 
+Configure o webhook da instancia na Evolution com:
+
+https://auton8n-n8n.tplv5d.easypanel.host/webhook/magia-whatsapp
+
+Evento principal:
+
+MESSAGES_UPSERT
+
+Para o teste inicial, ative somente esse evento.
+
+Nao coloque tenant_slug na URL do WhatsApp.
+No WhatsApp, o tenant deve ser resolvido pela instancia recebida da Evolution.
+
+
+5. CONFIGURACOES DO N8N / EASYPANEL
+-----------------------------------
+
+O fluxo WhatsApp atual depende das credenciais globais dos nodes ativos:
+
+- Supabase
+- Redis
+- Gemini
+- Evolution API
+
+Para WhatsApp, normalmente nao e necessario criar uma variavel por cliente
+com token, porque a Evolution centraliza as instancias.
+
+O ponto essencial por cliente e:
+
+- instancia criada na Evolution;
+- instancia cadastrada em public.channels;
+- webhook apontando para /webhook/magia-whatsapp.
+
+Se o ambiente ainda usa fallback, confira se existe:
+
+WHATSAPP_TENANT_SLUG
+DEFAULT_TENANT_SLUG
+
+Essas variaveis so devem ser fallback.
+Elas nao devem ser a forma principal de identificar clientes com WhatsApp.
+
+
+6. CHECKLIST DE TESTE DO NOVO CLIENTE
+-------------------------------------
+
+Depois de rodar o SQL e configurar a Evolution:
+
+1. Entre na interface com o usuario criado no Supabase Auth.
+2. Confirme que o usuario enxerga somente o tenant Universo Prata.
+3. Abra Dashboard.
+4. Abra Conversas.
+5. Envie uma mensagem para o WhatsApp conectado.
+6. Confirme que a mensagem aparece na aba Conversas.
+7. Confirme que a IA responde.
+8. Abra Kanban.
+9. Confirme que o card aparece no Kanban do tenant.
+10. Envie uma mensagem pedindo atendente humano.
+11. Confirme que o card vai para Aguardando humano ou Conversas com humanos,
+    conforme a configuracao atual do frontend.
+12. Responda manualmente pela interface.
+13. Confirme que a resposta chega no WhatsApp.
+
+
+7. SQL DE VALIDACAO
+-------------------
+
+Depois do cadastro, rode:
+
+select
+  t.slug,
+  t.name,
+  t.status,
+  tm.email,
+  tm.role,
+  tm.status as member_status
+from public.tenants t
+left join public.tenant_members tm on tm.tenant_id = t.id
+where t.slug = 'universo_prata';
+
+select
+  t.slug,
+  c.type,
+  c.name,
+  c.external_id,
+  c.status,
+  c.config
+from public.channels c
+join public.tenants t on t.id = c.tenant_id
+where t.slug = 'universo_prata';
+
+select
+  t.slug,
+  ts.settings->>'ai_enabled' as ai_enabled,
+  ts.settings->>'ai_provider' as ai_provider,
+  ts.settings->>'ai_model' as ai_model,
+  ts.settings->>'gemini_daily_limit' as gemini_daily_limit
+from public.tenant_settings ts
+join public.tenants t on t.id = ts.tenant_id
+where t.slug = 'universo_prata';
+
+select
+  t.slug,
+  a.name as agent_name,
+  a.provider,
+  a.model,
+  pv.version,
+  pv.active
+from public.ai_agents a
+join public.tenants t on t.id = a.tenant_id
+left join public.ai_prompt_versions pv on pv.ai_agent_id = a.id
+where t.slug = 'universo_prata';
+
+select
+  kb.name as board_name,
+  kc.name as column_name,
+  kc.position,
+  kc.automation_key
+from public.kanban_boards kb
+join public.kanban_columns kc on kc.board_id = kb.id
+join public.tenants t on t.id = kb.tenant_id
+where t.slug = 'universo_prata'
+  and kb.is_default = true
+order by kc.position;
+
+
+8. LIMITACOES IMPORTANTES NO ESTADO ATUAL
+-----------------------------------------
+
+O cadastro acima deixa o cliente pronto para:
+
+- login na interface;
+- isolamento por tenant;
+- WhatsApp conectado pela Evolution;
+- prompt especifico por cliente;
+- IA ativa via Gemini;
+- visualizacao das conversas;
+- resposta manual pela interface;
+- Kanban customizado visualmente por cliente.
+
+Ponto importante:
+
+A interface ja carrega colunas customizadas por tenant, mas a movimentacao
+automatica fina do Kanban ainda depende das chaves reconhecidas pelo frontend
+e pelo workflow.
+
+Hoje, as chaves mais seguras para automacao sao:
+
+- conversas_ia
+- conversas_andamento
+- aguardando_humano
+- com_humano
+- verificar_sinal
+- agendamentos
+- finalizadas
+- conversas_abandonadas
+
+No exemplo Universo Prata, algumas colunas comerciais usam chaves futuras:
+
+- produtos_apresentados
+- interesse_compra
+- aguardando_finalizacao
+
+Essas colunas aparecem no Kanban, mas a movimentacao automatica para elas pode
+exigir ajuste posterior no frontend/workflow para classificar etapas comerciais
+com mais precisao.
+
+Para teste inicial do novo WhatsApp, isso nao bloqueia o cadastro.
+Para entregar o Kanban comercial perfeito da Universo Prata, o proximo passo
+tecnico e adicionar classificacao estruturada de etapa comercial no workflow
+e mapear essas etapas no frontend.
+
+
+9. COMO ADAPTAR PARA OUTRO CLIENTE
+----------------------------------
+
+Para criar outro cliente, replique o SQL e troque:
+
+- universo_prata
+- Universo Prata
+- Joias, prata e varejo
+- AJUSTAR_EMAIL_OWNER
+- AJUSTAR_INSTANCIA_EVOLUTION
+- AJUSTAR_TELEFONE_WHATSAPP
+- nome do agente de IA
+- prompt
+- colunas do Kanban
+- categorias de servico/produto
+- regras de handoff
+- limite diario Gemini, se necessario
+
+Nunca reaproveite o mesmo slug para clientes diferentes.
+Nunca cadastre duas instancias Evolution diferentes com o mesmo external_id
+dentro do mesmo tenant.

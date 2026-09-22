@@ -95,7 +95,7 @@ async function main(helpers) {
     );
     const membership = Array.isArray(rows) ? rows[0] : null;
     if (!membership) throw new Error('Usuario sem permissao para este tenant');
-    if (!['owner', 'admin', 'manager', 'agent'].includes(String(membership.role))) {
+    if (!['owner', 'admin', 'manager', 'agent', 'operator'].includes(String(membership.role))) {
       throw new Error('Role sem permissao para enviar mensagens');
     }
     return membership;

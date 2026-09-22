@@ -1,0 +1,310 @@
+function env(name, fallback = '') {
+  try { return $env[name] || fallback; } catch (error) { return fallback; }
+}
+function normalize(value) { return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+function hasAny(value, values) { return values.some((item) => value.includes(item)); }
+function todayKey() { return new Date().toISOString().slice(0, 10); }
+function settingsObject(row) { return row?.settings && typeof row.settings === 'object' ? row.settings : {}; }
+function objectValue(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+}
+function arrayValue(value) { return Array.isArray(value) ? value : []; }
+function getMediaCatalog(settings) {
+  const direct = arrayValue(settings.product_media_catalog || settings.productMediaCatalog);
+  if (direct.length) return direct;
+  const nested = settings.product_catalog && typeof settings.product_catalog === 'object'
+    ? arrayValue(settings.product_catalog.categories)
+    : [];
+  return nested;
+}
+function mediaItemsForCategory(category) {
+  return arrayValue(category.items || category.media || category.images || category.assets)
+    .filter((item) => item && (item.url || item.media || item.image_url || item.imageUrl))
+    .slice(0, Number(category.max_items || category.maxItems || 3));
+}
+function categoryAliases(category) {
+  return [
+    category.category_key,
+    category.key,
+    category.slug,
+    category.label,
+    category.name,
+    ...arrayValue(category.aliases),
+  ].filter(Boolean).map(normalize).filter(Boolean);
+}
+function detectMediaCategory(settings, text) {
+  const catalog = getMediaCatalog(settings);
+  if (!catalog.length) return null;
+  const normalizedText = normalize(text);
+  for (const category of catalog) {
+    const aliases = categoryAliases(category);
+    if (aliases.some((alias) => normalizedText.includes(alias))) {
+      const items = mediaItemsForCategory(category);
+      if (items.length) return { ...category, aliases, items };
+    }
+  }
+  return null;
+}
+function wantsMediaResend(text) {
+  const normalizedText = normalize(text);
+  return hasAny(normalizedText, [
+    'manda de novo', 'envia de novo', 'reenvia', 'manda tudo', 'manda todas', 'manda as fotos',
+    'envia as fotos', 'quero ver', 'mostra', 'me manda', 'nao chegou', 'nao recebi', 'foto', 'fotos', 'opcoes'
+  ]);
+}
+function isConversationBoundary(event) {
+  return event.service === 'conversation_closed'
+    || ['conversation_closed', 'conversation_reset'].includes(event.ai_provider)
+    || ['finalizado', 'finalizada', 'encerrado', 'reset'].includes(normalize(event.stage))
+    || String(event.message_text || '').trim() === '/reset';
+}
+function previousMediaCategory(settings, events) {
+  for (const event of arrayValue(events)) {
+    if (isConversationBoundary(event)) break;
+    const payload = objectValue(event.raw_payload);
+    const key = payload.detected_product_category_key || arrayValue(payload.product_media_matches)[0]?.category_key;
+    const category = getMediaCatalog(settings).find((item) => key && (item.category_key || item.key || item.slug) === key);
+    if (category) return { ...category, items: mediaItemsForCategory(category) };
+    if (event.direction === 'inbound') {
+      const detected = detectMediaCategory(settings, event.message_text);
+      if (detected) return detected;
+    }
+  }
+  return null;
+}
+
+const message = String($json.messageText || '').trim();
+const value = normalize(message);
+let service = 'geral'; let stage = 'Qualificacao'; let handoff = false;
+if (hasAny(value, ['orcamento', 'proposta', 'contrato', 'preco', 'valor'])) { service = 'comercial'; stage = 'Orcamento solicitado'; handoff = true; }
+else if (hasAny(value, ['urgente', 'fora do ar', 'parado', 'caiu', 'nao funciona', 'erro'])) { service = 'suporte_ti'; stage = 'Suporte tecnico'; handoff = true; }
+else if (hasAny(value, ['sistema', 'software', 'app', 'site', 'dashboard', 'api', 'integracao', 'automacao'])) { service = 'software_automacao'; stage = 'Briefing necessario'; }
+else if (hasAny(value, ['trafego', 'anuncio', 'google ads', 'meta ads', 'campanha', 'leads'])) { service = 'trafego_pago'; stage = 'Briefing necessario'; }
+else if (hasAny(value, ['social media', 'instagram', 'conteudo', 'post', 'reels', 'criativo'])) { service = 'social_media'; stage = 'Briefing necessario'; }
+else if (hasAny(value, ['humano', 'atendente', 'especialista', 'ligar', 'pessoa'])) { service = 'atendimento_humano'; stage = 'Atendimento humano'; handoff = true; }
+else if (hasAny(value, ['agendar', 'agenda', 'reuniao', 'horario', 'visita'])) { service = 'agendamento'; stage = 'Agendamento'; }
+
+let previousEvents = [];
+let tenantSettings = {};
+let tenantAgent = {};
+let tenantId = '';
+const contextLoadErrors = [];
+let contextLoadStep = 'tenant';
+function recordContextError(step, error) {
+  contextLoadErrors.push({ step, status: Number(error?.statusCode || error?.response?.status || error?.httpCode || 0) || null });
+}
+const supabaseUrl = env('SUPABASE_URL').replace(/\/$/, '');
+const serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');
+if (!supabaseUrl || !serviceKey) recordContextError('missing_supabase_env_in_code_node');
+const headers = { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey, 'Content-Type': 'application/json' };
+let conversationBoundary = null;
+let conversationStateOk = false;
+const conversationFilter = '&tenant_slug=eq.' + encodeURIComponent($json.tenant_slug)
+  + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeURIComponent($json.remoteJid);
+const boundaryFilter = '&or=(service.eq.conversation_closed,ai_provider.eq.conversation_closed,ai_provider.eq.conversation_reset,stage.eq.Reset,stage.eq.reset,message_text.eq.%2Freset)';
+if (supabaseUrl && serviceKey && $json.remoteJid) {
+  try {
+    const rows = await this.helpers.httpRequest({
+      method: 'GET',
+      url: supabaseUrl + '/rest/v1/channel_events?select=id,external_message_id,created_at'
+        + conversationFilter + boundaryFilter + '&order=created_at.desc,id.desc&limit=1',
+      headers, json: true, timeout: 5000,
+    });
+    if (!Array.isArray(rows)) throw new Error('Invalid conversation boundary response');
+    conversationBoundary = rows[0] || null;
+    conversationStateOk = true;
+  } catch (error) {
+    recordContextError('conversation_boundary', error);
+  }
+}
+// The persisted close event is a stable generation marker, even outside the history window.
+const conversationSessionId = String(conversationBoundary?.id || 'initial');
+const memorySessionKey = conversationBoundary
+  ? 'magia:chat:v2:' + [$json.tenant_slug, 'whatsapp', $json.remoteJid, conversationSessionId]
+    .map((part) => encodeURIComponent(String(part || ''))).join(':')
+  : 'magia:chat:' + $json.tenant_slug + ':' + $json.remoteJid;
+if (supabaseUrl && serviceKey && $json.remoteJid) {
+  try {
+    previousEvents = await this.helpers.httpRequest({
+      method: 'GET',
+      url: supabaseUrl
+        + '/rest/v1/channel_events?select=id,direction,stage,service,message_text,response_text,raw_payload,created_at&tenant_slug=eq.' + encodeURIComponent($json.tenant_slug)
+        + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeURIComponent($json.remoteJid)
+        + (conversationBoundary?.created_at ? '&created_at=gt.' + encodeURIComponent(conversationBoundary.created_at) : '')
+        + '&order=created_at.desc&limit=40',
+      headers,
+      json: true,
+      timeout: 5000,
+    });
+  } catch (error) {
+    recordContextError('history', error);
+    previousEvents = [];
+  }
+}
+
+previousEvents = arrayValue(previousEvents);
+const boundaryIndex = previousEvents.findIndex(isConversationBoundary);
+if (boundaryIndex >= 0) previousEvents = previousEvents.slice(0, boundaryIndex);
+if (conversationBoundary?.created_at) {
+  previousEvents = previousEvents.filter((event) => Date.parse(event.created_at) > Date.parse(conversationBoundary.created_at));
+}
+if (!conversationStateOk) previousEvents = [];
+
+let activeSystemPrompt = '';
+if (supabaseUrl && serviceKey && $json.tenant_slug) {
+  try {
+    const tenantRows = await this.helpers.httpRequest({
+      method: 'GET',
+      url: supabaseUrl + '/rest/v1/tenants?select=id,name,industry&slug=eq.' + encodeURIComponent($json.tenant_slug) + '&limit=1',
+      headers,
+      json: true,
+      timeout: 5000,
+    });
+    const tenant = Array.isArray(tenantRows) ? tenantRows[0] : null;
+    tenantId = tenant?.id || '';
+    if (!tenantId) recordContextError('tenant_not_found');
+    if (tenantId) {
+      contextLoadStep = 'tenant_settings';
+      const settingRows = await this.helpers.httpRequest({
+        method: 'GET',
+        url: supabaseUrl + '/rest/v1/tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(tenantId) + '&limit=1',
+        headers,
+        json: true,
+        timeout: 5000,
+      });
+      tenantSettings = settingsObject(Array.isArray(settingRows) ? settingRows[0] : null);
+      if (!Array.isArray(settingRows) || !settingRows.length) recordContextError('tenant_settings_not_found');
+      activeSystemPrompt = String(tenantSettings.system_prompt || '').trim();
+
+      const agentRows = await this.helpers.httpRequest({
+        method: 'GET',
+        url: supabaseUrl + '/rest/v1/ai_agents?select=model,temperature,max_tokens,settings&tenant_id=eq.' + encodeURIComponent(tenantId) + '&provider=eq.gemini&limit=1',
+        headers,
+        json: true,
+        timeout: 5000,
+      }).catch(() => []);
+      tenantAgent = Array.isArray(agentRows) ? (agentRows[0] || {}) : {};
+
+      contextLoadStep = 'prompt_versions';
+      const promptRows = await this.helpers.httpRequest({
+        method: 'GET',
+        url: supabaseUrl + '/rest/v1/ai_prompt_versions?select=prompt&tenant_id=eq.' + encodeURIComponent(tenantId) + '&active=eq.true&order=version.desc&limit=1',
+        headers,
+        json: true,
+        timeout: 5000,
+      });
+      activeSystemPrompt = String(Array.isArray(promptRows) ? promptRows[0]?.prompt || '' : '').trim();
+      if (!activeSystemPrompt) activeSystemPrompt = String(tenantSettings.system_prompt || '').trim();
+    }
+  } catch (error) {
+    recordContextError(contextLoadStep, error);
+    activeSystemPrompt = String(tenantSettings.system_prompt || '').trim();
+  }
+}
+const paymentSettings = tenantSettings.payment && typeof tenantSettings.payment === 'object' ? tenantSettings.payment : {};
+const serviceCategories = arrayValue(tenantSettings.service_categories).map(normalize);
+const commerceMode = tenantSettings.commerce_mode === true
+  || String(tenantSettings.commerce_mode).toLowerCase() === 'true'
+  || serviceCategories.some((item) => ['aneis', 'pulseiras', 'cordoes', 'pedras', 'joias', 'prata'].includes(item));
+if (commerceMode && service === 'comercial' && !hasAny(value, ['orcamento', 'proposta', 'contrato'])) {
+  service = 'catalogo_produtos';
+  stage = 'Qualificacao';
+  handoff = false;
+}
+const paymentTrigger = normalize(tenantSettings.appointment_payment_trigger || tenantSettings.payment_signal_trigger || paymentSettings.signal_trigger || 'SINAL PAGO');
+const paymentAliases = [paymentTrigger, 'sinal pago', 'paguei o sinal', 'paguei sinal', 'pagamento realizado', 'pix feito', 'pix realizado'].map(normalize).filter(Boolean);
+const paymentSignalDetected = paymentAliases.some((alias) => value.includes(alias));
+if (paymentSignalDetected) {
+  service = 'pagamento_sinal';
+  stage = tenantSettings.payment_signal_stage || paymentSettings.stage || 'Verificar Sinal';
+  handoff = true;
+}
+const directMediaCategory = detectMediaCategory(tenantSettings, message);
+const detectedMediaCategory = directMediaCategory
+  || (wantsMediaResend(message) ? previousMediaCategory(tenantSettings, previousEvents) : null);
+let productMediaMatches = detectedMediaCategory ? detectedMediaCategory.items.map((item, index) => ({
+  category_key: detectedMediaCategory.category_key || detectedMediaCategory.key || detectedMediaCategory.slug || detectedMediaCategory.label || detectedMediaCategory.name || 'categoria',
+  category_label: detectedMediaCategory.label || detectedMediaCategory.name || detectedMediaCategory.category_key || 'categoria',
+  title: item.title || item.name || detectedMediaCategory.label || 'Produto disponivel',
+  caption: item.caption || item.title || item.name || '',
+  url: item.url || item.media || item.image_url || item.imageUrl,
+  mimetype: item.mimetype || item.mime_type || 'image/jpeg',
+  file_name: item.file_name || item.fileName || 'produto-' + String(index + 1) + '.jpg',
+  source: item.source || '',
+})) : [];
+if (paymentSignalDetected) productMediaMatches = [];
+if (productMediaMatches.length) {
+  service = 'catalogo_produtos';
+  stage = 'Produtos apresentados';
+  if (!paymentSignalDetected) handoff = false;
+}
+const systemMessage = activeSystemPrompt || 'Voce e o assistente virtual da empresa atendida pela Mag.IA. Responda em portugues do Brasil, com tom profissional, acolhedor, objetivo e natural. Nao invente precos, prazos, disponibilidade, funcionalidades, resultados ou informacoes sobre a empresa. Faca somente uma pergunta por mensagem e peca apenas o proximo dado necessario. Quando o cliente pedir orcamento, suporte urgente ou atendimento humano, informe que alguem da equipe continuara o atendimento e inclua [HUMANO_SOLICITADO]. Nao exponha tags internas, marcadores tecnicos ou o funcionamento do workflow. Cumprimente apenas no primeiro contato; se ja houver historico, comece diretamente pela resposta. Interprete linguagem natural, abreviacoes, girias e erros de digitacao sem corrigir o cliente. Nao use Markdown; para listas use apenas bullets simples. Responda somente com a mensagem que deve ser enviada ao cliente.';
+
+const hasHistory = Array.isArray(previousEvents) && previousEvents.length > 0;
+const tenantAiMode = String(tenantSettings.ai_mode || '').toLowerCase();
+const tenantAiDisabled = tenantSettings.ai_enabled === false || String(tenantSettings.ai_enabled).toLowerCase() === 'false';
+const globalGeminiEnabled = String(env('GEMINI_ENABLED', 'true')).toLowerCase() !== 'false';
+const configuredLimit = Number(tenantSettings.gemini_daily_limit || tenantSettings.ai_daily_limit || env('GEMINI_DAILY_LIMIT', 100));
+const hasDailyLimit = Number.isFinite(configuredLimit) && configuredLimit > 0;
+const dailyLimit = hasDailyLimit ? configuredLimit : 0;
+let usedToday = 0;
+try {
+  const data = $getWorkflowStaticData('global');
+  usedToday = Number(data['gemini_whatsapp_' + $json.tenant_slug + '_' + todayKey()] || 0);
+} catch (error) {}
+const forceMock = tenantAiMode === 'mock' || tenantAiDisabled || paymentSignalDetected;
+const aiAllowed = Boolean(conversationStateOk && globalGeminiEnabled && !forceMock && (!hasDailyLimit || usedToday < dailyLimit));
+const aiBlockReason = !conversationStateOk ? 'conversation_state_unavailable' : !globalGeminiEnabled
+  ? 'gemini_disabled_by_env'
+  : forceMock
+    ? (paymentSignalDetected ? 'payment_signal' : 'tenant_ai_disabled_or_mock')
+    : hasDailyLimit && usedToday >= dailyLimit
+      ? 'daily_limit_reached'
+      : '';
+
+const promptText = 'Cliente: ' + $json.contactName
+  + '\nTelefone: ' + $json.phone
+  + '\nServico identificado: ' + service
+  + '\nEtapa: ' + stage
+  + '\nHandoff sugerido: ' + (handoff ? 'sim' : 'nao')
+  + '\nHistorico ja possui mensagens: ' + (hasHistory ? 'sim' : 'nao')
+  + (conversationBoundary ? '\nAtendimento anterior encerrado pelo operador. Use apenas a memoria desta nova sessao; nao retome pedidos, fotos, pagamentos ou encaminhamentos de atendimentos anteriores.' : '')
+  + '\nInstrucao de saudacao: ' + (hasHistory ? 'nao cumprimente; va direto ao ponto' : 'cumprimente brevemente se fizer sentido')
+  + (!productMediaMatches.length ? '\nNenhuma foto foi selecionada para envio nesta execucao. Nao prometa enviar fotos nem afirme que fotos foram enviadas. Se a cliente pedir fotos sem categoria, pergunte somente qual categoria deseja. Se o catalogo estiver indisponivel, informe a indisponibilidade sem inventar opcoes.' : '')
+  + (productMediaMatches.length ? '\nCategoria de produto identificada: ' + productMediaMatches[0].category_label + '\nAcao do sistema: apos sua resposta, o sistema enviara automaticamente ate 3 fotos desta categoria. Responda curto, sem prometer varias vezes, e nao faca mais de uma pergunta de refinamento. Se o cliente pediu para mandar tudo, diga apenas que esta enviando as opcoes agora e peca para ela escolher a que mais gostou. Nao diga que nao consegue enviar imagens.' : '')
+  + (paymentSignalDetected ? '\nSinal de pagamento detectado: sim. Nao chame IA generativa; responder apenas com confirmacao curta e encaminhar para verificacao humana.' : '')
+  + '\nMensagem: ' + message;
+
+const catalogDiagnostics = {
+  workflow_revision: 'whatsapp-session-reset-2026-09-21',
+  catalog_categories: getMediaCatalog(tenantSettings).length,
+  selected_count: productMediaMatches.length,
+  category_key: productMediaMatches[0]?.category_key || '',
+  selection_source: directMediaCategory ? 'current_message' : detectedMediaCategory ? 'conversation_history' : 'none',
+  context_load_errors: contextLoadErrors,
+};
+const { apikey: incomingApiKey, ...incomingPayload } = objectValue($json.raw_payload);
+return { json: {
+  ...$json, tenant_id: tenantId, tenant_settings: tenantSettings, tenant_agent: tenantAgent,
+  service, stage, handoff, hasHistory, promptText, systemMessage,
+  conversation_session_id: conversationSessionId,
+  conversation_closed_at: conversationBoundary?.created_at || null,
+  conversation_state_ok: conversationStateOk,
+  memory_session_key: memorySessionKey,
+  product_media_matches: productMediaMatches,
+  detected_product_category: productMediaMatches[0]?.category_label || '',
+  catalog_diagnostics: catalogDiagnostics,
+  raw_payload: { ...incomingPayload, catalog_diagnostics: catalogDiagnostics, product_media_matches: productMediaMatches,
+    conversation_session_id: conversationSessionId, conversation_closed_at: conversationBoundary?.created_at || null },
+  payment_signal_detected: paymentSignalDetected,
+  payment_signal_ack_message: tenantSettings.payment_signal_ack_message || paymentSettings.ack_message || 'Ta bom! Vou confirmar aqui, um momento.',
+  ai_allowed: aiAllowed, ai_block_reason: aiBlockReason,
+  gemini_daily_limit: dailyLimit, gemini_used_today_before_request: usedToday,
+} };

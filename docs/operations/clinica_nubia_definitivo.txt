@@ -1,39 +1,32 @@
 SETUP DEFINITIVO - CLINICA DA NUBIA
 
 Objetivo:
-Deixar a Clinica da Nubia pronta para teste real com Telegram, Gemini, Kanban customizado e atendimento humano pela interface.
+Deixar a Clinica da Nubia pronta para teste real com Telegram, Gemini, catalogo de servicos no banco, pre-agendamento, pagamento de sinal e atendimento humano pela interface.
 
-1. Criar ou confirmar usuario no Supabase Auth
+1. Usuario no Supabase Auth
 
 Supabase > Authentication > Users.
 
-Crie o usuario da Nubia ou confirme o e-mail que sera usado para login.
+Crie ou confirme o usuario que sera usado pela Nubia para acessar a interface.
+Depois vincule esse usuario ao tenant clinica_nubia em tenant_members.
 
-2. Rodar o seed definitivo do tenant
+2. SQLs do tenant
 
-Arquivo:
+Rodar primeiro, se o tenant ainda nao existir:
+
 supabase/seeds/clinica_nubia_final_setup.sql
 
-Antes de rodar, substituir:
+Rodar depois para aplicar o escopo comercial atualizado:
 
-AJUSTAR_EMAIL_OWNER
-AJUSTAR_USERNAME_BOT_SEM_ARROBA
+supabase/seeds/clinica_nubia_scope_update.sql
 
-Esse SQL configura:
+O segundo SQL atualiza:
 
-- tenant clinica_nubia
-- vinculo do usuario owner
-- canal Telegram
-- tenant_settings com Gemini ativo
-- prompt sem excesso de emojis
-- ai_agent e ai_prompt_versions
-- Kanban com 6 colunas:
-  1. Conversas IA
-  2. Aguardando humano
-  3. Com humano
-  4. Finalizadas
-  5. Agendamentos
-  6. Conversas abandonadas
+- catalogo oficial em tenant_service_catalog
+- prompt enxuto da Nubia
+- regras de Pix/sinal
+- status padrao dos agendamentos criados pela IA como pending_payment
+- gatilho de pagamento: SINAL PAGO
 
 3. Variavel do Telegram no n8n/EasyPanel
 
@@ -57,42 +50,125 @@ Importar/atualizar no n8n:
 
 n8n/workflows/magia_command_router.json
 n8n/workflows/magia_telegram_multitenant_v4_handoff_close.json
+n8n/workflows/magia_telegram_multitenant_v4_8_0_payment_signal.json
 
-Ativar os dois workflows.
+Ativar os workflows acima.
+Desativar workflows antigos de Telegram com o mesmo path /webhook/telegram.
 
-6. Como o Kanban deve funcionar
+Observacao de arquitetura:
+O workflow V4.8 e padrao multi-tenant. Ele nao e exclusivo da Nubia.
+O comportamento especifico da Nubia vem de tenant_settings e tenant_service_catalog.
+
+6. Fluxo de atendimento esperado
+
+Cliente inicia conversa:
+
+- IA responde normalmente.
+- A conversa aparece em Conversas IA.
+
+Cliente pergunta servicos/valores:
+
+- IA consulta tenant_service_catalog.
+- Pedido de lista completa pode ser respondido direto pelo catalogo, sem chamada ao Gemini.
+
+Cliente quer agendar:
+
+- IA coleta nome, servico, data especifica e horario especifico.
+- Quando os dados minimos estiverem completos, o workflow cria um registro em appointments.
+- Esse registro nasce como pending_payment.
+- Na interface aparece como Aguardando sinal.
+- O card tambem aparece na coluna Agendamentos do Kanban.
+
+Cliente pede Pix:
+
+- IA informa Pix, nome e instituicao configurados no tenant_settings.
+- IA pede para a cliente responder exatamente: SINAL PAGO
+- A IA continua respondendo duvidas ate a cliente mandar SINAL PAGO.
+
+Cliente envia SINAL PAGO ou equivalente de pagamento realizado:
+
+- O workflow nao chama Gemini.
+- O workflow envia apenas a resposta curta configurada em payment_signal_ack_message.
+- O ultimo agendamento da conversa muda para payment_reported.
+- A conversa recebe handoff=true.
+- O Kanban move a conversa para Verificar Sinal.
+- Nenhuma mensagem automatica de confirmacao final/regras e enviada nesse momento.
+- A partir desse ponto, a IA fica silenciada ate operador confirmar o sinal, finalizar atendimento ou devolver para IA.
+
+Operador humano:
+
+- Verifica pagamento/comprovante fora da IA.
+- Responde pela interface se necessario.
+- Clica em Confirmar no card da coluna Verificar Sinal quando o sinal estiver correto.
+- O command router envia a mensagem configurada em payment_signal_confirmation_message para a cliente.
+- O agendamento muda para Confirmado e o card passa para Agendamentos.
+- Pode encerrar o atendimento ao final.
+
+7. Kanban da Nubia
 
 Conversas IA:
 Conversas ativas respondidas pela IA, sem handoff e sem encerramento.
 
 Aguardando humano:
-Quando a IA indicar que vai conferir agenda, chamar alguem ou tratar reclamacao.
+Conversas que precisam de acao humana antes de pagamento, como reclamacao ou pedido explicito de humano.
+
+Verificar Sinal:
+Clientes que enviaram SINAL PAGO. O operador confere o pagamento/comprovante e usa o botao Confirmar no card.
 
 Com humano:
-Quando um operador atribuir a conversa para uma pessoa ou responder manualmente pela interface.
+Quando operador atribuir ou responder manualmente pela interface.
 
 Finalizadas:
-Quando o operador clicar em Encerrar atendimento.
-Depois disso, a proxima mensagem do cliente volta para a IA.
+Quando operador clicar em Encerrar atendimento.
+Depois disso, a proxima mensagem da cliente volta para a IA.
 
 Agendamentos:
-Cards criados manualmente em Agendamentos e eventos detectados como agendamento confirmado.
+Cards vindos da tabela appointments. Agendamentos com sinal confirmado aparecem aqui como Confirmado.
 
 Conversas abandonadas:
 Conversas ativas sem encerramento e sem nova interacao apos o periodo configurado.
 Padrao atual: 24 horas.
 
-7. Teste final
+8. Teste recomendado
 
-Fluxo esperado:
+Enviar no Telegram:
 
-1. Cliente manda mensagem no Telegram.
-2. IA responde.
-3. Cliente pede agenda/reclamacao/humano.
-4. Card vai para Aguardando humano.
-5. Operador atribui ou responde pela interface.
-6. Card vai para Com humano.
-7. Operador clica em Encerrar atendimento.
-8. Card vai para Finalizadas.
-9. Cliente manda nova mensagem.
-10. IA volta a responder normalmente.
+Oi
+Quero agendar
+Bronze no sol
+Meu nome e Ana
+Amanha as 15h
+
+Esperado:
+
+- IA cria pre-agendamento.
+- Aba Agendamentos mostra status Aguardando sinal.
+- Kanban mostra card em Agendamentos.
+- Conversa continua com IA.
+
+Depois enviar:
+
+Me passa o Pix
+
+Esperado:
+
+- IA envia dados de Pix e pede SINAL PAGO.
+
+Depois enviar:
+
+SINAL PAGO
+
+Esperado:
+
+- Bot responde apenas: "Tá bom! Vou confirmar aqui, um momento."
+- Conversa vai para Verificar Sinal.
+- Agendamento muda para Sinal informado.
+- IA fica silenciada.
+
+Depois clicar em Confirmar no card:
+
+Esperado:
+
+- Bot envia confirmacao de reserva e regras de cancelamento/remarcacao.
+- Agendamento muda para Confirmado.
+- Card sai de Verificar Sinal e aparece em Agendamentos.

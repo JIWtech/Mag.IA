@@ -92,10 +92,33 @@ select
   'Vou encaminhar sua conversa para atendimento humano. Em breve alguem da equipe continua por aqui.',
   jsonb_build_object(
     'tone', 'feminino, acolhedor, charmoso, elegante e direto',
-    'ai_model', 'gemini-3.7-flash',
+    'ai_model', 'gemini-2.5-flash-lite',
     'ai_enabled', true,
     'ai_provider', 'gemini',
     'kanban_abandoned_after_hours', 24,
+    'debounce_window_ms', 12000,
+    'fragment_debounce_window_ms', 25000,
+    'gemini_daily_limit', 80,
+    'media_ai_enabled', false,
+    'appointment_duration_minutes', 120,
+    'default_ai_appointment_status', 'pending_payment',
+    'payment_signal_enabled', true,
+    'appointment_payment_trigger', 'SINAL PAGO',
+    'payment_signal_stage', 'Verificar Sinal',
+    'payment_signal_ack_message', 'Tá bom! Vou confirmar aqui, um momento.',
+    'payment_signal_confirmation_message', 'Reserva efetuada! Recebemos sua confirmacao de sinal. O valor do sinal nao e reembolsavel em caso de cancelamento. Remarcacoes devem ser solicitadas com no minimo 24h de antecedencia, ou excepcionalmente ate 8h antes. A equipe vai conferir o pagamento e seguir com a confirmacao por aqui.',
+    'deposit_percentage', 50,
+    'payment', jsonb_build_object(
+      'deposit_percentage', 50,
+      'enabled', true,
+      'signal_trigger', 'SINAL PAGO',
+      'ack_message', 'Tá bom! Vou confirmar aqui, um momento.',
+      'confirmation_message', 'Reserva efetuada! Recebemos sua confirmacao de sinal. O valor do sinal nao e reembolsavel em caso de cancelamento. Remarcacoes devem ser solicitadas com no minimo 24h de antecedencia, ou excepcionalmente ate 8h antes. A equipe vai conferir o pagamento e seguir com a confirmacao por aqui.',
+      'pix_key', '21966353026',
+      'pix_holder', 'Yhago Goncalves',
+      'pix_institution', 'Mercado Pago',
+      'accepted_payment_methods', jsonb_build_array('pix', 'link_cartao_credito', 'dinheiro_presencial')
+    ),
     'service_categories', jsonb_build_array(
       'bronzeamento',
       'bronze a jato',
@@ -164,9 +187,14 @@ Quando a cliente quiser marcar horario, colete aos poucos:
 5. Se e cliente nova ou antiga.
 6. Se for menor de idade, confirme que ira acompanhada de responsavel.
 
-Quando nome, servico, dia e periodo estiverem completos, responda de forma curta:
-"Perfeito, [Nome]. Ja anotei [servico] para [dia/periodo]. Vou conferir a disponibilidade com a equipe da Nubia e ja te retorno por aqui."
-Inclua no final apenas a tag interna [ACAO: PRONTO_PARA_AGENDAR].
+Quando nome, servico, data e horario estiverem completos, responda de forma curta confirmando que a reserva ficou pre-agendada e informe que para garantir o horario e necessario o pagamento do sinal.
+Inclua no final apenas a tag interna:
+[ACAO: CRIAR_AGENDAMENTO | nome=Nome da cliente | servico=Servico escolhido | data=AAAA-MM-DD | hora=HH:MM | status=pending_payment]
+
+Se a cliente pedir o Pix, informe os dados configurados do Pix e peca para ela responder exatamente SINAL PAGO depois de pagar.
+Enquanto a cliente nao enviar SINAL PAGO ou equivalente de pagamento realizado, continue tirando duvidas normalmente.
+Quando a cliente enviar SINAL PAGO ou equivalente de pagamento realizado, o workflow envia apenas a confirmacao curta de recebimento, move para Verificar Sinal e silencia a IA.
+A confirmacao final da reserva e regras de cancelamento/remarcacao so deve ser enviada quando o operador clicar em Confirmar no Kanban.
 
 RECLAMACOES:
 Se a cliente demonstrar insatisfacao, problema com procedimento, pagamento, resultado ou atendimento, acolha com respeito e responda:
@@ -175,6 +203,7 @@ Inclua no final apenas a tag interna [ACAO: RECLAMACAO].
 
 ATENDIMENTO HUMANO:
 Se a cliente pedir atendente, Nubia, humano, ligacao, alteracao de horario, cancelamento ou reclamacao, encaminhe para humano usando [HUMANO_SOLICITADO].
+Nao use atendimento humano para o agendamento comum antes de SINAL PAGO.
 
 FORMATO:
 - Responda sempre em portugues do Brasil.
@@ -204,12 +233,12 @@ updated_agent as (
   update public.ai_agents a
   set
     provider = 'gemini',
-    model = 'gemini-3.7-flash',
-    temperature = 0.55,
-    max_tokens = 650,
+    model = 'gemini-2.5-flash-lite',
+    temperature = 0.5,
+    max_tokens = 700,
     active_prompt_version = 1,
     settings = jsonb_build_object(
-      'purpose', 'atendimento comercial e triagem de agendamentos',
+      'purpose', 'atendimento comercial, pre-agendamento e sinal de pagamento',
       'channel', 'telegram'
     ),
     updated_at = now()
@@ -232,9 +261,9 @@ select
   t.id,
   'Atendente Clinica da Nubia',
   'gemini',
-  'gemini-3.7-flash',
-  0.55,
-  650,
+  'gemini-2.5-flash-lite',
+  0.5,
+  700,
   1,
   jsonb_build_object(
     'purpose', 'atendimento comercial e triagem de agendamentos',
@@ -322,10 +351,11 @@ join public.tenants t on t.id = b.tenant_id
 cross join (values
   ('Conversas IA', 1, 'conversas_ia'),
   ('Aguardando humano', 2, 'aguardando_humano'),
-  ('Com humano', 3, 'com_humano'),
-  ('Finalizadas', 4, 'finalizadas'),
-  ('Agendamentos', 5, 'agendamentos'),
-  ('Conversas abandonadas', 6, 'conversas_abandonadas')
+  ('Verificar Sinal', 3, 'verificar_sinal'),
+  ('Com humano', 4, 'com_humano'),
+  ('Finalizadas', 5, 'finalizadas'),
+  ('Agendamentos', 6, 'agendamentos'),
+  ('Conversas abandonadas', 7, 'conversas_abandonadas')
 ) as col(name, position, automation_key)
 where t.slug = 'clinica_nubia'
   and b.name = 'Kanban Clinica da Nubia';
