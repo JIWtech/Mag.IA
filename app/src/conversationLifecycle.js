@@ -1,0 +1,37 @@
+function payloadOf(event) {
+  if (typeof event.raw_payload !== 'string') return event.raw_payload || {};
+  try { return JSON.parse(event.raw_payload); } catch { return {}; }
+}
+
+// Events arrive oldest first. A delayed outbound must not reopen a closed session.
+export function applyConversationLifecycle(conversation, event, stage) {
+  const closed = stage === 'Finalizado' || event.service === 'conversation_closed'
+    || event.ai_provider === 'conversation_closed';
+  if (closed) {
+    conversation.status = 'finalizado';
+    conversation.stage = 'Finalizado';
+    conversation.closedEventId = event.id || event.external_message_id;
+    return;
+  }
+  const session = payloadOf(event).conversation_session_id;
+  if (session && conversation.closedEventId && session !== conversation.closedEventId) return;
+
+  const inbound = event.direction === 'inbound' && event.sender_type !== 'system';
+  if (conversation.status === 'finalizado' && !inbound) return;
+  if (inbound) {
+    conversation.lastInboundId = event.id || event.external_message_id || event.created_at;
+    if (conversation.status === 'finalizado') conversation.status = 'ia_ativa';
+  }
+  if (event.handoff) conversation.status = 'atendimento_humano';
+  conversation.stage = stage;
+}
+
+export function canCloseConversation(conversation, pendingClose) {
+  if (!conversation || conversation.status !== 'ia_ativa') return false;
+  if (!pendingClose) return true;
+  // Wait for both the persisted boundary and a new inbound, not just a refresh.
+  return Boolean(conversation.closedEventId
+    && conversation.closedEventId !== pendingClose.closedEventId
+    && conversation.lastInboundId
+    && conversation.lastInboundId !== pendingClose.lastInboundId);
+}

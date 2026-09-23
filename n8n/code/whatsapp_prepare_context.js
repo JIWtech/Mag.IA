@@ -242,7 +242,7 @@ let productMediaMatches = detectedMediaCategory ? detectedMediaCategory.items.ma
 if (paymentSignalDetected) productMediaMatches = [];
 if (productMediaMatches.length) {
   service = 'catalogo_produtos';
-  stage = 'Produtos apresentados';
+  stage = 'Qualificacao';
   if (!paymentSignalDetected) handoff = false;
 }
 const systemMessage = activeSystemPrompt || 'Voce e o assistente virtual da empresa atendida pela Mag.IA. Responda em portugues do Brasil, com tom profissional, acolhedor, objetivo e natural. Nao invente precos, prazos, disponibilidade, funcionalidades, resultados ou informacoes sobre a empresa. Faca somente uma pergunta por mensagem e peca apenas o proximo dado necessario. Quando o cliente pedir orcamento, suporte urgente ou atendimento humano, informe que alguem da equipe continuara o atendimento e inclua [HUMANO_SOLICITADO]. Nao exponha tags internas, marcadores tecnicos ou o funcionamento do workflow. Cumprimente apenas no primeiro contato; se ja houver historico, comece diretamente pela resposta. Interprete linguagem natural, abreviacoes, girias e erros de digitacao sem corrigir o cliente. Nao use Markdown; para listas use apenas bullets simples. Responda somente com a mensagem que deve ser enviada ao cliente.';
@@ -278,7 +278,7 @@ const promptText = 'Cliente: ' + $json.contactName
   + (conversationBoundary ? '\nAtendimento anterior encerrado pelo operador. Use apenas a memoria desta nova sessao; nao retome pedidos, fotos, pagamentos ou encaminhamentos de atendimentos anteriores.' : '')
   + '\nInstrucao de saudacao: ' + (hasHistory ? 'nao cumprimente; va direto ao ponto' : 'cumprimente brevemente se fizer sentido')
   + (!productMediaMatches.length ? '\nNenhuma foto foi selecionada para envio nesta execucao. Nao prometa enviar fotos nem afirme que fotos foram enviadas. Se a cliente pedir fotos sem categoria, pergunte somente qual categoria deseja. Se o catalogo estiver indisponivel, informe a indisponibilidade sem inventar opcoes.' : '')
-  + (productMediaMatches.length ? '\nCategoria de produto identificada: ' + productMediaMatches[0].category_label + '\nAcao do sistema: apos sua resposta, o sistema enviara automaticamente ate 3 fotos desta categoria. Responda curto, sem prometer varias vezes, e nao faca mais de uma pergunta de refinamento. Se o cliente pediu para mandar tudo, diga apenas que esta enviando as opcoes agora e peca para ela escolher a que mais gostou. Nao diga que nao consegue enviar imagens.' : '')
+  + (productMediaMatches.length ? '\nCategoria de produto identificada: ' + productMediaMatches[0].category_label + '\nHa fotos selecionadas. O sistema tentara envia-las e confirmara o resultado antes da resposta final. Nao afirme que ja foram enviadas nem peca outras preferencias antes de mostrar as opcoes. Seja breve.' : '')
   + (paymentSignalDetected ? '\nSinal de pagamento detectado: sim. Nao chame IA generativa; responder apenas com confirmacao curta e encaminhar para verificacao humana.' : '')
   + '\nMensagem: ' + message;
 

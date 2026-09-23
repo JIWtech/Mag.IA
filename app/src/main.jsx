@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { canCloseConversation } from './conversationLifecycle';
+import { CHANNEL_OPTIONS, isTenantAuthorized } from './tenantAccess';
 import { createRoot } from 'react-dom/client';
 import readXlsxFile from 'read-excel-file/browser';
 import {
@@ -141,6 +143,7 @@ function appDataSignature(value) {
 }
 
 function loadCachedAppData(tenantSlug) {
+  if (isAuthRequired()) return null;
   try {
     const raw = localStorage.getItem(`${appDataCachePrefix}${tenantSlug}`);
     const cached = raw ? JSON.parse(raw) : null;
@@ -151,6 +154,7 @@ function loadCachedAppData(tenantSlug) {
 }
 
 function cacheAppData(tenantSlug, data) {
+  if (isAuthRequired()) return;
   try {
     const serialized = JSON.stringify(data, (key, value) => (
       key === 'url' || key === 'thumbnailUrl' ? undefined : value
@@ -194,9 +198,8 @@ function getInitialAppData(tenantSlug) {
         source: 'supabase',
         status: {
           source: 'supabase',
-          botUsername: '@clinica_nubia_bot',
-          channel: 'Telegram',
-          telegram: 'conectado',
+          botUsername: '',
+          channel: '',
           supabase: true,
           ai: 'Regras e automações',
           latestAt: 'Sincronizando...',
@@ -228,11 +231,15 @@ function App() {
   const [active, setActive] = useState(getInitialActivePage);
   const [tenantSlug, setTenantSlug] = useState(getInitialTenantSlug);
   const [availableTenants, setAvailableTenants] = useState(() => {
+    if (hasSupabaseConfig() || isAuthRequired()) return [];
     const initialSlug = getInitialTenantSlug();
     const found = mockTenants.find((tenant) => tenant.slug === initialSlug);
     return found ? mockTenants : [{ slug: initialSlug, name: initialSlug }, ...mockTenants];
   });
   const [session, setSession] = useState(null);
+  const [tenantAccess, setTenantAccess] = useState({ userId: null, loaded: false, error: '' });
+  const [dataScope, setDataScope] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [checkingAuth, setCheckingAuth] = useState(isAuthRequired());
   const [loading, setLoading] = useState(false);
   const initialSetup = useMemo(() => getInitialAppData(getInitialTenantSlug()), []);
@@ -244,6 +251,12 @@ function App() {
   const selectedTenant = availableTenants.find((tenant) => tenant.slug === activeTenantSlug)
     || { slug: activeTenantSlug, name: activeTenantSlug };
   const integration = getIntegrationStatus(activeTenantSlug);
+  const hasTenantAccess = !isAuthRequired()
+    || isTenantAuthorized(session?.user?.id, tenantAccess, availableTenants, activeTenantSlug);
+  const scopeKey = JSON.stringify([session?.user?.id || 'local', activeTenantSlug]);
+  const currentScope = useRef(scopeKey);
+  currentScope.current = hasTenantAccess ? scopeKey : '';
+  const allowedChannels = appData.enabledChannels || [];
 
   const [agentsList, setAgentsList] = useState([]);
   const [initialConversationId, setInitialConversationId] = useState(null);
@@ -262,6 +275,10 @@ function App() {
 
   const handleSignOut = async () => {
     clearSessionBootstrapped();
+    setAvailableTenants([]);
+    setTenantAccess({ userId: null, loaded: false, error: '' });
+    setDataScope('');
+    setAppData(getInitialAppData('').data);
     setSession(null);
     await signOut();
   };
@@ -320,7 +337,9 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    if (!hasTenantAccess) return undefined;
     setAgentsReady(false);
+    setAgentsList([]);
     loadTeamAgents(activeTenantSlug)
       .then((list) => {
         if (active) {
@@ -334,7 +353,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [activeTenantSlug]);
+  }, [activeTenantSlug, session?.user?.id, hasTenantAccess]);
 
   async function handleAddAgent(newAgent) {
     const saved = await saveTeamAgent(activeTenantSlug, newAgent);
@@ -409,6 +428,9 @@ function App() {
 
   useEffect(() => {
     if (!isAuthRequired()) return undefined;
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(appDataCachePrefix) || key.startsWith('magia:team-agents')) localStorage.removeItem(key);
+    }
     let mounted = true;
     getCurrentSession().then((currentSession) => {
       if (!mounted) return;
@@ -435,6 +457,8 @@ function App() {
   }, []);
 
   async function refreshData({ showLoading = true } = {}) {
+    if (!hasTenantAccess) return;
+    const requestedScope = scopeKey;
     if (showLoading) setLoading(true);
     try {
       const data = await loadClientData({
@@ -445,34 +469,52 @@ function App() {
         broadcastContacts: appData.broadcastContacts || [],
         broadcastCampaigns: appData.broadcastCampaigns || [],
       }, activeTenantSlug);
+      if (currentScope.current !== requestedScope) return;
+      setLoadError('');
       cacheAppData(activeTenantSlug, data);
       setAppData((previous) => (
         appDataSignature(previous) === appDataSignature(data) ? previous : data
       ));
+    } catch (error) {
+      if (currentScope.current === requestedScope) setLoadError(error.message || 'Falha ao carregar os dados.');
     } finally {
-      setAppDataReady(true);
-      if (showLoading) setLoading(false);
+      if (currentScope.current === requestedScope) {
+        setAppDataReady(true);
+        if (showLoading) setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
     if (isAuthRequired() && !session) return;
+    let cancelled = false;
+    const userId = session?.user?.id || null;
+    setTenantAccess({ userId, loaded: false, error: '' });
     loadAvailableTenants(mockTenants).then((tenantsFromDb) => {
+      if (cancelled) return;
       setAvailableTenants(tenantsFromDb);
       const exists = tenantsFromDb.some((tenant) => tenant.slug === activeTenantSlug);
       if (!exists && tenantsFromDb[0]) {
         setTenantSlug(tenantsFromDb[0].slug);
         persistTenantSlug(tenantsFromDb[0].slug);
       }
+      setTenantAccess({ userId, loaded: true, error: '' });
+    }).catch((error) => {
+      if (cancelled) return;
+      setAvailableTenants([]);
+      setTenantAccess({ userId, loaded: true, error: error.message });
     });
-  }, [activeTenantSlug, session]);
+    return () => { cancelled = true; };
+  }, [session?.user?.id]);
 
   useEffect(() => {
     localStorage.setItem(activePageStorageKey, active);
   }, [active]);
 
   useEffect(() => {
-    if (isAuthRequired() && !session) return undefined;
+    if (!hasTenantAccess) return undefined;
+    setDataScope(scopeKey);
+    setLoadError('');
     persistTenantSlug(activeTenantSlug);
     const cached = loadCachedAppData(activeTenantSlug);
     if (cached) {
@@ -509,19 +551,29 @@ function App() {
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       window.clearInterval(fallbackPolling);
     };
-  }, [activeTenantSlug, session?.user?.id]);
+  }, [activeTenantSlug, session?.user?.id, hasTenantAccess]);
 
   const hasBootstrapped = isSessionBootstrapped();
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const authPreviewMode = urlParams?.get('auth');
 
-  if (authPreviewMode === 'loading' || (checkingAuth && !hasBootstrapped)) {
+  if (authPreviewMode === 'loading' || checkingAuth) {
     return <AuthShell title="Carregando NORIA..." />;
   }
 
   if (authPreviewMode === 'login' || authPreviewMode === '1' || (isAuthRequired() && !checkingAuth && !session)) {
     return <LoginPage />;
   }
+
+  if (isAuthRequired() && (!tenantAccess.loaded || tenantAccess.userId !== session?.user?.id)) {
+    return <AuthShell title="Verificando acesso..." />;
+  }
+  if (!hasTenantAccess) {
+    return <AuthShell title={tenantAccess.error || 'Nenhuma empresa vinculada a esta conta'}>
+      <button className="secondary-button" onClick={handleSignOut}><LogOut size={16} /> Sair</button>
+    </AuthShell>;
+  }
+  if (dataScope !== scopeKey) return <AuthShell title="Carregando empresa..." />;
 
   return (
     <div className="app-shell">
@@ -548,13 +600,6 @@ function App() {
           })}
         </nav>
 
-        <div className="sidebar-footer">
-          <div className="integration-pill">
-            <span className={`dot ${integration.supabase ? '' : 'warn'}`} />
-            <small>{integration.supabase ? 'Supabase conectado' : 'Modo local'}</small>
-          </div>
-          <small>Tenant: {integration.tenantSlug}</small>
-        </div>
       </aside>
 
       {mobileNavOpen && (
@@ -602,10 +647,6 @@ function App() {
             </nav>
 
             <div className="mobile-nav-footer">
-              <div className="integration-pill">
-                <span className={`dot ${integration.supabase ? '' : 'warn'}`} />
-                <small>{integration.supabase ? 'Supabase conectado' : 'Modo local'}</small>
-              </div>
               <small className="mobile-tenant-info"><Building2 size={13} /> {selectedTenant.name}</small>
             </div>
           </aside>
@@ -614,6 +655,7 @@ function App() {
 
       <main className="main" style={{ position: 'relative' }}>
         <div className={`refresh-progress-bar ${loading ? 'active' : ''}`} />
+        {loadError && <div className="inline-error" role="alert">{loadError}</div>}
         <header className="topbar">
           <div className="topbar-brand-block">
             <div className="topbar-title-row">
@@ -630,12 +672,12 @@ function App() {
               </button>
               <h1>{menu.find((item) => item.id === active)?.label}</h1>
             </div>
-            <p className="topbar-subtitle">{selectedTenant.name} · {selectedTenant.industry} · Plano {selectedTenant.plan}</p>
+            <p className="topbar-subtitle">{[selectedTenant.name, selectedTenant.industry].filter(Boolean).join(' · ')}</p>
           </div>
           <div className="topbar-actions">
-            <label className="select-label" title={`Tenant: ${selectedTenant.name}`}>
+            <label className="select-label" title={selectedTenant.name}>
               <Building2 size={15} />
-              <select value={activeTenantSlug} onChange={(event) => setTenantSlug(event.target.value)} aria-label="Selecionar Tenant">
+              <select value={activeTenantSlug} onChange={(event) => setTenantSlug(event.target.value)} aria-label="Selecionar empresa">
                 {availableTenants.map((tenant) => (
                   <option key={tenant.slug} value={tenant.slug}>{tenant.name}</option>
                 ))}
@@ -659,6 +701,7 @@ function App() {
         {active === 'dashboard' && <Dashboard conversations={appData.conversations} dataSource={appData.source} status={appData.status} ready={appDataReady} />}
         {active === 'conversas' && (
           <Conversations
+            allowedChannels={allowedChannels}
             conversations={appData.conversations}
             tenantSlug={activeTenantSlug}
             onSent={refreshData}
@@ -672,6 +715,7 @@ function App() {
         )}
         {active === 'kanban' && (
           <Kanban
+            allowedChannels={allowedChannels}
             kanbanColumns={appData.kanbanColumns}
             tenantName={selectedTenant.name}
             agentsList={agentsList}
@@ -687,6 +731,7 @@ function App() {
         {active === 'funil' && <Funnel funnelStages={appData.funnelStages} tenantName={selectedTenant.name} ready={appDataReady} />}
         {active === 'disparos' && (
           <Broadcasts
+            allowedChannels={allowedChannels}
             conversations={appData.conversations}
             contacts={appData.broadcastContacts || []}
             campaigns={appData.broadcastCampaigns || []}
@@ -707,6 +752,7 @@ function App() {
         )}
         {active === 'configuracoes' && (
           <SettingsPage
+            allowedChannels={allowedChannels}
             agents={agentsList}
             agentsReady={agentsReady}
             onAddAgent={handleAddAgent}
@@ -871,7 +917,7 @@ function Dashboard({ conversations, dataSource, status, ready = true }) {
                   {!conversations.length && (
                     <EmptyState
                       title="Nenhuma conversa real ainda"
-                      text="Assim que o bot Telegram receber mensagens, elas aparecerão aqui."
+                      text="Nenhuma conversa recebida."
                     />
                   )}
                 </>
@@ -965,6 +1011,7 @@ function SkeletonBlock({ width, height, style, className }) {
 }
 
 function Conversations({
+  allowedChannels = CHANNEL_OPTIONS.map(c => c.id),
   conversations = [],
   tenantSlug,
   onSent,
@@ -1017,6 +1064,8 @@ function Conversations({
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [closedLocally, setClosedLocally] = useState({});
+  const closeInFlight = useRef(false);
   const [sendError, setSendError] = useState('');
 
   const cancelCloseBtnRef = useRef(null);
@@ -1043,7 +1092,7 @@ function Conversations({
   }, [showAssignModal]);
 
   function handleOpenCloseModal() {
-    if (!selected || ending) return;
+    if (!canEndSelected || closeInFlight.current) return;
     setSendError('');
     setShowCloseModal(true);
   }
@@ -1148,6 +1197,13 @@ function Conversations({
     return filteredConversations.find((c) => c.id === selectedId) || filteredConversations[0];
   }, [filteredConversations, selectedId]);
 
+  const selectedCloseKey = JSON.stringify([tenantSlug, selected?.id]);
+  const canEndSelected = canCloseConversation(selected, closedLocally[selectedCloseKey]);
+
+  useEffect(() => {
+    setShowCloseModal(false);
+  }, [selectedCloseKey]);
+
   useEffect(() => {
     if (!initialConversationId) return;
     const conversation = conversations.find((item) => (
@@ -1192,8 +1248,9 @@ function Conversations({
   }
 
   async function executeCloseConversation() {
-    if (!selected || ending) return;
+    if (!canEndSelected || closeInFlight.current) return;
 
+    closeInFlight.current = true;
     setEnding(true);
     setSendError('');
     try {
@@ -1205,14 +1262,22 @@ function Conversations({
         sent_by_user: 'Operador NORIA',
         reason: 'Atendimento finalizado pelo operador',
       }, tenantSlug);
-      await onSent?.({ showLoading: false });
+      setClosedLocally((current) => ({
+        ...current,
+        [selectedCloseKey]: {
+          closedEventId: selected.closedEventId,
+          lastInboundId: selected.lastInboundId,
+        },
+      }));
       setShowCloseModal(false);
+      await onSent?.({ showLoading: false });
       setTimeout(() => {
         closeActionBtnRef.current?.focus();
       }, 40);
     } catch (error) {
       setSendError(error.message || 'Não foi possível encerrar o atendimento.');
     } finally {
+      closeInFlight.current = false;
       setEnding(false);
     }
   }
@@ -1337,7 +1402,7 @@ function Conversations({
                       </div>
                       <span className="count-badge">{channelCounts.todos}</span>
                     </button>
-                    <button
+                    {allowedChannels.includes('telegram') && <button
                       type="button"
                       className={`filter-menu-item ${channelFilter === 'telegram' ? 'selected' : ''}`}
                       onClick={() => { setChannelFilter('telegram'); setShowFilterMenu(false); }}
@@ -1348,8 +1413,8 @@ function Conversations({
                         <span>Telegram</span>
                       </div>
                       <span className="count-badge telegram">{channelCounts.telegram}</span>
-                    </button>
-                    <button
+                    </button>}
+                    {allowedChannels.includes('whatsapp') && <button
                       type="button"
                       className={`filter-menu-item ${channelFilter === 'whatsapp' ? 'selected' : ''}`}
                       onClick={() => { setChannelFilter('whatsapp'); setShowFilterMenu(false); }}
@@ -1360,8 +1425,8 @@ function Conversations({
                         <span>WhatsApp</span>
                       </div>
                       <span className="count-badge whatsapp">{channelCounts.whatsapp}</span>
-                    </button>
-                    <button
+                    </button>}
+                    {allowedChannels.includes('instagram') && <button
                       type="button"
                       className={`filter-menu-item ${channelFilter === 'instagram' ? 'selected' : ''}`}
                       onClick={() => { setChannelFilter('instagram'); setShowFilterMenu(false); }}
@@ -1372,7 +1437,7 @@ function Conversations({
                         <span>Instagram</span>
                       </div>
                       <span className="count-badge instagram">{channelCounts.instagram}</span>
-                    </button>
+                    </button>}
                   </div>
                 </div>
               </>
@@ -1518,8 +1583,8 @@ function Conversations({
                 className="secondary-button text-danger chat-action-btn chat-action-close"
                 type="button"
                 onClick={handleOpenCloseModal}
-                disabled={ending}
-                title="Encerrar atendimento"
+                disabled={ending || !canEndSelected}
+                title={canEndSelected ? 'Encerrar atendimento' : 'Disponível durante um atendimento da IA'}
                 aria-label="Encerrar atendimento"
               >
                 <CheckCircle2 size={16} />
@@ -1651,7 +1716,7 @@ function Conversations({
                 type="button"
                 className="danger-button confirm-close-btn"
                 onClick={executeCloseConversation}
-                disabled={ending}
+                disabled={ending || !canEndSelected}
                 aria-label="Encerrar atendimento"
                 title="Encerrar atendimento"
               >
@@ -1848,6 +1913,7 @@ function Conversations({
 }
 
 function Kanban({
+  allowedChannels = CHANNEL_OPTIONS.map(c => c.id),
   kanbanColumns = [],
   tenantName = '',
   agentsList = [],
@@ -2013,27 +2079,27 @@ function Kanban({
             >
               Todos os canais
             </button>
-            <button
+            {allowedChannels.includes('whatsapp') && <button
               type="button"
               className={`chip ${channelFilter === 'whatsapp' ? 'active channel-whatsapp' : ''}`}
               onClick={() => setChannelFilter(channelFilter === 'whatsapp' ? 'todos' : 'whatsapp')}
             >
               <ChannelIcon channel="whatsapp" size={13} /> WhatsApp
-            </button>
-            <button
+            </button>}
+            {allowedChannels.includes('telegram') && <button
               type="button"
               className={`chip ${channelFilter === 'telegram' ? 'active channel-telegram' : ''}`}
               onClick={() => setChannelFilter(channelFilter === 'telegram' ? 'todos' : 'telegram')}
             >
               <ChannelIcon channel="telegram" size={13} /> Telegram
-            </button>
-            <button
+            </button>}
+            {allowedChannels.includes('instagram') && <button
               type="button"
               className={`chip ${channelFilter === 'instagram' ? 'active channel-instagram' : ''}`}
               onClick={() => setChannelFilter(channelFilter === 'instagram' ? 'todos' : 'instagram')}
             >
               <ChannelIcon channel="instagram" size={13} /> Instagram
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -2307,7 +2373,8 @@ function Funnel({ funnelStages, tenantName }) {
   );
 }
 
-function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantSlug, onChanged, ready = true }) {
+function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantSlug, onChanged, ready = true, allowedChannels = CHANNEL_OPTIONS.map(c => c.id) }) {
+  const defaultChannel = allowedChannels.includes('telegram') ? 'telegram' : allowedChannels[0] || 'whatsapp';
   const [draftContacts, setDraftContacts] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [messageText, setMessageText] = useState('');
@@ -2325,7 +2392,8 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
     if (!file) return;
     try {
       const parsed = await parseContactFile(file);
-      const normalized = parsed.map((row) => normalizeImportedContact(row)).filter((row) => row.externalConversationId);
+      const normalized = parsed.map((row) => normalizeImportedContact(row, defaultChannel))
+        .filter((row) => row.externalConversationId && allowedChannels.includes(row.channelType));
       setDraftContacts((prev) => mergeBroadcastContacts(prev, normalized));
       setSelected((prev) => {
         const next = new Set(prev);
@@ -2389,6 +2457,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
       campaign = await createBroadcastCampaign(tenantSlug, {
         name: campaignName.trim() || `Disparo ${new Date().toLocaleDateString('pt-BR')}`,
         message_template: text,
+        channelType: defaultChannel,
         total_recipients: recipients.length,
         status: 'sending',
       }, recipients);
@@ -2397,7 +2466,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
         try {
           await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, { status: 'sending' });
           const result = await sendN8nCommand('broadcast_send', {
-            channel_type: contact.channel_type || contact.channelType || 'telegram',
+            channel_type: contact.channel_type || contact.channelType || defaultChannel,
             external_conversation_id: contact.external_conversation_id || contact.externalConversationId,
             contact_name: contact.name || contact.contact_name || 'Contato',
             message_text: text,
@@ -2443,7 +2512,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   return (
     <section className="broadcast-page">
       <section className="panel">
-        <PanelTitle icon={Megaphone} title="Disparo de mensagens" action="Telegram agora" />
+        <PanelTitle icon={Megaphone} title="Disparo de mensagens" />
         <div className="broadcast-grid">
           <div className="broadcast-import">
             <label className="file-drop">
@@ -2585,7 +2654,7 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
         startsAt: new Date(startsAt).toISOString(),
         endsAt: endsAt ? new Date(endsAt).toISOString() : null,
         notes: notes.trim(),
-        channelType: selectedConversationId ? 'telegram' : 'manual',
+        channelType: conversations.find(c => c.externalConversationId === selectedConversationId)?.channelType || 'manual',
         externalConversationId: selectedConversationId,
       });
       setTitle('');
@@ -2677,7 +2746,7 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
   );
 }
 
-function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAgentStatus, onDeleteAgent, tenantName, integration }) {
+function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAgentStatus, onDeleteAgent, tenantName, integration, allowedChannels = CHANNEL_OPTIONS.map(c => c.id) }) {
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [phone, setPhone] = useState('');
@@ -2695,7 +2764,7 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
       phone: phone.trim(),
       unit: unit.trim() || 'Unidade Geral',
       shift: shift.trim() || '08:00 às 18:00',
-      channel: channel.trim() || 'WhatsApp / Telegram',
+      channel: channel.trim() || 'WhatsApp',
       status: 'online',
       load: 0,
     });
@@ -2765,10 +2834,8 @@ function SettingsPage({ agents = [], agentsReady = true, onAddAgent, onToggleAge
           <label>
             Canal de Atuação Principal
             <select value={channel} onChange={(e) => setChannel(e.target.value)}>
-              <option value="WhatsApp">WhatsApp</option>
-              <option value="Telegram">Telegram</option>
-              <option value="Instagram">Instagram</option>
-              <option value="Todos os canais">Todos os canais</option>
+              {CHANNEL_OPTIONS.filter(c => allowedChannels.includes(c.id)).map(c => <option key={c.id} value={c.label}>{c.label}</option>)}
+              {allowedChannels.length > 1 && <option value="Todos os canais">Todos os canais</option>}
             </select>
           </label>
 
@@ -2919,7 +2986,7 @@ function rowsToObjects(rows) {
   });
 }
 
-function normalizeImportedContact(row) {
+function normalizeImportedContact(row, defaultChannel = 'telegram') {
   const lookup = (...keys) => {
     for (const key of keys) {
       const match = Object.keys(row).find((item) => normalizeKey(item) === normalizeKey(key));
@@ -2939,12 +3006,12 @@ function normalizeImportedContact(row) {
   );
   return {
     name: lookup('nome', 'name', 'contato', 'cliente') || 'Contato',
-    channelType: lookup('canal', 'channel', 'channel_type') || 'telegram',
+    channelType: lookup('canal', 'channel', 'channel_type') || defaultChannel,
     externalConversationId,
     phone: lookup('telefone', 'phone', 'whatsapp'),
     email: lookup('email', 'e-mail'),
     source: 'import',
-    key: contactKey({ channelType: lookup('canal', 'channel', 'channel_type') || 'telegram', externalConversationId }),
+    key: contactKey({ channelType: lookup('canal', 'channel', 'channel_type') || defaultChannel, externalConversationId }),
   };
 }
 
@@ -3042,7 +3109,7 @@ function EmptyState({ title, text, compact = false }) {
   );
 }
 
-function AuthShell({ title }) {
+function AuthShell({ title, children }) {
   return (
     <main className="auth-page auth-loading-page">
       <div className="auth-visual-ambient-aurora cyan auth-loading-aurora" />
@@ -3052,10 +3119,11 @@ function AuthShell({ title }) {
           <img src={noriaLogo} alt="NORIA" className="auth-loading-logo-img" />
           <span className="auth-loading-tagline">INTELIGÊNCIA EM MOVIMENTO</span>
         </div>
-        <div className="auth-loading-indicator">
+        {!children && <div className="auth-loading-indicator">
           <RefreshCcw size={20} className="spin" />
-        </div>
+        </div>}
         <h1 className="auth-loading-title">{title}</h1>
+        {children}
       </section>
     </main>
   );

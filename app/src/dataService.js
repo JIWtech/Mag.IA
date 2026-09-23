@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
-import { getAuthClient } from './authService';
+import { getAuthClient, isAuthRequired } from './authService';
+import { loadUserTenants, enabledChannels } from './tenantAccess';
 import { prepareConversationEvents } from './conversationEvents';
+import { applyConversationLifecycle } from './conversationLifecycle';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -38,44 +40,8 @@ export function persistTenantSlug(slug) {
 
 export async function loadAvailableTenants(fallbackTenants = []) {
   const supabase = getClient();
-  if (!supabase) return fallbackTenants;
-
-  const { data: membershipData, error: membershipError } = await supabase
-    .from('tenant_members')
-    .select('role, status, tenants(id, slug, name, industry, plan, status)')
-    .eq('status', 'active');
-
-  if (!membershipError && membershipData?.length) {
-    return membershipData
-      .map((row) => row.tenants)
-      .filter(Boolean)
-      .map((tenant) => ({
-        id: tenant.slug,
-        slug: tenant.slug,
-        name: tenant.name,
-        industry: tenant.industry || 'Generalista',
-        plan: tenant.plan || 'MVP',
-      }));
-  }
-
-  const { data, error } = await supabase
-    .from('tenants')
-    .select('id, slug, name, industry, plan, status')
-    .in('status', ['active', 'trial', 'pilot', 'Piloto'])
-    .order('name', { ascending: true });
-
-  if (error || !data?.length) {
-    if (error) console.warn('Tenants fallback:', error.message);
-    return fallbackTenants;
-  }
-
-  return data.map((tenant) => ({
-    id: tenant.slug,
-    slug: tenant.slug,
-    name: tenant.name,
-    industry: tenant.industry || 'Generalista',
-    plan: tenant.plan || 'MVP',
-  }));
+  if (!supabase) return isAuthRequired() ? [] : fallbackTenants;
+  return loadUserTenants(supabase);
 }
 
 export function subscribeToClientEvents(onChange, activeTenantSlug = defaultTenantSlug) {
@@ -151,6 +117,11 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
   }
 
   const tenant = await loadTenant(activeTenantSlug);
+  if (!tenant) throw new Error('Empresa indisponivel para esta conta.');
+  const { data: uiSettings, error: settingsError } = await supabase.from('tenant_settings')
+    .select('settings').eq('tenant_id', tenant.id).maybeSingle();
+  if (settingsError) throw new Error('Nao foi possivel carregar as configuracoes da empresa.');
+  const tenantChannels = enabledChannels(uiSettings?.settings);
   const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig] = await Promise.all([
     supabase
       .from('channel_events')
@@ -166,22 +137,14 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
   const { data, error } = eventsResult;
 
   if (error) {
-    console.warn('Supabase fallback:', error.message);
-    return {
-      ...fallback,
-      source: 'mock_error',
-      error: error.message,
-      status: buildStatus({ source: 'mock_error', events: [], error: error.message, tenantSlug: activeTenantSlug }),
-      appointments,
-      broadcastContacts,
-      broadcastCampaigns,
-    };
+    throw new Error('Nao foi possivel carregar os atendimentos.');
   }
 
   if (!data?.length) {
     return {
       ...fallback,
       source: 'supabase_empty',
+      enabledChannels: tenantChannels,
       conversations: [],
       kanbanColumns: eventsToKanban([], activeTenantSlug, appointments, kanbanConfig),
       funnelStages: emptyFunnel(),
@@ -200,6 +163,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
   return {
     ...fallback,
     source: 'supabase',
+    enabledChannels: tenantChannels,
     conversations: eventsToConversations(eventsWithMediaUrls),
     kanbanColumns: eventsToKanban(eventsWithMediaUrls, activeTenantSlug, appointments, kanbanConfig),
     funnelStages: eventsToFunnel(eventsWithMediaUrls),
@@ -611,8 +575,7 @@ function eventsToConversations(events) {
     const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
     conversation.lastMessage = text || mediaPreview(media) || conversation.lastMessage;
     conversation.lastAt = formatDate(event.created_at);
-    conversation.stage = stageName;
-    conversation.status = isClosed ? 'finalizado' : isHumanTransfer ? 'atendimento_humano' : (conversation.status === 'atendimento_humano' ? 'atendimento_humano' : 'ia_ativa');
+    applyConversationLifecycle(conversation, event, stageName);
     if (isClosed) conversation.owner = 'Assistente IA';
     conversation.owner = isHumanTransfer ? 'Recepção / Núbia' : conversation.owner;
     conversation.value = Math.max(conversation.value, estimatedValue(event));
@@ -1094,10 +1057,12 @@ export async function loadTeamAgents(tenantSlug) {
         } catch (e) { }
         return data;
       }
+      if (isAuthRequired()) return [];
     }
   } catch (e) {
     console.warn('Falha ao carregar team_agents do Supabase:', e);
   }
+  if (isAuthRequired()) return [];
   try {
     const cached = localStorage.getItem(storageKey);
     return cached ? JSON.parse(cached) : [];

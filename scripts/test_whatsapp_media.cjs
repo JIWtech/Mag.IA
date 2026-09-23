@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '..');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const contextCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_prepare_context.js'), 'utf8');
 const sentCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_prepare_sent.js'), 'utf8');
+const mediaCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_send_product_media.js'), 'utf8');
 const catalog = [{ category_key: 'pulseiras', label: 'Pulseiras', aliases: ['pulseira', 'pulseiras'], items: [1, 2, 3].map((n) => ({ url: `https://media.example/${n}.jpg` })) }];
 const env = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'test-key' };
 
@@ -78,25 +79,29 @@ test('media sender uses tenant credentials and records partial failures without 
   const base = await context('pulseiras');
   base.responseText = 'Aqui estao as opcoes';
   base.phone = '5500000000000';
+  base.remoteJid = '5500000000000@s.whatsapp.net';
   base.instance = 'loja';
+  base.should_send_response = true;
   let calls = 0;
-  const fn = new AsyncFunction('$json', '$env', '$', sentCode);
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
   const result = await fn.call({ helpers: { httpRequest: async (request) => {
     assert.equal(request.headers.apikey, 'tenant-key');
     assert.equal(request.url, 'https://evolution.example/message/sendMedia/loja');
+    assert.equal(request.body.number, base.remoteJid);
     if (++calls === 2) throw Object.assign(new Error('private failure detail'), { statusCode: 429 });
     return { key: { id: `media-${calls}` } };
-  } } }, { key: { id: 'text-1' } }, {
+  } } }, base, {
     EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'tenant-key',
-  }, () => ({ item: { json: base } }));
+  });
   assert.equal(calls, 3);
-  assert.equal(result.json.messageText, base.responseText);
-  assert.deepEqual(result.json.raw_payload.product_media_delivery.sent.map((x) => x.status), ['accepted', 'failed', 'accepted']);
+  assert.match(result.json.responseText, /parte das fotos/);
+  assert.deepEqual(result.json.product_media_delivery.sent.map((x) => x.status), ['accepted', 'failed', 'accepted']);
 });
 test('generated workflow embeds exactly the tested source', () => {
   const w = JSON.parse(fs.readFileSync(path.join(root, 'n8n/workflows/magia_whatsapp_evolution_mvp.json'), 'utf8'));
   assert.equal(w.nodes.find((n) => n.name === 'Preparar Contexto JIW').parameters.jsCode, contextCode.trimEnd());
   assert.equal(w.nodes.find((n) => n.name === 'Preparar Evento Enviado').parameters.jsCode, sentCode.trimEnd());
+  assert.equal(w.nodes.find((n) => n.name === 'Enviar Fotos do Catalogo').parameters.jsCode, mediaCode.trimEnd());
   for (const node of w.nodes.filter((n) => n.type === 'n8n-nodes-base.code')) new AsyncFunction(node.parameters.jsCode);
 });
 
@@ -150,5 +155,65 @@ test('workflow uses the computed Redis key and all sends pass through the sessio
   assert.equal(w.connections['Restaurar Contexto para Envio'].main[0][0].node, 'Validar Sessao Antes do Envio');
   assert.equal(w.connections['Sessao ainda ativa?'].main[1][0].node, 'Responder Resposta Cancelada');
   const sendParents = Object.entries(w.connections).filter(([, connections]) => connections.main?.flat().some((edge) => edge.node === 'Enviar Resposta pela Evolution')).map(([name]) => name);
-  assert.deepEqual(sendParents, ['Sessao ainda ativa?']);
+  assert.deepEqual(sendParents, ['Sessao ativa apos fotos?']);
+  assert.equal(w.connections['Sessao ainda ativa?'].main[0][0].node, 'Enviar Fotos do Catalogo');
+  assert.equal(w.connections['Enviar Fotos do Catalogo'].main[0][0].node, 'Validar Sessao Apos Fotos');
+  assert.equal(w.nodes.find(n => n.name === 'Validar Sessao Apos Fotos').parameters.jsCode,
+    w.nodes.find(n => n.name === 'Validar Sessao Antes do Envio').parameters.jsCode);
+});
+
+test('HTTP failures include sanitized provider detail and never claim photos were sent', async () => {
+  const base = await context('pulseiras');
+  base.should_send_response = true;
+  base.responseText = 'Estou enviando tudo!';
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
+  const result = (await fn.call({ helpers: { httpRequest: async () => ({ statusCode: 500, body: {
+    response: { message: ['AxiosError: Request failed with status code 403 key=secret-test'] },
+  } }) } }, base, { EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'secret-test', EVOLUTION_INSTANCE_LOJA: 'loja' })).json;
+  assert.equal(result.stage, 'Qualificacao');
+  assert.match(result.responseText, /consegui enviar/);
+  assert.equal(result.product_media_delivery.sent[0].http_status, 500);
+  assert.match(result.product_media_delivery.sent[0].error_detail, /403/);
+  assert.ok(!JSON.stringify(result.product_media_delivery).includes('secret-test'));
+});
+
+test('no catalog, handoff and invalid session never send photos', async () => {
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
+  for (const override of [{ product_media_matches: [] }, { handoff: true }, { should_send_response: false }]) {
+    const base = { ...await context('pulseiras'), should_send_response: true, responseText: 'original', ...override };
+    const result = (await fn.call({ helpers: { httpRequest: async () => { assert.fail('must not send'); } } }, base, {})).json;
+    assert.equal(result.responseText, 'original');
+    assert.equal(result.product_media_delivery.sent.length, 0);
+  }
+});
+
+test('persisting outbound does not send photos a second time and preserves session', async () => {
+  const base = { responseText: 'resposta real', conversation_session_id: 'close-1', product_media_delivery: { sent: [] } };
+  const fn = new AsyncFunction('$json', '$', sentCode);
+  const result = (await fn({ key: { id: 'text-1' } }, name => {
+    assert.equal(name, 'Enviar Fotos do Catalogo');
+    return { item: { json: base } };
+  })).json;
+  assert.equal(result.messageText, base.responseText);
+  assert.equal(result.raw_payload.conversation_session_id, 'close-1');
+});
+
+test('full HTTP response requires message IDs before confirming catalog presentation', async () => {
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
+  const base = { ...await context('pulseiras'), should_send_response: true };
+  const environment = { EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'key', EVOLUTION_INSTANCE_LOJA: 'loja' };
+  for (const accepted of [true, false]) {
+    const result = (await fn.call({ helpers: { httpRequest: async () => ({ statusCode: 201, body: accepted ? { key: { id: 'image-id' } } : {} }) } }, base, environment)).json;
+    assert.equal(result.stage, accepted ? 'Produtos apresentados' : 'Qualificacao');
+    assert.equal(result.product_media_delivery.sent[0].status, accepted ? 'accepted' : 'unconfirmed');
+  }
+});
+
+test('missing media credentials does not promise delivery', async () => {
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
+  const base = { ...await context('pulseiras'), should_send_response: true, responseText: 'Enviei tudo' };
+  const result = (await fn.call({ helpers: { httpRequest: async () => assert.fail('must not send') } }, base, {})).json;
+  assert.equal(result.product_media_delivery.skipped, 'missing_or_placeholder_evolution_media_env');
+  assert.match(result.responseText, /consegui enviar/);
+  assert.equal(result.stage, 'Qualificacao');
 });
