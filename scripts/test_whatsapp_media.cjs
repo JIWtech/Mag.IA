@@ -10,7 +10,7 @@ const mediaCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_send_produc
 const catalog = [{ category_key: 'pulseiras', label: 'Pulseiras', aliases: ['pulseira', 'pulseiras'], items: [1, 2, 3].map((n) => ({ url: `https://media.example/${n}.jpg` })) }];
 const env = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'test-key' };
 
-async function context(message, { history = [], boundary = null, environment = env, failSettings = false, failPrompt = false, failBoundary = false, tenant = 'loja', chat = 'chat' } = {}) {
+async function context(message, { history = [], boundary = null, environment = env, failSettings = false, failPrompt = false, failBoundary = false, tenant = 'loja', chat = 'chat', settings = {}, prompts = [], services = [], failCatalog = false } = {}) {
   const fn = new AsyncFunction('$json', '$env', '$getWorkflowStaticData', contextCode);
   const json = { tenant_slug: tenant, remoteJid: chat, messageText: message, raw_payload: { apikey: 'do-not-persist' } };
   const httpRequest = async ({ url }) => {
@@ -25,17 +25,56 @@ async function context(message, { history = [], boundary = null, environment = e
     if (url.includes('/tenants?')) return [{ id: 'tenant-test' }];
     if (url.includes('/tenant_settings?')) {
       if (failSettings) throw Object.assign(new Error('permission denied'), { statusCode: 403 });
-      return [{ settings: { product_media_catalog: catalog, system_prompt: 'Prompt do cliente', commerce_mode: true } }];
+      return [{ settings: { product_media_catalog: catalog, system_prompt: 'Prompt do cliente', commerce_mode: true, ...settings } }];
     }
     if (url.includes('/ai_agents?')) return [];
     if (url.includes('/ai_prompt_versions?')) {
       if (failPrompt) throw Object.assign(new Error('missing table'), { statusCode: 404 });
-      return [];
+      return prompts;
+    }
+    if (url.includes('/tenant_service_catalog?')) {
+      assert.ok(url.includes('&tenant_id=eq.tenant-test&active=eq.true'));
+      if (failCatalog) throw Object.assign(new Error('Timeout'), { statusCode: 504 });
+      return services;
     }
     throw Error('Unexpected request');
   };
   return (await fn.call({ helpers: { httpRequest } }, json, environment, () => ({}))).json;
 }
+
+const catalogSettings = { whatsapp_context_mode: 'tenant_catalog_v1', ai_model: 'gemini-2.5-flash-lite', commerce_mode: false, conversation_style_instructions: 'Tom da cliente' };
+test('opt-in uses settings prompt plus real multi-tenant catalog, not old version', async () => {
+  const result = await context('Qual o valor?', { settings: catalogSettings,
+    prompts: [{ prompt: 'Versao anterior' }], services: [{ name: 'Servico A', price: 99.99 }, { name: 'Servico B', price: 149.99 }] });
+  assert.ok(result.systemMessage.startsWith('Prompt do cliente'));
+  assert.ok(!result.systemMessage.includes('Versao anterior'));
+  assert.ok(result.systemMessage.includes('Tom da cliente'));
+  assert.ok(result.systemMessage.includes('99.99'));
+  assert.equal(result.catalog_diagnostics.service_catalog_count, 2);
+  assert.equal(result.handoff, false);
+  assert.equal(result.whatsapp_ai_model, 'models/gemini-2.5-flash-lite');
+  assert.equal(result.whatsapp_ai_options.maxOutputTokens, 500);
+});
+test('legacy clients retain old prompt precedence and model options', async () => {
+  const result = await context('oi', { prompts: [{ prompt: 'Versao anterior' }] });
+  assert.equal(result.systemMessage, 'Versao anterior');
+  assert.equal(result.whatsapp_ai_model, undefined);
+  assert.equal(result.whatsapp_ai_options, undefined);
+});
+test('failed catalog read blocks generation with diagnostics, never silently invents a price', async () => {
+  const result = await context('valor', { settings: catalogSettings, failCatalog: true });
+  assert.equal(result.ai_allowed, false);
+  assert.equal(result.ai_block_reason, 'service_catalog_unavailable');
+  assert.equal(result.catalog_diagnostics.context_load_errors.at(-1).step, 'service_catalog');
+});
+test('partial catalog is not falsely marked complete and null price is not zero', async () => {
+  const result = await context('todos os servicos', { settings: catalogSettings,
+    services: Array.from({ length: 101 }, (_, i) => ({ name: 'Servico ' + i, price: null })) });
+  assert.equal(result.catalog_diagnostics.service_catalog_complete, false);
+  assert.equal(result.catalog_diagnostics.service_catalog_count, 100);
+  assert.ok(result.systemMessage.includes('"preco_brl":null'));
+  assert.equal(result.whatsapp_ai_options.maxOutputTokens, 2500);
+});
 
 test('explicit category selects three media items and strips incoming API key', async () => {
   const result = await context('quero ver pulseiras');

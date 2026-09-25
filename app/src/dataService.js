@@ -278,12 +278,45 @@ async function loadKanbanConfig(tenantId) {
   };
 }
 
+export async function loadAppointmentScheduling(activeTenantSlug) {
+  const supabase = getClient();
+  if (!supabase) throw new Error('Supabase nao configurado');
+  const tenant = await loadTenant(activeTenantSlug);
+  if (!tenant) throw new Error('Tenant nao encontrado');
+  const { data, error } = await supabase.from('tenant_settings').select('settings').eq('tenant_id', tenant.id).maybeSingle();
+  if (error) throw error;
+  const config = data?.settings?.appointment_scheduling;
+  if (!config?.enabled) return { enabled: false, tenantId: tenant.id };
+  const { data: services, error: catalogError } = await supabase.from('tenant_service_catalog')
+    .select('external_id,name').eq('tenant_id', tenant.id).eq('active', true);
+  if (catalogError) throw catalogError;
+  return { ...config, tenantId: tenant.id, services: services.filter(s => config.service_resources[s.external_id]) };
+}
+
+export async function loadAppointmentAvailability(tenantId, unitId, serviceId, date) {
+  const { data, error } = await getClient().rpc('magia_appointment_availability', {
+    p_tenant: tenantId, p_unit: unitId, p_service: serviceId, p_date: date,
+  });
+  if (error) throw error;
+  return data.available_starts;
+}
+
 export async function saveAppointment(activeTenantSlug, appointment) {
   const supabase = getClient();
   if (!supabase) throw new Error('Supabase nao configurado');
   const tenant = await loadTenant(activeTenantSlug);
   if (!tenant) throw new Error('Tenant nao encontrado');
   const userId = await currentUserId();
+  if (appointment.unitId) {
+    const { data, error } = await supabase.rpc('magia_reserve_appointment', {
+      p_tenant: tenant.id, p_unit: appointment.unitId, p_service: appointment.serviceId,
+      p_date: appointment.localDate, p_time: appointment.localTime, p_name: appointment.contactName,
+      p_chat: appointment.externalConversationId || '', p_request: appointment.requestId,
+      p_channel: appointment.channelType || 'manual', p_notes: appointment.notes || null,
+    });
+    if (error) throw error;
+    return mapAppointment(data);
+  }
   const { data, error } = await supabase
     .from('appointments')
     .insert({
@@ -1164,6 +1197,7 @@ function mapAppointment(row) {
     endTimeLabel: ends ? ends.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '',
     status: row.status || 'scheduled',
     statusLabel: statusAppointmentLabel(row.status),
+    unitName: row.metadata?.unit_name || '',
     notes: row.notes || '',
     channelType: row.channel_type || 'manual',
     channelLabel: normalizeChannel(row.channel_type || 'manual').label,

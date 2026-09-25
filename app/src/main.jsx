@@ -84,6 +84,8 @@ import {
   moveKanbanCard,
   persistTenantSlug,
   saveAppointment,
+  loadAppointmentScheduling,
+  loadAppointmentAvailability,
   subscribeToClientEvents,
   updateBroadcastCampaign,
   updateBroadcastRecipient,
@@ -2614,6 +2616,14 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
 }
 
 function Appointments({ appointments = [], conversations = [], tenantSlug, onChanged, initialData, ready = true }) {
+  const [schedule, setSchedule] = useState(null);
+  const [unitId, setUnitId] = useState('');
+  const [serviceId, setServiceId] = useState('');
+  const [localDate, setLocalDate] = useState('');
+  const [localTime, setLocalTime] = useState('');
+  const [availableTimes, setAvailableTimes] = useState([]);
+  const [checking, setChecking] = useState(false);
+  const requestId = useRef(crypto.randomUUID());
   const [title, setTitle] = useState('');
   const [contactName, setContactName] = useState('');
   const [startsAt, setStartsAt] = useState('');
@@ -2622,6 +2632,27 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setSchedule(null); setUnitId(''); setServiceId(''); setLocalDate(''); setLocalTime('');
+    requestId.current = crypto.randomUUID();
+    loadAppointmentScheduling(tenantSlug).then(value => { if (active) setSchedule(value); })
+      .catch(() => { if (active) setStatus('Nao foi possivel carregar a agenda. Atualize a pagina antes de reservar.'); });
+    return () => { active = false; };
+  }, [tenantSlug]);
+
+  useEffect(() => {
+    let active = true;
+    setAvailableTimes([]); setLocalTime('');
+    if (!schedule?.enabled || !unitId || !serviceId || !localDate) { setChecking(false); return; }
+    setChecking(true);
+    loadAppointmentAvailability(schedule.tenantId, unitId, serviceId, localDate)
+      .then(times => { if (active) { setAvailableTimes(times); setStatus(times.length ? '' : 'Nenhum horario disponivel nesta data.'); } })
+      .catch(() => { if (active) setStatus('Nao foi possivel consultar a disponibilidade. Nenhuma reserva foi criada.'); })
+      .finally(() => { if (active) setChecking(false); });
+    return () => { active = false; };
+  }, [schedule, unitId, serviceId, localDate]);
 
   useEffect(() => {
     if (!initialData) return;
@@ -2644,14 +2675,15 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
 
   async function handleSubmit(event) {
     event.preventDefault();
-    if (!title.trim() || !startsAt) return;
+    if (!schedule || (schedule.enabled ? !unitId || !serviceId || !localDate || !localTime || !contactName.trim() : !title.trim() || !startsAt)) return;
     setSaving(true);
     setStatus('');
     try {
       await saveAppointment(tenantSlug, {
         title: title.trim(),
         contactName: contactName.trim(),
-        startsAt: new Date(startsAt).toISOString(),
+        startsAt: schedule.enabled ? null : new Date(startsAt).toISOString(),
+        unitId, serviceId, localDate, localTime, requestId: requestId.current,
         endsAt: endsAt ? new Date(endsAt).toISOString() : null,
         notes: notes.trim(),
         channelType: conversations.find(c => c.externalConversationId === selectedConversationId)?.channelType || 'manual',
@@ -2663,10 +2695,13 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
       setEndsAt('');
       setNotes('');
       setSelectedConversationId('');
+      setLocalTime(''); setLocalDate(''); requestId.current = crypto.randomUUID();
       setStatus('Agendamento criado e enviado para o Kanban.');
       await onChanged?.();
     } catch (error) {
-      setStatus(error.message || 'Nao foi possivel salvar o agendamento.');
+      setStatus(/SLOT_UNAVAILABLE|LEGACY_BOOKING/.test(error.message || '')
+        ? 'Horario indisponivel ou aguardando revisao da equipe. Consulte outra data.'
+        : error.message || 'Nao foi possivel salvar o agendamento.');
     } finally {
       setSaving(false);
     }
@@ -2677,9 +2712,16 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
       <section className="panel appointment-form-panel">
         <PanelTitle icon={CalendarDays} title="Novo agendamento" action="Manual" />
         <form className="form-grid" onSubmit={handleSubmit}>
-          <label>Titulo<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex: Sessao de bronzeamento" required /></label>
+          {schedule?.enabled ? <div className="form-row-two">
+            <label>Unidade<select required value={unitId} onChange={event => setUnitId(event.target.value)}>
+              <option value="">Selecione</option>{Object.entries(schedule.units).map(([id, unit]) => <option key={id} value={id}>{unit.name}</option>)}
+            </select></label>
+            <label>Servico<select required value={serviceId} onChange={event => setServiceId(event.target.value)}>
+              <option value="">Selecione</option>{schedule.services.map(service => <option key={service.external_id} value={service.external_id}>{service.name}</option>)}
+            </select></label>
+          </div> : <label>Titulo<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex: Sessao de bronzeamento" required /></label>}
           <div className="form-row-two">
-            <label>Contato<input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="Nome da cliente" /></label>
+            <label>Contato<input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="Nome da cliente" required={schedule?.enabled} /></label>
             <label>Conversa recente<select value={selectedConversationId} onChange={(event) => pickConversation(event.target.value)}>
               <option value="">Sem vinculo</option>
               {conversations.map((conversation) => (
@@ -2687,13 +2729,18 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
               ))}
             </select></label>
           </div>
-          <div className="form-row-two">
+          {schedule?.enabled ? <div className="form-row-two">
+            <label>Data<input type="date" required value={localDate} onChange={event => setLocalDate(event.target.value)} /></label>
+            <label>Horario ({schedule.timezone})<select required value={localTime} disabled={checking || !availableTimes.length} onChange={event => setLocalTime(event.target.value)}>
+              <option value="">{checking ? 'Consultando...' : 'Selecione'}</option>{availableTimes.map(time => <option key={time}>{time}</option>)}
+            </select></label>
+          </div> : <div className="form-row-two">
             <label>Inicio<input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} required /></label>
             <label>Fim<input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></label>
-          </div>
+          </div>}
           <label className="textarea-label">Observacoes<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Detalhes internos do atendimento." /></label>
           <div className="header-actions">
-            <button className="primary-button" type="submit" disabled={saving || !title.trim() || !startsAt}><CalendarCheck size={16} /> Salvar agendamento</button>
+            <button className="primary-button" type="submit" disabled={saving || !schedule || checking || (schedule.enabled ? !localTime || !contactName.trim() : !title.trim() || !startsAt)}><CalendarCheck size={16} /> Salvar agendamento</button>
             <small>{status}</small>
           </div>
         </form>
@@ -2730,6 +2777,7 @@ function Appointments({ appointments = [], conversations = [], tenantSlug, onCha
                       <div>
                         <strong>{appointment.title}</strong>
                         <span>{appointment.contactName || 'Sem contato'} - {appointment.channelLabel}</span>
+                        {appointment.unitName && <span>{appointment.unitName}</span>}
                         {appointment.notes && <p>{appointment.notes}</p>}
                       </div>
                       <Badge value={appointment.statusLabel} status="channel" />

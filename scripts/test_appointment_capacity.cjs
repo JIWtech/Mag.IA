@@ -1,0 +1,90 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { PGlite } = require(path.join(process.env.MAGIA_TEST_MODULES || path.join(require('node:os').tmpdir(), 'magia-diag-tools/node_modules'), '@electric-sql/pglite'));
+const tenant = '11111111-1111-1111-1111-111111111111';
+const other = '22222222-2222-2222-2222-222222222222';
+test('capacity: slots, independent units/resources, release, idempotence, legacy and permissions', async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(`create role anon; create role authenticated; create role service_role;
+      create schema auth;
+      create function auth.role() returns text language sql as $$ select coalesce(current_setting('request.jwt.claim.role',true),'service_role') $$;
+      create function auth.uid() returns uuid language sql as $$ select null::uuid $$;
+      create table tenants(id uuid primary key,status text,slug text);
+      create table tenant_settings(tenant_id uuid primary key,settings jsonb,updated_at timestamptz default now());
+      create table tenant_members(tenant_id uuid,user_id uuid,status text,role text);
+      create table tenant_service_catalog(id uuid primary key default gen_random_uuid(),tenant_id uuid,external_id text,name text,active boolean,
+        category text,description text,notes text,price numeric,estimated_hours numeric,external_source text,billing_unit text,metadata jsonb,updated_at timestamptz);
+      create table appointments(id uuid primary key default gen_random_uuid(),tenant_id uuid,title text,starts_at timestamptz,
+        ends_at timestamptz,status text,contact_name text,channel_type text,external_conversation_id text,created_by uuid,metadata jsonb,notes text);
+      insert into tenants values('${tenant}','active','clinica_nubia_oficial'),('${other}','active','other');
+      insert into tenant_service_catalog(tenant_id,external_id,name,active,price) values('${tenant}','bronze_classico','Classico',true,99.99),
+        ('${tenant}','bronze_comfort','Comfort',true,179.99),('${tenant}','bronze_premium','Premium',true,149.99),
+        ('${tenant}','bronze_no_sol','Sol',true,99.99),('${tenant}','banho_lua_classico','Banho antigo',true,19.99);`);
+    const config = JSON.parse(fs.readFileSync(path.join(__dirname, '../clients/clinica_nubia_oficial/scheduling.json')));
+    await db.query('insert into tenant_settings(tenant_id,settings) values($1,$2)', [tenant, {
+      appointment_scheduling: config,grounding_mode:'canonical_v2',whatsapp_processing_mode:'conversation_core_v1',
+      payment:{deposit_percentage:50},ai_model:'gemini-2.5-flash' }]);
+    const sql = fs.readFileSync(path.join(__dirname, '../supabase/migrations/018_appointment_capacity.sql'), 'utf8');
+    await db.exec(sql); await db.exec(sql);
+    const reserve = async (req, unit = 'angra', service = 'bronze_classico', time = '10:00', date = '2030-01-01') =>
+      (await db.query('select magia_reserve_appointment($1,$2,$3,$4,$5,$6,$7,$8) a', [tenant, unit, service, date, time, 'Cliente', 'chat-' + req, req])).rows[0].a;
+    const available = async (unit = 'angra', service = 'bronze_classico', date = '2030-01-01') =>
+      (await db.query('select magia_appointment_availability($1,$2,$3,$4) a', [tenant, unit, service, date])).rows[0].a.available_starts;
+    assert.deepEqual(await available(), ['10:00','11:30','13:00']);
+    const first = await reserve('1');
+    assert.equal(first.status, 'pending_payment');
+    assert.equal((Date.parse(first.ends_at)-Date.parse(first.starts_at))/60000,90);
+    assert.equal((await reserve('1')).id,first.id);
+    await assert.rejects(reserve('1','rio'), /RESERVATION_REQUEST_REUSED/);
+    for (const id of ['2','3','4']) await reserve(id);
+    await assert.rejects(reserve('5'), /SLOT_UNAVAILABLE/);
+    assert.deepEqual(await available(), ['11:30','13:00']);
+    await reserve('rio','rio');
+    await reserve('comfort','angra','bronze_comfort');
+    await assert.rejects(reserve('comfort2','angra','bronze_comfort'), /SLOT_UNAVAILABLE/);
+    await reserve('premium','angra','bronze_premium');
+    await assert.rejects(reserve('wrong','angra','bronze_classico','09:00'), /INVALID_SESSION_SLOT/);
+    await assert.rejects(reserve('wrongservice','angra','banho_lua_comfort'), /SCHEDULE_NOT_CONFIGURED/);
+    await assert.rejects(reserve('wrongunit','outro'), /SCHEDULE_NOT_CONFIGURED/);
+    await db.query("update appointments set status='payment_reported' where id=$1",[first.id]);
+    await db.query("update appointments set status='confirmed' where id=$1",[first.id]);
+    await assert.rejects(reserve('stillfull'), /SLOT_UNAVAILABLE/);
+    await db.query("update appointments set status='cancelled' where id=$1",[first.id]);
+    const replacement = await reserve('replacement');
+    await db.query('delete from appointments where id=$1',[replacement.id]);
+    assert.ok((await available()).includes('10:00'));
+    // Manual REST inserts use the same trigger; they cannot bypass the grid/capacity.
+    await assert.rejects(db.query("insert into appointments(tenant_id,starts_at,status,metadata) values($1,'2030-01-02 10:00Z','scheduled','{}')",[tenant]), /SCHEDULE_NOT_CONFIGURED/);
+    await db.query("insert into appointments(tenant_id,starts_at,status,metadata) values($1,'2030-01-02 10:00Z','scheduled','{}')",[other]);
+    // Simulate a pre-migration appointment without location. Neither unit may silently ignore it.
+    await db.exec('alter table appointments disable trigger appointment_capacity_guard');
+    await db.query("insert into appointments(tenant_id,starts_at,ends_at,status,metadata) values($1,'2030-01-01 14:30Z','2030-01-01 16:00Z','payment_reported','{}')",[tenant]);
+    await db.exec('alter table appointments enable trigger appointment_capacity_guard');
+    assert.ok(!(await available()).includes('11:30'));
+    assert.ok(!(await available('rio')).includes('11:30'));
+    await assert.rejects(reserve('legacy','rio','bronze_classico','11:30'), /LEGACY_BOOKING_REQUIRES_REVIEW/);
+    // Sunday and Monday are different schedules; capacity values never leave availability RPC.
+    assert.deepEqual(await available('rio','bronze_classico','2030-01-06'), ['08:00','09:30']);
+    assert.deepEqual(await available('rio','bronze_classico','2030-01-07'), ['16:00','17:30']);
+    const countBefore = (await db.query('select count(*)::int n from appointments')).rows[0].n;
+    const clientSql = fs.readFileSync(path.join(__dirname, '../clients/clinica_nubia_oficial/05_unidades_agenda_pagamento.sql'),'utf8');
+    await db.exec(clientSql); await db.exec(clientSql);
+    assert.equal((await db.query('select count(*)::int n from appointments')).rows[0].n,countBefore);
+    const newSettings=(await db.query('select settings from tenant_settings where tenant_id=$1',[tenant])).rows[0].settings;
+    assert.equal(newSettings.payment.pix_holder,'Silvana Marques');
+    assert.equal(newSettings.payment.deposit_percentage,50);
+    assert.equal(newSettings.ai_model,'gemini-2.5-flash');
+    const updatedCatalog=(await db.query('select * from tenant_service_catalog where tenant_id=$1',[tenant])).rows;
+    assert.equal(updatedCatalog.find(s=>s.external_id==='bronze_classico').price,'99.99');
+    assert.equal(updatedCatalog.find(s=>s.external_id==='banho_lua_classico').active,false);
+    assert.equal(updatedCatalog.filter(s=>s.external_id==='banho_lua').length,1);
+    assert.equal(updatedCatalog.find(s=>s.external_id==='banho_lua').price,'60');
+    assert.equal(updatedCatalog.find(s=>s.external_id==='bronze_jato_domicilio').price,'200');
+    await db.exec("set request.jwt.claim.role='authenticated'; set role authenticated");
+    await assert.rejects(available(), /Scheduling access denied/);
+    await assert.rejects(db.query('select * from appointment_capacity_slots'), /permission denied/);
+  } finally { await db.close(); }
+});

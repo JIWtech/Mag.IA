@@ -65,6 +65,10 @@ for (const [nodeName, file] of [
 const memory = workflow.nodes.find((node) => node.name === 'Memoria Redis da Conversa');
 if (!memory) throw new Error('Redis conversation memory node missing');
 memory.parameters.sessionKey = '={{ $json.memory_session_key }}';
+const model = workflow.nodes.find((node) => node.name === 'Gemini Chat Model');
+if (!model) throw new Error('Gemini model node missing');
+model.parameters.modelName = "={{ $json.whatsapp_ai_model || 'models/gemini-2.5-flash' }}";
+model.parameters.options = "={{ $json.whatsapp_ai_options || { temperature: 0.3 } }}";
 const connect = (node) => [{ node, type: 'main', index: 0 }];
 workflow.connections['Restaurar Contexto para Envio'] = { main: [connect('Validar Sessao Antes do Envio')] };
 workflow.connections['Validar Sessao Antes do Envio'] = { main: [connect('Sessao ainda ativa?')] };

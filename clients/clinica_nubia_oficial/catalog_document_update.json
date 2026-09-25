@@ -1,0 +1,11 @@
+{
+  "deactivate": ["banho_lua_classico", "banho_lua_comfort", "banho_lua_premium", "bronze_jato_corpo_todo", "bronze_jato_bojo"],
+  "services": [
+    {"external_id":"bronze_classico","name":"Bronze Classico","category":"Classico","description":"Bronzeamento em maquina compartilhada. Procedimento de 1 hora; bloco de agenda de 1h30.","estimated_hours":1,"preserve_price":true},
+    {"external_id":"bronze_comfort","name":"Bronze Comfort","category":"Comfort","description":"Bronzeamento em maquina individual. Procedimento e bloco de agenda de 1h30.","estimated_hours":1.5,"preserve_price":true},
+    {"external_id":"bronze_premium","name":"Bronze Premium","category":"Premium","description":"Bronzeamento em maquina individual. Procedimento e bloco de agenda de 1h30.","estimated_hours":1.5,"preserve_price":true},
+    {"external_id":"bronze_no_sol","name":"Bronzeamento Solar","category":"Solar","description":"Bronzeamento ao ar livre. Preparo e itens a levar especificos desta modalidade. Agenda consultada com a equipe.","estimated_hours":null,"preserve_price":true},
+    {"external_id":"bronze_jato_domicilio","name":"Bronze a Jato a Domicilio","category":"Jato","description":"Atendimento a domicilio, com orientacoes proprias de antes e depois do procedimento. Agenda consultada com a equipe.","estimated_hours":null,"preserve_price":false,"price":200},
+    {"external_id":"banho_lua","name":"Banho de Lua","category":"Estetica","description":"Servico unico, sem variacoes de categoria. Duracao de 40 minutos. Agenda consultada com a equipe.","estimated_hours":0.6666667,"preserve_price":false,"price":60}
+  ]
+}
