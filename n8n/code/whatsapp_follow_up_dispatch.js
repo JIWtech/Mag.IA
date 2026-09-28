@@ -43,6 +43,18 @@ async function conversationChanged(job) {
     || row.service === 'conversation_closed' || row.ai_provider === 'conversation_closed');
 }
 
+async function hasFutureAppointment(job) {
+  const inactive = '(cancelled,canceled,cancelado,cancelada,completed,done,no_show)';
+  const rows = await get('appointments?select=id,status,starts_at'
+    + '&tenant_id=eq.' + encodeURIComponent(job.tenant_id)
+    + '&channel_type=eq.' + encodeURIComponent(job.channel_type)
+    + '&external_conversation_id=eq.' + encodeURIComponent(job.external_conversation_id)
+    + '&starts_at=gt.' + encodeURIComponent(new Date().toISOString())
+    + '&status=not.in.' + encodeURIComponent(inactive)
+    + '&limit=1');
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 async function generate(job, settings, history) {
   const model = String(settings.ai_model || env('GEMINI_MODEL', 'gemini-2.5-flash')).trim();
   const apiKey = env('GEMINI_API_KEY');
@@ -84,6 +96,11 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
       outcome.push({ id: job.id, status: 'cancelled' });
       continue;
     }
+    if (await hasFutureAppointment(job)) {
+      await finish(job, 'cancelled', null, 'appointment_exists');
+      outcome.push({ id: job.id, status: 'cancelled', reason: 'appointment_exists' });
+      continue;
+    }
     const [settingsRows, history, channelRows] = await Promise.all([
       get('tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(job.tenant_id) + '&limit=1'),
       get('channel_events?select=direction,message_text,created_at&tenant_id=eq.' + encodeURIComponent(job.tenant_id)
@@ -99,6 +116,11 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
     if (await conversationChanged(job)) {
       await finish(job, 'cancelled', null, 'conversation_control_changed_before_send');
       outcome.push({ id: job.id, status: 'cancelled' });
+      continue;
+    }
+    if (await hasFutureAppointment(job)) {
+      await finish(job, 'cancelled', null, 'appointment_exists_before_send');
+      outcome.push({ id: job.id, status: 'cancelled', reason: 'appointment_exists' });
       continue;
     }
     const tenantSuffix = suffix(job.tenant_slug);

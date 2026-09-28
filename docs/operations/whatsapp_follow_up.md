@@ -9,10 +9,12 @@ O fluxo compartilhado usa a politica de cada tenant para criar jobs com 3 horas,
 1. Execute `supabase/migrations/019_follow_up_jobs.sql` no SQL Editor.
 2. Execute `supabase/migrations/020_nubia_follow_up_kanban.sql` no SQL Editor.
    Ela cria a coluna **Follow Ups** apenas no board da `clinica_nubia_oficial`.
-3. Faça deploy da versão atualizada do painel.
-4. Importe `n8n/workflows/magia_whatsapp_follow_up.json` no n8n e ative-o.
-5. Publique a versão atualizada de `magia_whatsapp_evolution_mvp.json`.
-6. Habilite somente os tenants aprovados:
+3. Execute `supabase/migrations/021_follow_up_cancel_on_appointment.sql` no SQL Editor.
+   Ela bloqueia e cancela follow-ups para agendamentos e pré-agendamentos futuros.
+4. Faça deploy da versão atualizada do painel.
+5. Importe `n8n/workflows/magia_whatsapp_follow_up.json` no n8n e ative-o.
+6. Publique a versão atualizada de `magia_whatsapp_evolution_mvp.json`.
+7. Habilite somente os tenants aprovados:
 
 ```sql
 update public.follow_up_policies p
@@ -36,5 +38,7 @@ iniciar contatos proativos.
 - Erro de entrega apos tentativa de envio fica como `uncertain` e exige revisao.
 - Agendamentos, pagamento de sinal, conversa encerrada e atendimento humano nao
   criam follow-up.
+- Um agendamento ou pré-agendamento futuro cancela os jobs pendentes. O n8n
+  verifica isso novamente antes de cada envio.
 - No painel da Clínica da Núbia, a coluna **Follow Ups** mostra um card por
   conversa e a próxima etapa ativa: `3h`, `1 dia` ou `15 dias`.
