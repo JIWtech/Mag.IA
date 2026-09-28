@@ -2012,6 +2012,10 @@ function Kanban({
 
   // Drag & Drop Handlers
   const handleDragStart = (e, card, column) => {
+    if (card?.isFollowUp) {
+      e.preventDefault();
+      return;
+    }
     setDraggingCardId(card.id);
     e.dataTransfer.effectAllowed = 'move';
     // Usamos text/plain para compatibilidade maxima em todos os browsers
@@ -2051,6 +2055,7 @@ function Kanban({
       if (!raw) return;
       const data = JSON.parse(raw);
       if (!data?.card) return;
+      if (data.card.isFollowUp || targetColumn.automationKey === 'follow_ups' || targetColumn.id === 'follow_ups') return;
       if (data.sourceColumnId === targetColumn.id) return;
       if (onMoveCard) {
         onMoveCard(data.card, targetColumn.automationKey || targetColumn.id);
@@ -2141,15 +2146,16 @@ function Kanban({
         {filteredColumns.map((column) => {
           const isWaitingColumn = column.automationKey === 'aguardando_humano' || column.id === 'aguardando_humano';
           const isFinishedColumn = column.automationKey === 'finalizadas' || column.id === 'finalizadas';
+          const isFollowUpColumn = column.automationKey === 'follow_ups' || column.id === 'follow_ups';
           const isDragOver = dragOverColumnId === column.id;
 
           return (
             <div
               className={`kanban-column ${isDragOver ? 'is-dragover' : ''}`}
               key={column.id}
-              onDragOver={(e) => handleDragOver(e, column)}
-              onDragLeave={(e) => handleDragLeave(e, column)}
-              onDrop={(e) => handleDrop(e, column)}
+              onDragOver={(e) => !isFollowUpColumn && handleDragOver(e, column)}
+              onDragLeave={(e) => !isFollowUpColumn && handleDragLeave(e, column)}
+              onDrop={(e) => !isFollowUpColumn && handleDrop(e, column)}
             >
               <div className="column-header">
                 <strong className="column-title">{column.title}</strong>
@@ -2158,8 +2164,8 @@ function Kanban({
 
               <div
                 className="column-cards-container"
-                onDragOver={(e) => handleDragOver(e, column)}
-                onDrop={(e) => handleDrop(e, column)}
+                onDragOver={(e) => !isFollowUpColumn && handleDragOver(e, column)}
+                onDrop={(e) => !isFollowUpColumn && handleDrop(e, column)}
               >
                 {!ready ? (
                   [1, 2].map((i) => (
@@ -2182,9 +2188,9 @@ function Kanban({
 
                       return (
                         <article
-                          className={`kanban-card ${channelClass} ${isDragging ? 'is-dragging' : ''}`}
+                          className={`kanban-card ${channelClass} ${card.isFollowUp ? 'kanban-card-follow-up' : ''} ${isDragging ? 'is-dragging' : ''}`}
                           key={card.id}
-                          draggable={true}
+                          draggable={!card.isFollowUp}
                           onDragStart={(e) => handleDragStart(e, card, column)}
                           onDragEnd={handleDragEnd}
                         >
@@ -2199,6 +2205,13 @@ function Kanban({
                           </div>
 
                           <p className="card-subtitle">{formatConversationPreview(card.subtitle)}</p>
+
+                          {isFollowUpColumn && card.followUpLabel && (
+                            <div className={`follow-up-step-badge ${card.followUpStatus === 'processing' ? 'is-processing' : ''}`}>
+                              <Clock3 size={12} />
+                              <span>{card.followUpStatus === 'processing' ? 'Em execução: ' : 'Próximo follow-up: '}{card.followUpLabel}</span>
+                            </div>
+                          )}
 
                           {isWaitingColumn && (
                             <div className="waiting-sla-badge">

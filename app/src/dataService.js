@@ -122,7 +122,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     .select('settings').eq('tenant_id', tenant.id).maybeSingle();
   if (settingsError) throw new Error('Nao foi possivel carregar as configuracoes da empresa.');
   const tenantChannels = enabledChannels(uiSettings?.settings);
-  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig] = await Promise.all([
+  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig, followUpJobs] = await Promise.all([
     supabase
       .from('channel_events')
       .select('*')
@@ -133,6 +133,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     tenant ? loadBroadcastContacts(tenant.id) : [],
     tenant ? loadBroadcastCampaigns(tenant.id) : [],
     tenant ? loadKanbanConfig(tenant.id) : null,
+    tenant ? loadFollowUpJobs(tenant.id, activeTenantSlug) : [],
   ]);
   const { data, error } = eventsResult;
 
@@ -146,7 +147,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
       source: 'supabase_empty',
       enabledChannels: tenantChannels,
       conversations: [],
-      kanbanColumns: eventsToKanban([], activeTenantSlug, appointments, kanbanConfig),
+      kanbanColumns: eventsToKanban([], activeTenantSlug, appointments, kanbanConfig, followUpJobs),
       funnelStages: emptyFunnel(),
       status: buildStatus({ source: 'supabase_empty', events: [], tenantSlug: activeTenantSlug }),
       appointments,
@@ -165,7 +166,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     source: 'supabase',
     enabledChannels: tenantChannels,
     conversations: eventsToConversations(eventsWithMediaUrls),
-    kanbanColumns: eventsToKanban(eventsWithMediaUrls, activeTenantSlug, appointments, kanbanConfig),
+    kanbanColumns: eventsToKanban(eventsWithMediaUrls, activeTenantSlug, appointments, kanbanConfig, followUpJobs),
     funnelStages: eventsToFunnel(eventsWithMediaUrls),
     status: buildStatus({ source: 'supabase', events: eventsWithMediaUrls, tenantSlug: activeTenantSlug }),
     appointments,
@@ -276,6 +277,27 @@ async function loadKanbanConfig(tenantId) {
     board,
     columns: columns || [],
   };
+}
+
+async function loadFollowUpJobs(tenantId, tenantSlug) {
+  // This operational view is deliberately enabled only for the Nubia board.
+  if (tenantSlug !== 'clinica_nubia_oficial') return [];
+
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from('follow_up_jobs')
+    .select('id, channel_type, external_conversation_id, contact_name, step_key, objective, due_at, status, created_at')
+    .eq('tenant_id', tenantId)
+    .in('status', ['pending', 'processing'])
+    .order('due_at', { ascending: true })
+    .limit(200);
+
+  if (error) {
+    // The dashboard remains available until migration 019/020 is published.
+    console.warn('Follow-up jobs unavailable:', error.message);
+    return [];
+  }
+  return data || [];
 }
 
 export async function loadAppointmentScheduling(activeTenantSlug) {
@@ -713,7 +735,7 @@ export function emptyKanban() {
   return OFFICIAL_KANBAN_COLUMNS.map((column) => ({ ...column, cards: [] }));
 }
 
-function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null) {
+function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null, followUpJobs = []) {
   const columns = buildKanbanColumns(kanbanConfig);
   const latestByChat = new Map();
   const eventCountsByChat = new Map();
@@ -829,7 +851,57 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
     });
   }
 
+  addFollowUpCards(columns, followUpJobs, latestByChat, tenantSlug);
+
   return columns;
+}
+
+function addFollowUpCards(columns, followUpJobs, latestByChat, tenantSlug) {
+  if (tenantSlug !== 'clinica_nubia_oficial') return;
+  const column = findKanbanColumn(columns, 'follow_ups');
+  if (!column) return;
+
+  const nextJobByConversation = new Map();
+  for (const job of followUpJobs) {
+    const key = `${job.channel_type || 'whatsapp'}:${job.external_conversation_id || ''}`;
+    if (!job.external_conversation_id) continue;
+    const current = nextJobByConversation.get(key);
+    // A claimed job is the active execution; otherwise show the earliest pending step.
+    if (!current || (job.status === 'processing' && current.status !== 'processing')) {
+      nextJobByConversation.set(key, job);
+    }
+  }
+
+  for (const [key, job] of nextJobByConversation) {
+    const latestEvent = latestByChat.get(key);
+    const channelType = normalizeChannel(job.channel_type);
+    const label = followUpLabel(job.step_key);
+    column.cards.push({
+      id: `follow-up-${job.id}`,
+      externalConversationId: job.external_conversation_id,
+      title: job.contact_name || latestEvent?.contact_name || `Contato ${channelType.label}`,
+      subtitle: job.objective || 'Retomada automática programada.',
+      channel: channelType.label,
+      channelType: channelType.type,
+      stage: `Follow-up ${label}`,
+      targetColumnId: 'follow_ups',
+      owner: 'Assistente IA',
+      aiReason: job.status === 'processing' ? 'IA preparando o follow-up' : 'Follow-up programado',
+      followUpLabel: label,
+      followUpStatus: job.status,
+      followUpDueAt: job.due_at,
+      isFollowUp: true,
+      lastAt: formatDate(job.due_at || job.created_at),
+    });
+  }
+}
+
+function followUpLabel(stepKey) {
+  const key = String(stepKey || '').trim().toLowerCase();
+  if (key === '3h') return '3h';
+  if (key === '24h' || key === '1d' || key === '1dia') return '1 dia';
+  if (key === '15d' || key === '15dias') return '15 dias';
+  return stepKey || 'Programado';
 }
 
 function buildKanbanColumns(kanbanConfig) {
