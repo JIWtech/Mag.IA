@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { canCloseConversation } from './conversationLifecycle';
+import { canCloseConversation, requirePersistedClosure } from './conversationLifecycle';
 import { CHANNEL_OPTIONS, isTenantAuthorized } from './tenantAccess';
 import { createRoot } from 'react-dom/client';
 import readXlsxFile from 'read-excel-file/browser';
@@ -1256,7 +1256,7 @@ function Conversations({
     setEnding(true);
     setSendError('');
     try {
-      await sendN8nCommand('close_conversation', {
+      const closeResult = await sendN8nCommand('close_conversation', {
         channel_type: selected.channelType || selected.channel.toLowerCase(),
         external_conversation_id: selected.externalConversationId || selected.id.replace(/^conv-/, ''),
         contact_name: selected.contact,
@@ -1264,6 +1264,7 @@ function Conversations({
         sent_by_user: 'Operador NORIA',
         reason: 'Atendimento finalizado pelo operador',
       }, tenantSlug);
+      requirePersistedClosure(closeResult);
       setClosedLocally((current) => ({
         ...current,
         [selectedCloseKey]: {
@@ -1586,7 +1587,7 @@ function Conversations({
                 type="button"
                 onClick={handleOpenCloseModal}
                 disabled={ending || !canEndSelected}
-                title={canEndSelected ? 'Encerrar atendimento' : 'Disponível durante um atendimento da IA'}
+                title={canEndSelected ? 'Encerrar atendimento' : 'Atendimento encerrado ou encerramento em andamento'}
                 aria-label="Encerrar atendimento"
               >
                 <CheckCircle2 size={16} />

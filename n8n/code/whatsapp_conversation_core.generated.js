@@ -1010,6 +1010,8 @@ async function loadRecentHistory(context = {}) {
     + '&order=created_at.desc,id.desc&limit=' + (grounded ? 251 : 50));
   if (!Array.isArray(rows)) throw new Error('Conversation history unavailable');
   turn.boundary_created_at = boundary[0]?.created_at || null;
+  // The queue claim and the history lookup must describe the same attendance.
+  turn.history_boundary_changed = !!turn.boundary_id && turn.boundary_id !== (boundary[0]?.id || 'initial');
   turn.history_overflow = grounded && rows.length > 250;
   return rows.reverse();
 }
@@ -1083,11 +1085,20 @@ function conversationControl(history = []) {
   return { activeHistory, lockedByHuman: !!event, lockEvent: event || null, lockSource: event ? 'human_control' : null };
 }
 
-async function loadAppointments(tenantId) {
+async function loadAppointments(tenantId, includePrevious = false) {
   const rows = await supabaseGet('/rest/v1/appointments?select=*&tenant_id=eq.' + encodeFilter(tenantId)
     + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
-    + '&order=starts_at.desc&limit=30');
-  return { rows, error: '' };
+    + (!includePrevious ? '&status=not.in.(cancelled,canceled,completed,done,no_show)&starts_at=gt.' + encodeFilter(new Date().toISOString())
+      + (turn?.boundary_created_at ? '&created_at=gt.' + encodeFilter(turn.boundary_created_at) : '') : '')
+    + '&order=created_at.desc&limit=31');
+  if (!Array.isArray(rows)) throw new Error('Appointments unavailable');
+  const scoped = includePrevious ? rows : rows.filter(row => {
+    if (['cancelled','canceled','completed','done','no_show'].includes(row.status) || Date.parse(row.starts_at) <= Date.now()) return false;
+    const session = row.metadata?.conversation_session_id;
+    if (session) return session === (turn?.boundary_id || 'initial');
+    return !turn?.boundary_created_at || Date.parse(row.created_at) > Date.parse(turn.boundary_created_at);
+  });
+  return { rows: scoped, error: '', overflow: rows.length > 30 };
 }
 
 function appointmentState(rows = [], now = Date.now()) {
@@ -1245,6 +1256,7 @@ async function markLatestAppointmentPaymentReported(context) {
   const rows = (await loadAppointments(context.tenant.id)).rows;
   const candidates = rows.filter(row => ['pending_payment','reserved','payment_requested'].includes(row.status))
     .sort((a,b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  if (candidates.length > 1) return { updated: false, reason: 'ambiguous_payment_appointment' };
   const target = candidates[0];
   if (!target) return { updated: false, reason: 'appointment_not_found' };
   const payload = { status: 'payment_reported', metadata: { ...target.metadata,
@@ -2333,7 +2345,7 @@ function groundingTimeFromEvidence(text) {
 function groundingResponseSchema() {
   const str = { type:'STRING' };
   return { type:'OBJECT', properties: {
-    action:{type:'STRING',enum:['reply','location','payment','check_availability','create_appointment','handoff']},
+    action:{type:'STRING',enum:['reply','location','payment','check_availability','create_appointment','recall_previous','handoff']},
     reply:str,
     state:{type:'OBJECT',properties:{customer_name:str,service_id:str,date:str,time:str,unit_id:str,unit_evidence:str,
       name_evidence:str,service_evidence:str,date_evidence:str,time_evidence:str},
@@ -2342,10 +2354,14 @@ function groundingResponseSchema() {
 }
 
 function groundingValidateResponse(result, context, customerMessages, catalog, appointments) {
-  const allowed=['reply','location','payment','check_availability','create_appointment','handoff'];
+  const allowed=['reply','location','payment','check_availability','create_appointment','recall_previous','handoff'];
   if (!result || !allowed.includes(result.action) || typeof result.reply !== 'string'
     || !result.state || result.reply.length > 2400) throw new Error('Invalid structured reply');
   const state = result.state;
+  if (result.action === 'recall_previous') {
+    if (sessionReferenceIntent(rawText) !== 'recall') return {text:sessionHandoffMessage()+' [HUMANO_SOLICITADO]',state:null};
+    return {text:'',state:null,recallRequested:true};
+  }
   for (const key of ['customer_name','service_id','date','time','name_evidence','service_evidence','date_evidence','time_evidence']) {
     if (typeof state[key] !== 'string' || state[key].length > 180 || /[|\[\]\n]/.test(state[key])) throw new Error('Invalid state field');
   }
@@ -2382,12 +2398,6 @@ function groundingValidateResponse(result, context, customerMessages, catalog, a
   if (result.action === 'create_appointment') {
     if (schedulingEnabled(context) && !state.unit_id) return { text:schedulingRegionQuestion(context), state };
     if (!state.customer_name || !service || !state.date || !state.time) throw new Error('Incomplete booking action');
-    const existing=appointments.rows?.find(a=>Date.parse(a.starts_at)>Date.now());
-    const requested=parseAppointmentStartAt(state.date,state.time,context);
-    if (existing && (Date.parse(existing.starts_at) !== Date.parse(requested) || !normalizeText(existing.title).includes(normalizeText(service.name))
-      || (schedulingEnabled(context) && existing.metadata?.unit_id !== state.unit_id))) {
-      return {text:'Vou chamar a equipe para verificar essa altera\u00e7\u00e3o do seu agendamento. [HUMANO_SOLICITADO]',state};
-    }
     return {text:'[ACAO: CRIAR_AGENDAMENTO|nome='+state.customer_name+'|servico='+service.name+'|data='+state.date
       +'|hora='+state.time+'|duracao='+Number(settingsFor(context).appointment_duration_minutes||60)+'|status=pending_payment]',state};
   }
@@ -2442,7 +2452,11 @@ async function callGroundedGemini(context, history, catalog, appointments) {
     const candidate=body?.candidates?.[0];
     if (candidate?.finishReason !== 'STOP') throw new Error('Incomplete model output');
     const value=JSON.parse(candidate.content.parts.filter(p=>!p.thought).map(p=>p.text||'').join(''));
-    const validated=groundingValidateResponse(value,context,customerMessages,catalog,appointments);
+    let validated=groundingValidateResponse(value,context,customerMessages,catalog,appointments);
+    if (validated.recallRequested) {
+      const recalled=await sessionRecall(context,sessionReferenceIntent(rawText)==='other_contact'?'other_contact':'recall');
+      validated={...recalled,text:recalled.text+(recalled.handoff?' [HUMANO_SOLICITADO]':''),state:null,recallHandled:true};
+    }
     const valid=await schedulingValidateAction(context,validated,value.action);
     return {...valid,model,usage:body.usageMetadata||{},audit:{...audit,action:value.action,
       ...(valid.availability_error ? {availability_error:valid.availability_error} : {})}};
@@ -2485,7 +2499,7 @@ async function schedulingCheck(context, state) {
 }
 
 async function schedulingValidateAction(context, generated, action) {
-  if (!schedulingEnabled(context) || generated.handoff || /HUMANO_SOLICITADO/.test(generated.text)) return generated;
+  if (!schedulingEnabled(context) || generated.handoff || generated.recallHandled || /HUMANO_SOLICITADO/.test(generated.text)) return generated;
   const state = generated.state || {};
   if (!state.unit_id) return { ...generated, text: schedulingRegionQuestion(context) };
   const wantsAvailability = action === 'check_availability' || action === 'create_appointment'
@@ -2513,12 +2527,51 @@ async function schedulingValidateAction(context, generated, action) {
 
 async function schedulingReserve(context, state) {
   if (!state?.unit_id || !state.service_id) throw new Error('SCHEDULE_NOT_CONFIGURED');
-  const appointment = await supabasePost('/rest/v1/rpc/magia_reserve_appointment', {
+  const sessionMode = settingsFor(context).attendance_lifecycle === 'session_v2';
+  const appointment = await supabasePost('/rest/v1/rpc/' + (sessionMode ? 'magia_reserve_session_appointment' : 'magia_reserve_appointment'), {
     p_tenant: context.tenant.id, p_unit: state.unit_id, p_service: state.service_id,
     p_date: state.date, p_time: state.time, p_name: state.customer_name, p_chat: String(chatId),
     p_request: 'whatsapp:' + turn.messages.at(-1).event_id, p_channel: 'whatsapp',
+    ...(sessionMode ? {p_session:turn.boundary_id || 'initial'} : {}),
   });
   return { created: true, appointment };
+}
+
+function sessionHandoffMessage() {
+  return 'S\u00f3 um momentinho, por favor. Vou chamar a equipe para conferir isso com carinho e continuar seu atendimento por aqui.';
+}
+
+function sessionReferenceIntent(text) {
+  const value = normalizeText(text);
+  if (/outro (?:numero|telefone|whatsapp|contato)|numero (?:antigo|da minha|do meu)|agendamento (?:da minha|do meu)|conversa (?:da minha|do meu)/.test(value)) return 'other_contact';
+  if (/(?:remarcar|reagendar|cancelar|alterar|mudar|trocar).{0,45}(?:agendamento|reserva|horario|dia)|(?:agendamento|reserva|horario).{0,40}(?:remarcar|cancelar|alterar|mudar)/.test(value)) return 'change_booking';
+  if (/(?:novo|outro|mais um) (?:agendamento|atendimento|horario)|agendar (?:de novo|novamente|outro)|mais uma (?:sessao|reserva)/.test(value)) return 'new_booking';
+  if (/atendimento anterior|conversa anterior|ultima conversa|ultimo atendimento|da outra vez|falei.{0,25}(?:ontem|antes|outro dia)|conversamos.{0,25}(?:ontem|antes)|meu agendamento|minha reserva|ja (?:agendei|marquei)|qual.{0,20}(?:horario|dia).{0,15}(?:agend|marcad)/.test(value)) return 'recall';
+  return '';
+}
+
+async function sessionRecall(context, reason = 'recall') {
+  // Never search another customer's number or import archived bot assertions.
+  if (reason !== 'recall') return { text: sessionHandoffMessage(), handoff: true, reason };
+  try {
+    const result = await loadAppointments(context.tenant.id, true);
+    if (result.overflow || result.rows.length !== 1) return { text: sessionHandoffMessage(), handoff: true,
+      reason: result.rows.length ? 'previous_context_ambiguous' : 'previous_context_not_found' };
+    const row = result.rows[0];
+    const status = {pending_payment:'aguardando o sinal',payment_reported:'aguardando a confer\u00eancia do sinal',
+      confirmed:'confirmado',scheduled:'agendado',cancelled:'cancelado',canceled:'cancelado',completed:'conclu\u00eddo',done:'conclu\u00eddo',no_show:'registrado como falta'}[row.status];
+    if (!status) return {text:sessionHandoffMessage(),handoff:true,reason:'previous_status_unknown'};
+    return { text:'Encontrei uma reserva para ' + appointmentDateLabel(row) + ', com status ' + status
+      + '. \u00c9 sobre esse atendimento que voc\u00ea quer falar?', handoff:false, reason:'previous_appointment_found', appointment_id:row.id };
+  } catch {
+    return {text:sessionHandoffMessage(),handoff:true,reason:'previous_context_lookup_failed'};
+  }
+}
+
+function sessionUsageDiagnostic(gate) {
+  return { reason: gate.forceMock ? 'tenant_ai_disabled' : !gate.enabled ? 'provider_disabled'
+    : !gate.hasKey ? 'provider_key_missing' : 'daily_limit_reached',
+    daily_limit:gate.dailyLimit, used_today:gate.usedToday };
 }
 async function queueRpc(name, extra = {}) {
   return supabasePost('/rest/v1/rpc/magia_' + name + '_turn', {
@@ -2553,6 +2606,9 @@ async function runTurn() {
   setCurrentText(turn.messages.map(item => item.text).filter(Boolean).join('\n\n'));
   originalTextOrCaption = displayMessageText = rawText;
   const controlHistory = await loadRecentHistory(context);
+  if (turn.history_boundary_changed) {
+    await complete('cancelled'); return { ok:true, skipped:true, reason:'attendance_changed' };
+  }
   if (turn.boundary_created_at) {
     const obsolete = turn.messages.filter(item => Date.parse(item.received_at) <= Date.parse(turn.boundary_created_at));
     if (obsolete.length) {
@@ -2605,8 +2661,15 @@ async function runTurn() {
   const classification = classify(context);
   const gate = usageGate(context);
   const fullCatalog = wantsFullCatalogRequest() && catalog.isComplete;
+  const referenceIntent = grounded ? sessionReferenceIntent(rawText) : '';
   let responseText;
-  if (grounded && (turn.history_overflow || JSON.stringify(history.map(e => e.message_text)).length > 65000)) {
+  if (['recall', 'other_contact', 'change_booking'].includes(referenceIntent)) {
+    const recalled = await sessionRecall(context, referenceIntent);
+    responseText = recalled.text; event.handoff = recalled.handoff;
+    event.ai_provider = 'previous_context_lookup';
+    if (recalled.handoff) event.stage = 'Atendimento humano';
+    event.raw_payload.previous_context = { reason:recalled.reason, appointment_id:recalled.appointment_id || null };
+  } else if (grounded && (turn.history_overflow || JSON.stringify(history.map(e => e.message_text)).length > 65000)) {
     responseText = 'Vou chamar uma pessoa da equipe para continuar com os detalhes que voc\u00ea j\u00e1 enviou.';
     event.ai_provider = 'context_capacity_handoff'; event.handoff = true; event.stage = 'Atendimento humano';
   } else if (grounded && groundingDirectReply(context, rawText, history)) {
@@ -2618,11 +2681,13 @@ async function runTurn() {
     responseText = buildFullCatalogReplyFromRows(catalog.matches);
     event.ai_provider = 'catalog_db_direct';
   } else if (!gate.allowed) {
-    responseText = String(settings.fallback_message || 'Não consigo consultar o atendimento automático agora. Vou deixar sua mensagem para a equipe.');
+    responseText = sessionHandoffMessage();
     event.ai_provider = 'fallback_daily_limit'; event.handoff = true; event.stage = 'Atendimento humano';
+    event.raw_payload.ai_availability = sessionUsageDiagnostic(gate);
+    event.ai_error = event.raw_payload.ai_availability.reason;
   } else {
     const generated = grounded
-      ? await callGroundedGemini(context, history, catalog, appointments)
+      ? await callGroundedGemini(context, history, catalog, referenceIntent === 'new_booking' ? appointmentState([]) : appointments)
       : await callGemini(context, classification, '', history, catalog, appointments);
     markUsage();
     responseText = generated.text; event.ai_provider = 'gemini'; event.ai_model = generated.model; event.ai_usage = generated.usage;

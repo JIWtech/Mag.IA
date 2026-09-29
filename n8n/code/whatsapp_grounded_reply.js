@@ -76,7 +76,7 @@ function groundingTimeFromEvidence(text) {
 function groundingResponseSchema() {
   const str = { type:'STRING' };
   return { type:'OBJECT', properties: {
-    action:{type:'STRING',enum:['reply','location','payment','check_availability','create_appointment','handoff']},
+    action:{type:'STRING',enum:['reply','location','payment','check_availability','create_appointment','recall_previous','handoff']},
     reply:str,
     state:{type:'OBJECT',properties:{customer_name:str,service_id:str,date:str,time:str,unit_id:str,unit_evidence:str,
       name_evidence:str,service_evidence:str,date_evidence:str,time_evidence:str},
@@ -85,10 +85,14 @@ function groundingResponseSchema() {
 }
 
 function groundingValidateResponse(result, context, customerMessages, catalog, appointments) {
-  const allowed=['reply','location','payment','check_availability','create_appointment','handoff'];
+  const allowed=['reply','location','payment','check_availability','create_appointment','recall_previous','handoff'];
   if (!result || !allowed.includes(result.action) || typeof result.reply !== 'string'
     || !result.state || result.reply.length > 2400) throw new Error('Invalid structured reply');
   const state = result.state;
+  if (result.action === 'recall_previous') {
+    if (sessionReferenceIntent(rawText) !== 'recall') return {text:sessionHandoffMessage()+' [HUMANO_SOLICITADO]',state:null};
+    return {text:'',state:null,recallRequested:true};
+  }
   for (const key of ['customer_name','service_id','date','time','name_evidence','service_evidence','date_evidence','time_evidence']) {
     if (typeof state[key] !== 'string' || state[key].length > 180 || /[|\[\]\n]/.test(state[key])) throw new Error('Invalid state field');
   }
@@ -125,12 +129,6 @@ function groundingValidateResponse(result, context, customerMessages, catalog, a
   if (result.action === 'create_appointment') {
     if (schedulingEnabled(context) && !state.unit_id) return { text:schedulingRegionQuestion(context), state };
     if (!state.customer_name || !service || !state.date || !state.time) throw new Error('Incomplete booking action');
-    const existing=appointments.rows?.find(a=>Date.parse(a.starts_at)>Date.now());
-    const requested=parseAppointmentStartAt(state.date,state.time,context);
-    if (existing && (Date.parse(existing.starts_at) !== Date.parse(requested) || !normalizeText(existing.title).includes(normalizeText(service.name))
-      || (schedulingEnabled(context) && existing.metadata?.unit_id !== state.unit_id))) {
-      return {text:'Vou chamar a equipe para verificar essa altera\u00e7\u00e3o do seu agendamento. [HUMANO_SOLICITADO]',state};
-    }
     return {text:'[ACAO: CRIAR_AGENDAMENTO|nome='+state.customer_name+'|servico='+service.name+'|data='+state.date
       +'|hora='+state.time+'|duracao='+Number(settingsFor(context).appointment_duration_minutes||60)+'|status=pending_payment]',state};
   }
@@ -185,7 +183,11 @@ async function callGroundedGemini(context, history, catalog, appointments) {
     const candidate=body?.candidates?.[0];
     if (candidate?.finishReason !== 'STOP') throw new Error('Incomplete model output');
     const value=JSON.parse(candidate.content.parts.filter(p=>!p.thought).map(p=>p.text||'').join(''));
-    const validated=groundingValidateResponse(value,context,customerMessages,catalog,appointments);
+    let validated=groundingValidateResponse(value,context,customerMessages,catalog,appointments);
+    if (validated.recallRequested) {
+      const recalled=await sessionRecall(context,sessionReferenceIntent(rawText)==='other_contact'?'other_contact':'recall');
+      validated={...recalled,text:recalled.text+(recalled.handoff?' [HUMANO_SOLICITADO]':''),state:null,recallHandled:true};
+    }
     const valid=await schedulingValidateAction(context,validated,value.action);
     return {...valid,model,usage:body.usageMetadata||{},audit:{...audit,action:value.action,
       ...(valid.availability_error ? {availability_error:valid.availability_error} : {})}};

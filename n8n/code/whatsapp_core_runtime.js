@@ -31,6 +31,9 @@ async function runTurn() {
   setCurrentText(turn.messages.map(item => item.text).filter(Boolean).join('\n\n'));
   originalTextOrCaption = displayMessageText = rawText;
   const controlHistory = await loadRecentHistory(context);
+  if (turn.history_boundary_changed) {
+    await complete('cancelled'); return { ok:true, skipped:true, reason:'attendance_changed' };
+  }
   if (turn.boundary_created_at) {
     const obsolete = turn.messages.filter(item => Date.parse(item.received_at) <= Date.parse(turn.boundary_created_at));
     if (obsolete.length) {
@@ -83,8 +86,15 @@ async function runTurn() {
   const classification = classify(context);
   const gate = usageGate(context);
   const fullCatalog = wantsFullCatalogRequest() && catalog.isComplete;
+  const referenceIntent = grounded ? sessionReferenceIntent(rawText) : '';
   let responseText;
-  if (grounded && (turn.history_overflow || JSON.stringify(history.map(e => e.message_text)).length > 65000)) {
+  if (['recall', 'other_contact', 'change_booking'].includes(referenceIntent)) {
+    const recalled = await sessionRecall(context, referenceIntent);
+    responseText = recalled.text; event.handoff = recalled.handoff;
+    event.ai_provider = 'previous_context_lookup';
+    if (recalled.handoff) event.stage = 'Atendimento humano';
+    event.raw_payload.previous_context = { reason:recalled.reason, appointment_id:recalled.appointment_id || null };
+  } else if (grounded && (turn.history_overflow || JSON.stringify(history.map(e => e.message_text)).length > 65000)) {
     responseText = 'Vou chamar uma pessoa da equipe para continuar com os detalhes que voc\u00ea j\u00e1 enviou.';
     event.ai_provider = 'context_capacity_handoff'; event.handoff = true; event.stage = 'Atendimento humano';
   } else if (grounded && groundingDirectReply(context, rawText, history)) {
@@ -96,11 +106,13 @@ async function runTurn() {
     responseText = buildFullCatalogReplyFromRows(catalog.matches);
     event.ai_provider = 'catalog_db_direct';
   } else if (!gate.allowed) {
-    responseText = String(settings.fallback_message || 'Não consigo consultar o atendimento automático agora. Vou deixar sua mensagem para a equipe.');
+    responseText = sessionHandoffMessage();
     event.ai_provider = 'fallback_daily_limit'; event.handoff = true; event.stage = 'Atendimento humano';
+    event.raw_payload.ai_availability = sessionUsageDiagnostic(gate);
+    event.ai_error = event.raw_payload.ai_availability.reason;
   } else {
     const generated = grounded
-      ? await callGroundedGemini(context, history, catalog, appointments)
+      ? await callGroundedGemini(context, history, catalog, referenceIntent === 'new_booking' ? appointmentState([]) : appointments)
       : await callGemini(context, classification, '', history, catalog, appointments);
     markUsage();
     responseText = generated.text; event.ai_provider = 'gemini'; event.ai_model = generated.model; event.ai_usage = generated.usage;

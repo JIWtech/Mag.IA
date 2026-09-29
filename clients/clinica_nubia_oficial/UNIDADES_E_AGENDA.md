@@ -55,7 +55,9 @@ ainda precisam ser executados pelo operador no Supabase.
   impede duas insercoes concorrentes de ocuparem a ultima vaga.
 - Trigger cobre tambem insert/update/delete via interface ou REST, nao apenas o bot.
 - Cancelamento libera ocupacao; pending_payment, payment_reported e confirmed a conservam.
-- RPC usa chave idempotente e bloqueia segunda reserva futura para a mesma conversa.
+- RPC 018 usa chave idempotente e bloqueia segunda reserva futura para a mesma conversa.
+  A evolucao opt-in 019 permite reservas adicionais por sessao; publicar conforme
+  `SESSOES_E_ENCERRAMENTO.md`. A RPC antiga permanece para compatibilidade.
 - Reservas legadas sem classificacao bloqueiam apenas intervalos sobrepostos para revisao;
   nao sao ignoradas, apagadas ou migradas silenciosamente.
 - Uma consulta de disponibilidade pode ficar desatualizada; a reserva e quem decide.

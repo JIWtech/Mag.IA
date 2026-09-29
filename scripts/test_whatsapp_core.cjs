@@ -7,7 +7,7 @@ const code = fs.readFileSync(path.join(__dirname,'../n8n/code/whatsapp_conversat
 const execute = new AsyncFunction('$json','$env','$vars','$getWorkflowStaticData',code);
 const services=[{external_id:'bronze',category:'Bronze',name:'Bronze Classico',description:'Bronze em maquina',price:99.99,billing_unit:'sessao',notes:'',active:true}];
 
-async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false }={}) {
+async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false }={}) {
   const calls=[]; const events=[]; const saved=[]; const finishes=[]; let sent=0; let generated=0;
   const input={tenant_id:'t-clinic',tenant_slug:'clinic',remoteJid:'5511111111111@s.whatsapp.net',instance:'clinic'};
   const environment={SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake',GEMINI_ENABLED:'true',GEMINI_API_KEY:'fake',
@@ -19,6 +19,7 @@ async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 a
   if (grounded) Object.assign(settings,{grounding_mode:'canonical_v2',ai_model:'gemini-2.5-flash',
     system_prompt:'ONLY CANONICAL TENANT PROMPT',prompt_revision:'test-v2',business_facts:businessFacts});
   if (scheduling) settings.appointment_scheduling = scheduling;
+  if (sessionMode) settings.attendance_lifecycle = 'session_v2';
   const request=async ({method,url,body})=>{
     const u=new URL(url);calls.push({method,url,body});
     if(u.hostname==='evo.test'){sent++;if(sendError)throw Error('timeout');return {key:{id:'sent-1'}};}
@@ -29,7 +30,7 @@ async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 a
     if(table==='magia_commit_turn')return stale?{committed:false,reason:'new_messages'}:{committed:true};
     if(table==='magia_finish_turn'){finishes.push(body.p_outcome);return {finished:true};}
     if(table==='magia_appointment_availability'){if(availabilityError)throw Error('RPC unavailable');return {available_starts:available};}
-    if(table==='magia_reserve_appointment'){
+    if(['magia_reserve_appointment','magia_reserve_session_appointment'].includes(table)){
       if(failAppointment)throw Error('SLOT_UNAVAILABLE');
       const a={id:'a-created',status:'pending_payment',starts_at:body.p_date+'T13:00:00Z',metadata:{unit_id:body.p_unit}};
       saved.push(a);return a;
@@ -43,8 +44,8 @@ async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 a
       if(method==='PATCH'){events.push(body);return [{}];}
       if(method==='POST'){events.push(body);return [{id:'out'}];}
       if(u.searchParams.get('or')?.includes('sender_type.eq.human'))return [];
-      if(u.searchParams.get('or')?.includes('conversation_closed'))return closeAt?[{id:'close-1',created_at:closeAt}]:[];
-      return [...history].reverse();
+      if(u.searchParams.get('or')?.includes('conversation_closed'))return closeAt?[{id:boundaryChanged?'close-2':'close-1',created_at:closeAt}]:[];
+      return history.filter(e=>!closeAt||Date.parse(e.created_at)>Date.parse(closeAt)).reverse();
     }
     if(table==='appointments'){
       if(method==='POST'){if(failAppointment)throw Error('DB unavailable');saved.push(body);return [{id:'a-created',...body}];}
@@ -54,7 +55,7 @@ async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 a
     }
     throw Error('Unexpected '+method+' '+u.pathname);
   };
-  const result=await execute.call({helpers:{httpRequest:request}},input,environment,{},()=>({}));
+  const result=await execute.call({helpers:{httpRequest:request}},input,environment,{},()=>usage);
   return {result:result.json,calls,events,saved,finishes,sent,generated};
 }
 
@@ -123,6 +124,74 @@ scheduling.service_resources.bronze='classico';
 const schedulingState={...blankState,customer_name:'Maria',service_id:'bronze',date:'2099-09-29',time:'10:00',
   name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3',unit_id:'angra',unit_evidence:'e5'};
 const schedulingTexts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria','Angra'];
+
+const archivedBooking={id:'old-booking',status:'confirmed',starts_at:'2099-09-28T13:00:00Z',created_at:'2025-01-01',
+  contact_name:'OLD_CUSTOMER',metadata:{conversation_session_id:'initial',service_id:'bronze',unit_id:'angra'}};
+const closedYesterday=()=>new Date(Date.now()-86400000).toISOString();
+
+test('fresh attendance excludes archived history and previous future appointments',async()=>{
+  const r=await run({grounded:true,closeAt:closedYesterday(),texts:['Oi'],appointments:[archivedBooking],
+    history:[{id:'old-event',created_at:'2025-01-01',direction:'inbound',message_text:'OLD_CUSTOMER Angra'}],
+    response:{action:'reply',reply:'Como posso ajudar?',state:blankState}});
+  assert.equal(r.generated,1);assert.equal(r.sent,1);
+  assert.doesNotMatch(JSON.stringify(r.calls.find(c=>c.url.includes('generateContent')).body),/OLD_CUSTOMER|old-booking|old-event/);
+  assert.equal(r.saved.length,0);
+});
+
+test('another booking for the same customer uses session RPC and preserves the previous booking',async()=>{
+  const r=await run({grounded:true,scheduling,sessionMode:true,closeAt:closedYesterday(),texts:schedulingTexts,
+    appointments:[archivedBooking],response:{action:'create_appointment',reply:'Certo',state:schedulingState}});
+  assert.equal(r.saved.length,1);
+  const call=r.calls.find(c=>c.url.includes('magia_reserve_session_appointment'));
+  assert.equal(call.body.p_session,'close-1');
+  assert.ok(!r.calls.some(c=>c.method==='PATCH'&&new URL(c.url).pathname.endsWith('/appointments')));
+});
+
+test('payment after closing never changes an appointment from the previous attendance',async()=>{
+  const r=await run({closeAt:closedYesterday(),texts:['SINAL PAGO'],appointments:[{...archivedBooking,status:'pending_payment'}]});
+  assert.equal(r.saved.length,0);assert.equal(r.sent,1);assert.equal(r.events[0].handoff,true);
+});
+
+test('multiple pending reservations require human payment matching',async()=>{
+  const r=await run({texts:['SINAL PAGO'],appointments:[{...archivedBooking,status:'pending_payment'},
+    {...archivedBooking,id:'another',status:'pending_payment'}]});
+  assert.equal(r.saved.length,0);assert.equal(r.events[0].stage,'Verificar Sinal');
+});
+
+test('explicit prior reference can recover one verified same-contact booking without old bot prose',async()=>{
+  const r=await run({grounded:true,closeAt:closedYesterday(),texts:['Meu agendamento anterior'],appointments:[archivedBooking]});
+  assert.equal(r.generated,0);assert.equal(r.sent,1);assert.equal(r.events[0].handoff,false);
+  assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/confirmado/);
+});
+
+test('missing or ambiguous previous context has a warm handoff, never guesses',async()=>{
+  for(const appointments of [[],[archivedBooking,{...archivedBooking,id:'another'}]]) {
+    const r=await run({grounded:true,texts:['Falei ontem com voces'],appointments});
+    assert.equal(r.generated,0);assert.equal(r.events[0].handoff,true);
+    assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/momentinho/);
+  }
+});
+
+test('reference to another contact never searches private archived appointments',async()=>{
+  const r=await run({grounded:true,texts:['Falei pelo outro numero'],appointments:[archivedBooking]});
+  assert.equal(r.events[0].handoff,true);assert.equal(r.generated,0);
+  assert.ok(!r.calls.some(c=>new URL(c.url).pathname.endsWith('/appointments')&&!c.url.includes('starts_at=')));
+});
+
+test('close racing the claimed turn cancels it without a response or new human lock',async()=>{
+  const r=await run({closeAt:closedYesterday(),boundaryChanged:true});
+  assert.equal(r.sent,0);assert.equal(r.generated,0);assert.equal(r.events.length,0);
+  assert.deepEqual(r.finishes,['cancelled']);
+});
+
+test('daily limit remains tenant-wide after closure, with a specific diagnostic and warm handoff',async()=>{
+  const key='gemini_clinic_'+new Date().toISOString().slice(0,10);
+  const usage={[key]:80};
+  const r=await run({grounded:true,closeAt:closedYesterday(),texts:['Oi'],usage});
+  assert.equal(r.generated,0);assert.equal(r.sent,1);assert.equal(usage[key],80);
+  assert.equal(r.events[0].ai_error,'daily_limit_reached');
+  assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/momentinho/);
+});
 test('unit is asked before booking when customer has not selected a region',async()=>{
   const r=await run({grounded:true,scheduling,response:{action:'create_appointment',reply:'Certo',state:{...schedulingState,unit_id:'',unit_evidence:''}}});
   assert.equal(r.saved.length,0);assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/regi\u00e3o/);

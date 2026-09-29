@@ -16,6 +16,7 @@ const overrides = functions(read('n8n/code/whatsapp_core_overrides.js'));
 for (const [name, code] of overrides) extracted.set(name, code);
 for (const [name, code] of functions(read('n8n/code/whatsapp_grounded_reply.js'))) extracted.set(name, code);
 for (const [name, code] of functions(read('n8n/code/whatsapp_scheduling.js'))) extracted.set(name, code);
+for (const [name, code] of functions(read('n8n/code/whatsapp_session.js'))) extracted.set(name, code);
 const dateRule = '- Use essas datas como referencia oficial para termos relativos.';
 if (!extracted.get('callGemini').includes(dateRule)) throw Error('Review legacy date instructions');
 extracted.set('callGemini', extracted.get('callGemini').replace(dateRule,

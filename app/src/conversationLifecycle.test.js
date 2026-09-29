@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyConversationLifecycle, canCloseConversation } from './conversationLifecycle.js';
+import { applyConversationLifecycle, canCloseConversation, requirePersistedClosure } from './conversationLifecycle.js';
+
+test('closing requires a persisted server boundary, not merely HTTP success', () => {
+  for (const result of [null, {}, {ok:true}, {ok:true,saved:[]}]) assert.throws(()=>requirePersistedClosure(result));
+  assert.equal(requirePersistedClosure({ok:true,saved:[{id:'close-1',service:'conversation_closed'}]}).id,'close-1');
+});
 
 const inbound = { id: 'in-1', direction: 'inbound' };
 const close = { id: 'close-1', direction: 'outbound', service: 'conversation_closed' };
@@ -9,12 +14,13 @@ function apply(conversation, event, stage = 'Qualificacao') {
   return conversation;
 }
 
-test('only active AI attendance can be closed', () => {
+test('active AI and human attendance can be closed, closed attendance cannot', () => {
   assert.equal(canCloseConversation(null), false);
-  for (const status of ['finalizado', 'atendimento_humano', undefined]) {
+  for (const status of ['finalizado', undefined]) {
     assert.equal(canCloseConversation({ status }), false);
   }
   assert.equal(canCloseConversation({ status: 'ia_ativa' }), true);
+  assert.equal(canCloseConversation({ status: 'atendimento_humano' }), true);
 });
 
 test('closing persists final status and retains visible messages', () => {
@@ -87,7 +93,7 @@ test('close observed without a new inbound keeps the button blocked', () => {
   assert.equal(canCloseConversation({ status: 'ia_ativa', closedEventId: 'close-1', lastInboundId: 'in-1' }, pending), false);
 });
 
-test('handoff silences the close action until a new attendance starts', () => {
+test('handoff remains human until a new attendance starts', () => {
   const conversation = apply({ status: 'ia_ativa' }, { ...inbound, handoff: true });
   assert.equal(conversation.status, 'atendimento_humano');
   apply(conversation, { ...inbound, id: 'in-2', handoff: false });

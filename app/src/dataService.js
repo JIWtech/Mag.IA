@@ -308,7 +308,12 @@ export async function saveAppointment(activeTenantSlug, appointment) {
   if (!tenant) throw new Error('Tenant nao encontrado');
   const userId = await currentUserId();
   if (appointment.unitId) {
-    const { data, error } = await supabase.rpc('magia_reserve_appointment', {
+    const { data: configuration, error: configurationError } = await supabase.from('tenant_settings')
+      .select('settings').eq('tenant_id', tenant.id).maybeSingle();
+    if (configurationError) throw configurationError;
+    const rpc = configuration?.settings?.attendance_lifecycle === 'session_v2'
+      ? 'magia_reserve_session_appointment' : 'magia_reserve_appointment';
+    const { data, error } = await supabase.rpc(rpc, {
       p_tenant: tenant.id, p_unit: appointment.unitId, p_service: appointment.serviceId,
       p_date: appointment.localDate, p_time: appointment.localTime, p_name: appointment.contactName,
       p_chat: appointment.externalConversationId || '', p_request: appointment.requestId,

@@ -36,6 +36,8 @@ async function loadRecentHistory(context = {}) {
     + '&order=created_at.desc,id.desc&limit=' + (grounded ? 251 : 50));
   if (!Array.isArray(rows)) throw new Error('Conversation history unavailable');
   turn.boundary_created_at = boundary[0]?.created_at || null;
+  // The queue claim and the history lookup must describe the same attendance.
+  turn.history_boundary_changed = !!turn.boundary_id && turn.boundary_id !== (boundary[0]?.id || 'initial');
   turn.history_overflow = grounded && rows.length > 250;
   return rows.reverse();
 }
@@ -56,11 +58,20 @@ function conversationControl(history = []) {
   return { activeHistory, lockedByHuman: !!event, lockEvent: event || null, lockSource: event ? 'human_control' : null };
 }
 
-async function loadAppointments(tenantId) {
+async function loadAppointments(tenantId, includePrevious = false) {
   const rows = await supabaseGet('/rest/v1/appointments?select=*&tenant_id=eq.' + encodeFilter(tenantId)
     + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
-    + '&order=starts_at.desc&limit=30');
-  return { rows, error: '' };
+    + (!includePrevious ? '&status=not.in.(cancelled,canceled,completed,done,no_show)&starts_at=gt.' + encodeFilter(new Date().toISOString())
+      + (turn?.boundary_created_at ? '&created_at=gt.' + encodeFilter(turn.boundary_created_at) : '') : '')
+    + '&order=created_at.desc&limit=31');
+  if (!Array.isArray(rows)) throw new Error('Appointments unavailable');
+  const scoped = includePrevious ? rows : rows.filter(row => {
+    if (['cancelled','canceled','completed','done','no_show'].includes(row.status) || Date.parse(row.starts_at) <= Date.now()) return false;
+    const session = row.metadata?.conversation_session_id;
+    if (session) return session === (turn?.boundary_id || 'initial');
+    return !turn?.boundary_created_at || Date.parse(row.created_at) > Date.parse(turn.boundary_created_at);
+  });
+  return { rows: scoped, error: '', overflow: rows.length > 30 };
 }
 
 async function loadCatalogContext(context) {
@@ -77,6 +88,7 @@ async function markLatestAppointmentPaymentReported(context) {
   const rows = (await loadAppointments(context.tenant.id)).rows;
   const candidates = rows.filter(row => ['pending_payment','reserved','payment_requested'].includes(row.status))
     .sort((a,b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  if (candidates.length > 1) return { updated: false, reason: 'ambiguous_payment_appointment' };
   const target = candidates[0];
   if (!target) return { updated: false, reason: 'appointment_not_found' };
   const payload = { status: 'payment_reported', metadata: { ...target.metadata,
