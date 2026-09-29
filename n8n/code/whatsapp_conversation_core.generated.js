@@ -2231,6 +2231,22 @@ async function saveEvent(event) {
   return saved;
 }
 
+async function scheduleFollowUps(context, sentEvent, event) {
+  const settings = settingsFor(context);
+  // The policy controls activation in the database. Never enqueue human handoffs,
+  // payment flows, closed conversations, or a reply that failed to persist.
+  if (!sentEvent?.id || event.handoff || ['agendamento', 'pagamento_sinal', 'conversation_closed'].includes(event.service)) return 0;
+  if (settings.follow_up_enabled === false) return 0;
+  const result = await httpJson('POST', supabaseUrl('/rest/v1/rpc/magia_schedule_followups'), supabaseHeaders(), {
+    p_tenant: context.tenant.id,
+    p_channel: 'whatsapp',
+    p_chat: chatId,
+    p_anchor: sentEvent.id,
+    p_contact: turn.messages.at(-1)?.name || firstName || null,
+  });
+  return Number(result || 0);
+}
+
 async function sendChannelMessage(context, text, event) {
   const suffix = tenantEnvSuffix(tenantSlug);
   const base = env('EVOLUTION_API_URL_' + suffix).replace(/\/$/, '');
@@ -2255,7 +2271,7 @@ async function sendChannelMessage(context, text, event) {
   const id = sent?.key?.id || sent?.message?.key?.id || sent?.id;
   if (!id) throw new Error('Provider response did not contain message ID');
   providerAccepted = true;
-  await supabasePost('/rest/v1/channel_events', {
+  const saved = await supabasePost('/rest/v1/channel_events', {
     tenant_id: context.tenant.id, tenant_slug: tenantSlug, channel_type: 'whatsapp',
     external_conversation_id: chatId, external_message_id: String(id), direction: 'outbound',
     sender_type: 'assistant', message_text: text, contact_name: turn.messages.at(-1)?.name || firstName,
@@ -2264,7 +2280,15 @@ async function sendChannelMessage(context, text, event) {
     raw_payload: { ...event.raw_payload, core_revision: 'conversation_core_v1',
       conversation_session_id: turn.boundary_id, grouped_message_ids: turn.messages.map(item => item.id) },
   });
-  return { sent: true, id: String(id) };
+  const sentEvent = Array.isArray(saved) ? saved[0] : saved;
+  try {
+    const followUpsScheduled = await scheduleFollowUps(context, sentEvent, event);
+    return { sent: true, id: String(id), follow_ups_scheduled: followUpsScheduled };
+  } catch (error) {
+    // The primary reply is already sent and persisted. An optional job must not retry it.
+    return { sent: true, id: String(id), follow_ups_scheduled: 0,
+      follow_up_error: String(error.message || error).slice(0, 180) };
+  }
 }
 
 function groundingLocationRequested(text) {
@@ -2370,7 +2394,12 @@ function groundingValidateResponse(result, context, customerMessages, catalog, a
     for (const key of ['unit_id', 'unit_evidence']) {
       if (typeof state[key] !== 'string' || state[key].length > 180) throw new Error('Invalid unit field');
     }
-    if (state.unit_id) {
+    const defaultUnitId = schedulingDefaultUnitId(context);
+    if (defaultUnitId) {
+      // A single configured unit is a system fact. It never needs customer evidence.
+      state.unit_id = defaultUnitId;
+      state.unit_evidence = '';
+    } else if (state.unit_id) {
       const proof = byId.get(state.unit_evidence);
       if (!proof || !settingsFor(context).appointment_scheduling.units[state.unit_id]
         || schedulingUnitsInText(context, proof.text).length !== 1
@@ -2470,14 +2499,27 @@ function schedulingEnabled(context) {
   return settingsFor(context).appointment_scheduling?.enabled === true;
 }
 
+function schedulingUnits(context) {
+  return Object.entries(settingsFor(context).appointment_scheduling?.units || {})
+    .filter(([id, unit]) => id && unit && typeof unit === 'object');
+}
+
+function schedulingDefaultUnitId(context) {
+  const units = schedulingUnits(context);
+  return units.length === 1 ? units[0][0] : '';
+}
+
 function schedulingUnitsInText(context, text) {
   const value = ' ' + normalizeText(text).replace(/[^a-z0-9 ]/g, ' ') + ' ';
-  return Object.entries(settingsFor(context).appointment_scheduling?.units || {})
-    .filter(([, unit]) => unit.aliases.some(alias => value.includes(' ' + normalizeText(alias) + ' ')))
+  return schedulingUnits(context)
+    .filter(([, unit]) => (Array.isArray(unit.aliases) ? unit.aliases : []).some(alias => value.includes(' ' + normalizeText(alias) + ' ')))
     .map(([id]) => id);
 }
 
 function schedulingKnownUnit(context, history = []) {
+  const defaultUnitId = schedulingDefaultUnitId(context);
+  if (defaultUnitId) return defaultUnitId;
+
   const messages = groundingHistory(history);
   for (const message of [...messages].reverse()) {
     const units = schedulingUnitsInText(context, message.text);
@@ -2488,7 +2530,8 @@ function schedulingKnownUnit(context, history = []) {
 }
 
 function schedulingRegionQuestion(context) {
-  const names = Object.values(settingsFor(context).appointment_scheduling?.units || {}).map(unit => unit.name);
+  const names = schedulingUnits(context).map(([, unit]) => unit.name);
+  if (names.length === 1) return '';
   return 'Em qual regi\u00e3o voc\u00ea quer atendimento: ' + names.join(' ou ') + '?';
 }
 
@@ -2501,6 +2544,7 @@ async function schedulingCheck(context, state) {
 async function schedulingValidateAction(context, generated, action) {
   if (!schedulingEnabled(context) || generated.handoff || generated.recallHandled || /HUMANO_SOLICITADO/.test(generated.text)) return generated;
   const state = generated.state || {};
+  if (!state.unit_id) state.unit_id = schedulingDefaultUnitId(context);
   if (!state.unit_id) return { ...generated, text: schedulingRegionQuestion(context) };
   const wantsAvailability = action === 'check_availability' || action === 'create_appointment'
     || /dispon|\b(?:livres?|vagos?)\b|pode(?:mos)? (?:vir|agendar|marcar)|posso (?:agendar|reservar|marcar)|(?:sim|certo).{0,40}(?:marcar|agendar)/.test(normalizeText(generated.text))

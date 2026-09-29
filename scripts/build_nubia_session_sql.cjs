@@ -3,7 +3,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const settings = {
   attendance_lifecycle: 'session_v2',
-  prompt_revision: 'nubia-2026-09-26-sessoes-v4',
+  prompt_revision: 'nubia-2026-09-29-angra-sessoes-v5',
   system_prompt: fs.readFileSync(path.join(root, 'clients/clinica_nubia_oficial/prompt_canonico_v2.txt'), 'utf8').trim(),
 };
 const sql = `-- Generated: node scripts/build_nubia_session_sql.cjs

@@ -6,13 +6,6 @@
       "address": "Av. Itaguaí, 200 - Nova Angra, Angra dos Reis - RJ, 23933-115, Brasil",
       "verified": true,
       "verified_source": "Endereco confirmado pelo responsavel no chat em 2026-09-25"
-    },
-    {
-      "id": "rio",
-      "name": "Centro do Rio - Salão Esthefany Campos",
-      "address": "Salão Esthefany Campos. Em frente ao colégio Nazira, ao lado da confecção de roupa.",
-      "verified": true,
-      "verified_source": "Responsavel confirmou que somente esta referencia deve ser divulgada em 2026-09-25"
     }
   ],
   "fees": { "after_17h_sundays_holidays": 10 },

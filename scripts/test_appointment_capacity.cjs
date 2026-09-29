@@ -12,7 +12,8 @@ test('capacity: slots, independent units/resources, release, idempotence, legacy
       create schema auth;
       create function auth.role() returns text language sql as $$ select coalesce(current_setting('request.jwt.claim.role',true),'service_role') $$;
       create function auth.uid() returns uuid language sql as $$ select null::uuid $$;
-      create table tenants(id uuid primary key,status text,slug text);
+      create table tenants(id uuid primary key,status text,slug text,deleted_at timestamptz);
+      create table ai_prompt_versions(tenant_id uuid,active boolean);
       create table channel_events(id uuid primary key default gen_random_uuid(),tenant_slug text,channel_type text,
         external_conversation_id text,service text,ai_provider text,created_at timestamptz default now());
       create table tenant_settings(tenant_id uuid primary key,settings jsonb,updated_at timestamptz default now());
@@ -21,11 +22,12 @@ test('capacity: slots, independent units/resources, release, idempotence, legacy
         category text,description text,notes text,price numeric,estimated_hours numeric,external_source text,billing_unit text,metadata jsonb,updated_at timestamptz);
       create table appointments(id uuid primary key default gen_random_uuid(),tenant_id uuid,title text,starts_at timestamptz,
         ends_at timestamptz,status text,contact_name text,channel_type text,external_conversation_id text,created_by uuid,metadata jsonb,notes text);
-      insert into tenants values('${tenant}','active','clinica_nubia_oficial'),('${other}','active','other');
+      insert into tenants(id,status,slug) values('${tenant}','active','clinica_nubia_oficial'),('${other}','active','other');
       insert into tenant_service_catalog(tenant_id,external_id,name,active,price) values('${tenant}','bronze_classico','Classico',true,99.99),
         ('${tenant}','bronze_comfort','Comfort',true,179.99),('${tenant}','bronze_premium','Premium',true,149.99),
         ('${tenant}','bronze_no_sol','Sol',true,99.99),('${tenant}','banho_lua_classico','Banho antigo',true,19.99);`);
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, '../clients/clinica_nubia_oficial/scheduling.json')));
+    config.units.rio={...structuredClone(config.units.angra),name:'Rio',aliases:['rio']};
     await db.query('insert into tenant_settings(tenant_id,settings) values($1,$2)', [tenant, {
       appointment_scheduling: config,grounding_mode:'canonical_v2',whatsapp_processing_mode:'conversation_core_v1',
       payment:{deposit_percentage:50},ai_model:'gemini-2.5-flash' }]);
@@ -89,7 +91,7 @@ test('capacity: slots, independent units/resources, release, idempotence, legacy
     await db.exec(sessionSql);await db.exec(sessionSql);
     const reserveSession=async(req,date='2030-01-03',session='initial',chat='repeat-customer')=>
       (await db.query('select magia_reserve_session_appointment($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) a',
-        [tenant,'rio','bronze_classico',date,'10:00','Cliente',chat,req,'whatsapp',null,session])).rows[0].a;
+        [tenant,'angra','bronze_classico',date,'10:00','Cliente',chat,req,'whatsapp',null,session])).rows[0].a;
     const firstSession=await reserveSession('session-1');
     assert.equal((await reserveSession('session-1')).id,firstSession.id);
     assert.equal((await reserveSession('duplicate')).id,firstSession.id);
@@ -111,6 +113,22 @@ test('capacity: slots, independent units/resources, release, idempotence, legacy
     assert.equal(activated.attendance_lifecycle,'session_v2');
     assert.equal(activated.payment.pix_holder,'Silvana Marques');
     assert.equal(activated.ai_model,newSettings.ai_model);
+    const singleUnitSql=fs.readFileSync(path.join(__dirname,'../supabase/migrations/022_nubia_single_angra_scheduling.sql'),'utf8');
+    await db.query('insert into ai_prompt_versions values($1,true),($2,true)',[tenant,other]);
+    await db.exec(singleUnitSql);await db.exec(singleUnitSql);
+    assert.deepEqual((await db.query('select active from ai_prompt_versions where tenant_id=$1',[tenant])).rows,[{active:false}]);
+    assert.deepEqual((await db.query('select active from ai_prompt_versions where tenant_id=$1',[other])).rows,[{active:true}]);
+    const finalSettings=(await db.query('select settings from tenant_settings where tenant_id=$1',[tenant])).rows[0].settings;
+    assert.deepEqual(Object.keys(finalSettings.appointment_scheduling.units),['angra']);
+    assert.equal(finalSettings.attendance_lifecycle,'session_v2');
+    assert.match(finalSettings.system_prompt,/SESSOES INDEPENDENTES/);
+    const liveInstruction='O atendimento presencial e exclusivamente em Angra dos Reis. Se a cliente pedir outra cidade, informe com gentileza que atendemos somente em Angra dos Reis. Use state.unit_id "angra" e unit_evidence apenas quando a cliente mencionar Angra, Nova Angra ou a unidade. Nunca suponha unidade pelo DDD, perfil ou endereco de outra pessoa.';
+    const liveFlow='Colete e confirme, usando somente dados informados pela cliente:\n1. unidade;\n2. servico;\n3. data;\n4. horario;\n5. nome completo.\nQuando faltar algum desses cinco dados estiver vazio\nUse action=create_appointment somente quando unidade, servico, data, horario e nome completo estiverem preenchidos e sustentados por mensagens da cliente.';
+    await db.query("update tenant_settings set settings=jsonb_set(settings,'{system_prompt}',to_jsonb($2::text)) where tenant_id=$1",[tenant,liveInstruction+'\nSESSOES INDEPENDENTES\n'+liveFlow]);
+    await db.exec(singleUnitSql);await db.exec(singleUnitSql);
+    const repaired=(await db.query("select settings->>'system_prompt' prompt from tenant_settings where tenant_id=$1",[tenant])).rows[0].prompt;
+    assert.match(repaired,/SESSOES INDEPENDENTES/);assert.match(repaired,/unit_evidence vazio/);
+    assert.doesNotMatch(repaired,/1\. unidade|cinco dados|unit_evidence apenas/);
     await db.exec("set request.jwt.claim.role='authenticated'; set role authenticated");
     await assert.rejects(reserveSession('unauthorized'),/Scheduling access denied/);
     await assert.rejects(available(), /Scheduling access denied/);

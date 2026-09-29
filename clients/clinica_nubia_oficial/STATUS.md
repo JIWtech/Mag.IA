@@ -1,5 +1,20 @@
 # Clinica da Nubia oficial - 2026-09-25
 
+## Correcao de unidade unica — 2026-09-29
+
+- A Clínica atende somente em Angra dos Reis. O cadastro versionado não contém
+  mais a antiga unidade do Rio nem a referência ao Salão Esthefany Campos.
+- A migration `022_nubia_single_angra_scheduling.sql` atualiza o tenant oficial,
+  mantém apenas a unidade `angra`, troca o trecho conflitante do `system_prompt`
+  e desativa os registros ativos de `ai_prompt_versions` desse tenant.
+- O Core canonical assume automaticamente a única unidade configurada. Em um
+  tenant com apenas uma unidade, `unit_id` é um fato do sistema e não exige
+  `unit_evidence` da mensagem da cliente.
+- Publicar no nó `Processar Conversa WhatsApp` o conteúdo de
+  `n8n/code/whatsapp_conversation_core.generated.js` antes de executar a
+  migration 022. Depois, validar uma conversa com serviço, data, horário e nome,
+  sem perguntar região.
+
 ## Atualizacao Movvy: estado atual
 
 - Documento lido: `Movvy_Agendamento_Servicos.docx`, incluindo as tabelas.

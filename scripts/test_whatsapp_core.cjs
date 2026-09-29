@@ -120,10 +120,38 @@ test('grouped model input includes explicit ISO dates and tenant-owned style',as
 const blankState={customer_name:'',service_id:'',date:'',time:'',name_evidence:'',service_evidence:'',date_evidence:'',time_evidence:'',unit_id:'',unit_evidence:''};
 
 const scheduling=JSON.parse(fs.readFileSync(path.join(__dirname,'../clients/clinica_nubia_oficial/scheduling.json')));
+const singleUnitScheduling=structuredClone(scheduling);
+// Generic multi-unit behavior must remain supported, independent of the clinic's current catalog.
+scheduling.units.rio={...structuredClone(scheduling.units.angra),name:'Rio',aliases:['rio']};
 scheduling.service_resources.bronze='classico';
+singleUnitScheduling.service_resources.bronze='classico';
 const schedulingState={...blankState,customer_name:'Maria',service_id:'bronze',date:'2099-09-29',time:'10:00',
   name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3',unit_id:'angra',unit_evidence:'e5'};
 const schedulingTexts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria','Angra'];
+
+test('single unit accepts Sim, Sexta-feira and Jacuacanga without demanding unit evidence',async()=>{
+  for(const text of ['Sim','Sexta-feira','Jacuacanga']) {
+    const r=await run({grounded:true,scheduling:singleUnitScheduling,texts:[text],
+      response:{action:'reply',reply:'Qual servico voce deseja?',state:{...blankState,unit_id:'angra',unit_evidence:'missing'}}});
+    assert.equal(r.result.ok,true);assert.equal(r.events[0].handoff,false);
+    assert.doesNotMatch(r.calls.find(c=>c.url.includes('sendText')).body.text,/regi|Rio/);
+  }
+});
+
+test('single unit books without customer region text while preserving all other evidence checks',async()=>{
+  const r=await run({grounded:true,scheduling:singleUnitScheduling,texts:schedulingTexts.slice(0,5),
+    response:{action:'create_appointment',reply:'Certo',state:{...schedulingState,unit_id:'',unit_evidence:''}}});
+  assert.equal(r.saved.length,1);assert.equal(r.events[0].handoff,false);
+  assert.equal(r.calls.find(c=>c.url.includes('magia_reserve_appointment')).body.p_unit,'angra');
+});
+
+test('optional follow-up failure never changes a successfully sent reply to human handoff',async()=>{
+  // Unimplemented follow-up RPC in this harness deliberately throws.
+  const r=await run({texts:['Oi'],response:'Como posso ajudar?'});
+  assert.equal(r.result.ok,true);assert.equal(r.sent,1);assert.equal(r.result.follow_ups_scheduled,0);
+  assert.ok(r.result.follow_up_error);assert.deepEqual(r.finishes,['done']);
+  assert.ok(!r.events.some(e=>e.service==='technical_error'));
+});
 
 const archivedBooking={id:'old-booking',status:'confirmed',starts_at:'2099-09-28T13:00:00Z',created_at:'2025-01-01',
   contact_name:'OLD_CUSTOMER',metadata:{conversation_session_id:'initial',service_id:'bronze',unit_id:'angra'}};

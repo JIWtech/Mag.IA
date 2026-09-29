@@ -112,6 +112,22 @@ async function saveEvent(event) {
   return saved;
 }
 
+async function scheduleFollowUps(context, sentEvent, event) {
+  const settings = settingsFor(context);
+  // The policy controls activation in the database. Never enqueue human handoffs,
+  // payment flows, closed conversations, or a reply that failed to persist.
+  if (!sentEvent?.id || event.handoff || ['agendamento', 'pagamento_sinal', 'conversation_closed'].includes(event.service)) return 0;
+  if (settings.follow_up_enabled === false) return 0;
+  const result = await httpJson('POST', supabaseUrl('/rest/v1/rpc/magia_schedule_followups'), supabaseHeaders(), {
+    p_tenant: context.tenant.id,
+    p_channel: 'whatsapp',
+    p_chat: chatId,
+    p_anchor: sentEvent.id,
+    p_contact: turn.messages.at(-1)?.name || firstName || null,
+  });
+  return Number(result || 0);
+}
+
 async function sendChannelMessage(context, text, event) {
   const suffix = tenantEnvSuffix(tenantSlug);
   const base = env('EVOLUTION_API_URL_' + suffix).replace(/\/$/, '');
@@ -136,7 +152,7 @@ async function sendChannelMessage(context, text, event) {
   const id = sent?.key?.id || sent?.message?.key?.id || sent?.id;
   if (!id) throw new Error('Provider response did not contain message ID');
   providerAccepted = true;
-  await supabasePost('/rest/v1/channel_events', {
+  const saved = await supabasePost('/rest/v1/channel_events', {
     tenant_id: context.tenant.id, tenant_slug: tenantSlug, channel_type: 'whatsapp',
     external_conversation_id: chatId, external_message_id: String(id), direction: 'outbound',
     sender_type: 'assistant', message_text: text, contact_name: turn.messages.at(-1)?.name || firstName,
@@ -145,5 +161,13 @@ async function sendChannelMessage(context, text, event) {
     raw_payload: { ...event.raw_payload, core_revision: 'conversation_core_v1',
       conversation_session_id: turn.boundary_id, grouped_message_ids: turn.messages.map(item => item.id) },
   });
-  return { sent: true, id: String(id) };
+  const sentEvent = Array.isArray(saved) ? saved[0] : saved;
+  try {
+    const followUpsScheduled = await scheduleFollowUps(context, sentEvent, event);
+    return { sent: true, id: String(id), follow_ups_scheduled: followUpsScheduled };
+  } catch (error) {
+    // The primary reply is already sent and persisted. An optional job must not retry it.
+    return { sent: true, id: String(id), follow_ups_scheduled: 0,
+      follow_up_error: String(error.message || error).slice(0, 180) };
+  }
 }

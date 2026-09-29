@@ -101,7 +101,12 @@ function groundingValidateResponse(result, context, customerMessages, catalog, a
     for (const key of ['unit_id', 'unit_evidence']) {
       if (typeof state[key] !== 'string' || state[key].length > 180) throw new Error('Invalid unit field');
     }
-    if (state.unit_id) {
+    const defaultUnitId = schedulingDefaultUnitId(context);
+    if (defaultUnitId) {
+      // A single configured unit is a system fact. It never needs customer evidence.
+      state.unit_id = defaultUnitId;
+      state.unit_evidence = '';
+    } else if (state.unit_id) {
       const proof = byId.get(state.unit_evidence);
       if (!proof || !settingsFor(context).appointment_scheduling.units[state.unit_id]
         || schedulingUnitsInText(context, proof.text).length !== 1
