@@ -6,10 +6,8 @@ Aplicacao comercial apenas ao tenant `clinica_nubia_oficial`. Universo Prata nao
 Fonte: `Movvy_Agendamento_Servicos.docx` e confirmacoes do responsavel nesta conversa.
 O titulo Movvy do documento nao altera a identidade comercial da Clinica da Nubia.
 
-- Angra: Av. Itaguai, 200 - Nova Angra, Angra dos Reis - RJ, 23933-115, Brasil.
-- Rio: Salao Esthefany Campos. Em frente ao colegio Nazira, ao lado da confeccao de roupa.
-  O responsavel pediu expressamente apenas essa referencia, sem completar endereco.
-- Grade identica para ambas, mas ocupacao separada por unidade e recurso.
+- Unidade única: Av. Itaguai, 200 - Nova Angra, Angra dos Reis - RJ, 23933-115, Brasil.
+- A unidade `angra` é assumida automaticamente pelo Core; a cliente não precisa escolher região.
 - 4 Classico, 1 Comfort, 1 Premium por inicio; blocos de 90 minutos.
 - Procedimento Classico dura 60 minutos, sem reduzir o bloco reservado de 90.
 - Comfort e Premium: 90 minutos. Banho de Lua: unico, 40 minutos, sem variacoes.
@@ -37,10 +35,9 @@ O resultado e `05_unidades_agenda_pagamento.sql`. Nao editar o SQL gerado isolad
 2. Publicar o frontend atualizado para ter os seletores de unidade/servico/horario.
 3. Executar `supabase/migrations/018_appointment_capacity.sql` no SQL Editor.
 4. Executar `clients/clinica_nubia_oficial/05_unidades_agenda_pagamento.sql`.
-5. Revisar os agendamentos legados retornados pelo SELECT final: nao presumir a unidade.
-   O cadastro existente de Bronze no Sol nao recebeu unidade nem duracao nova por suposicao.
-6. Testar uma nova sessao: informar regiao, servico, data, horario e nome em mensagens
-   separadas; conferir resposta unica, unidade e pending_payment na agenda/Kanban.
+5. Revisar os agendamentos legados retornados pelo SELECT final e atribuir a unidade `angra` quando confirmado.
+6. Testar uma nova sessão: informar serviço, data, horário e nome em mensagens separadas;
+   conferir resposta única, unidade `angra` e `pending_payment` na agenda/Kanban.
 7. Pedir Pix; informar SINAL PAGO; verificar aviso curto e Verificar Sinal.
    Apenas Confirmar pelo operador pode enviar o texto final e mudar para confirmed.
 

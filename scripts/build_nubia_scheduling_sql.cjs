@@ -3,7 +3,7 @@ const path = require('node:path');
 const dir = path.join(__dirname, '../clients/clinica_nubia_oficial');
 const read = file => JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
 const patch = {
-  prompt_revision: 'nubia-2026-09-25-movvy-v3',
+  prompt_revision: 'nubia-2026-09-29-angra-v4',
   system_prompt: fs.readFileSync(path.join(dir, 'prompt_canonico_v2.txt'), 'utf8').trim(),
   business_facts: read('business_facts_v2.json'),
   appointment_scheduling: read('scheduling.json'),

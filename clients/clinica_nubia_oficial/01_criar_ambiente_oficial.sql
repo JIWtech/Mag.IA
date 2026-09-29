@@ -85,7 +85,7 @@ begin
   insert into public.ai_prompt_versions
     (tenant_id, ai_agent_id, version, prompt, guardrails, tools, active)
   values (target_id, agent_id, source_prompt.version, source_prompt.prompt,
-    source_prompt.guardrails, source_prompt.tools, true);
+    source_prompt.guardrails, source_prompt.tools, false);
 
   insert into public.tenant_service_catalog
     (tenant_id, external_source, external_id, category, name, description,
