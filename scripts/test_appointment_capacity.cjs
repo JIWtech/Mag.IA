@@ -129,6 +129,12 @@ test('capacity: slots, independent units/resources, release, idempotence, legacy
     const repaired=(await db.query("select settings->>'system_prompt' prompt from tenant_settings where tenant_id=$1",[tenant])).rows[0].prompt;
     assert.match(repaired,/SESSOES INDEPENDENTES/);assert.match(repaired,/unit_evidence vazio/);
     assert.doesNotMatch(repaired,/1\. unidade|cinco dados|unit_evidence apenas/);
+    const audioSql=fs.readFileSync(path.join(__dirname,'../supabase/migrations/024_nubia_whatsapp_audio.sql'),'utf8');
+    await db.exec(audioSql);await db.exec(audioSql);
+    const audioSettings=(await db.query('select settings from tenant_settings where tenant_id=$1',[tenant])).rows[0].settings;
+    assert.equal(audioSettings.whatsapp_audio_enabled,true);
+    assert.equal(audioSettings.ai_model,finalSettings.ai_model);
+    assert.deepEqual(audioSettings.payment,finalSettings.payment);
     await db.exec("set request.jwt.claim.role='authenticated'; set role authenticated");
     await assert.rejects(reserveSession('unauthorized'),/Scheduling access denied/);
     await assert.rejects(available(), /Scheduling access denied/);

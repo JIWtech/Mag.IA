@@ -159,7 +159,7 @@ function cacheAppData(tenantSlug, data) {
   if (isAuthRequired()) return;
   try {
     const serialized = JSON.stringify(data, (key, value) => (
-      key === 'url' || key === 'thumbnailUrl' ? undefined : value
+      key === 'url' || key === 'thumbnailUrl' || key === 'salesDocuments' ? undefined : value
     ));
     if (serialized.length <= 2_000_000) {
       localStorage.setItem(`${appDataCachePrefix}${tenantSlug}`, serialized);
@@ -327,7 +327,7 @@ function App() {
   };
 
   const handleFinishConversationFromKanban = (card) => {
-    handleMoveKanbanCard(card, 'finalizadas');
+    handleMoveKanbanCard(card, card.salesClosedStage || 'finalizadas');
   };
 
   useEffect(() => {
@@ -2146,7 +2146,7 @@ function Kanban({
       <div className="kanban-board">
         {filteredColumns.map((column) => {
           const isWaitingColumn = column.automationKey === 'aguardando_humano' || column.id === 'aguardando_humano';
-          const isFinishedColumn = column.automationKey === 'finalizadas' || column.id === 'finalizadas';
+          const isFinishedColumn = column.salesClosed || column.automationKey === 'finalizadas' || column.id === 'finalizadas';
           const isFollowUpColumn = column.automationKey === 'follow_ups' || column.id === 'follow_ups';
           const isDragOver = dragOverColumnId === column.id;
 
@@ -2206,6 +2206,21 @@ function Kanban({
                           </div>
 
                           <p className="card-subtitle">{formatConversationPreview(card.subtitle)}</p>
+
+                          {card.salesDocuments?.length > 0 && (
+                            <details className="sales-document-details" onClick={e => e.stopPropagation()}>
+                              <summary>Documentos para conferir</summary>
+                              {card.salesDocuments.map((doc, index) => (
+                                <dl key={index}>
+                                  <dt>Nome</dt><dd>{doc.extracted?.name || 'Nao legivel'}</dd>
+                                  <dt>CPF</dt><dd>{doc.extracted?.cpf || 'Nao informado'}</dd>
+                                  <dt>CNH</dt><dd>{doc.extracted?.cnh || 'Nao informada'}</dd>
+                                  <dt>Nascimento</dt><dd>{doc.extracted?.birth_date || 'Nao informado'}</dd>
+                                  <dt>Status</dt><dd>Conferencia humana pendente</dd>
+                                </dl>
+                              ))}
+                            </details>
+                          )}
 
                           {isFollowUpColumn && card.followUpLabel && (
                             <div className={`follow-up-step-badge ${card.followUpStatus === 'processing' ? 'is-processing' : ''}`}>

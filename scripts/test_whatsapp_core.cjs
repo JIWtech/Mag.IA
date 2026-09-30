@@ -7,7 +7,7 @@ const code = fs.readFileSync(path.join(__dirname,'../n8n/code/whatsapp_conversat
 const execute = new AsyncFunction('$json','$env','$vars','$getWorkflowStaticData',code);
 const services=[{external_id:'bronze',category:'Bronze',name:'Bronze Classico',description:'Bronze em maquina',price:99.99,billing_unit:'sessao',notes:'',active:true}];
 
-async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false }={}) {
+async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false, audio=false, transcript='Quero bronze', audioFailure='', audioCache=null }={}) {
   const calls=[]; const events=[]; const saved=[]; const finishes=[]; let sent=0; let generated=0;
   const input={tenant_id:'t-clinic',tenant_slug:'clinic',remoteJid:'5511111111111@s.whatsapp.net',instance:'clinic'};
   const environment={SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake',GEMINI_ENABLED:'true',GEMINI_API_KEY:'fake',
@@ -20,9 +20,18 @@ async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 a
     system_prompt:'ONLY CANONICAL TENANT PROMPT',prompt_revision:'test-v2',business_facts:businessFacts});
   if (scheduling) settings.appointment_scheduling = scheduling;
   if (sessionMode) settings.attendance_lifecycle = 'session_v2';
+  settings.whatsapp_audio_enabled=audio;
   const request=async ({method,url,body})=>{
     const u=new URL(url);calls.push({method,url,body});
+    if(u.pathname.includes('getBase64FromMediaMessage')) {
+      if(audioFailure==='download')throw Error('timeout with private URL');
+      return {mimetype:audioFailure==='format'?'image/png':'audio/ogg; codecs=opus',base64:Buffer.from('OggS test audio').toString('base64')};
+    }
     if(u.hostname==='evo.test'){sent++;if(sendError)throw Error('timeout');return {key:{id:'sent-1'}};}
+    if(u.hostname==='generativelanguage.googleapis.com'&&body.contents[0].parts[0].inlineData) {
+      if(audioFailure==='transcription')throw Error('timeout');
+      return {candidates:[{finishReason:audioFailure==='truncated'?'MAX_TOKENS':'STOP',content:{parts:[{text:JSON.stringify({intelligible:audioFailure!=='silent',text:transcript})}]}}]};
+    }
     if(u.hostname==='generativelanguage.googleapis.com'){generated++;return {candidates:[{content:{parts:[{text:typeof response==='object'?JSON.stringify(response):response}]},finishReason:'STOP'}],usageMetadata:{totalTokenCount:10}};}
     assert.equal(u.hostname,'db.test');
     const table=u.pathname.split('/').at(-1);
@@ -41,6 +50,17 @@ async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 a
     if(table==='channels')return [{external_id:'clinic'}];
     if(table==='tenant_service_catalog'||table==='search_tenant_service_catalog')return services;
     if(table==='channel_events'){
+      if(method==='GET'&&u.searchParams.get('id')) {
+        const id=u.searchParams.get('id').slice(3);
+        assert.equal(u.searchParams.get('tenant_id'),'eq.t-clinic');
+        assert.equal(u.searchParams.get('external_conversation_id'),'eq.5511111111111@s.whatsapp.net');
+        return [{id,external_message_id:audioFailure==='scope'?'another':id.replace('e','m'),raw_payload:{content_type:'audio',
+          audio_metadata:{seconds:audioFailure==='long'?121:10},...(audioCache?{audio_processing:audioCache}:{})}}];
+      }
+      if(method==='PATCH'&&body.raw_payload?.audio_processing) {
+        if(audioFailure==='persist')throw Error('DB failed');
+        return [{id:'cached'}];
+      }
       if(method==='PATCH'){events.push(body);return [{}];}
       if(method==='POST'){events.push(body);return [{id:'out'}];}
       if(u.searchParams.get('or')?.includes('sender_type.eq.human'))return [];
@@ -128,6 +148,67 @@ singleUnitScheduling.service_resources.bronze='classico';
 const schedulingState={...blankState,customer_name:'Maria',service_id:'bronze',date:'2099-09-29',time:'10:00',
   name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3',unit_id:'angra',unit_evidence:'e5'};
 const schedulingTexts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria','Angra'];
+
+test('audio is transcribed before a single grouped answer and counted separately',async()=>{
+  const usage={};
+  const r=await run({grounded:true,audio:true,texts:['[audio]','por favor'],usage,
+    response:{action:'reply',reply:'Para qual dia?',state:blankState}});
+  assert.equal(r.result.ok,true);assert.equal(r.sent,1);assert.equal(r.generated,1);
+  assert.equal(Object.values(usage)[0],2);
+  const input=r.calls.find(c=>c.url.includes('generateContent')&&!c.body.contents[0].parts[0].inlineData).body.contents[0].parts[0].text;
+  assert.match(input,/Quero bronze/);assert.match(input,/por favor/);assert.doesNotMatch(input,/\[audio\]/);
+  assert.equal(r.events[0].raw_payload.audio_transcriptions.e0.text,'Quero bronze');
+  assert.ok(!JSON.stringify(r.events).includes('base64'));
+});
+
+test('spoken booking date and time become evidence under the original audio event id',async()=>{
+  const r=await run({grounded:true,audio:true,scheduling:singleUnitScheduling,sessionMode:true,
+    texts:['Oi','Quero agendar','Bronze Classico','[audio]','Maria'],transcript:'29/09/2099 as 10h',
+    response:{action:'create_appointment',reply:'Certo',state:{...schedulingState,unit_id:'',unit_evidence:''}}});
+  assert.equal(r.result.ok,true);assert.equal(r.saved.length,1);assert.equal(r.sent,1);
+});
+
+test('audio failures hand off once without inventing contents or creating bookings',async()=>{
+  for(const audioFailure of ['download','format','transcription','truncated','silent','scope','long','persist']) {
+    const r=await run({grounded:true,audio:true,texts:['[audio]'],audioFailure});
+    assert.equal(r.sent,1,audioFailure);assert.equal(r.generated,0);assert.equal(r.saved.length,0);
+    assert.equal(r.events[0].handoff,true);assert.match(r.events[0].ai_error,/audio_/);
+    assert.doesNotMatch(JSON.stringify(r.events),/private URL/);
+  }
+});
+
+test('cached audio is not downloaded or transcribed again',async()=>{
+  const r=await run({grounded:true,audio:true,texts:['[audio]'],audioCache:{version:'whatsapp_audio_v1',status:'transcribed',text:'Quero bronze'},
+    response:{action:'reply',reply:'Para qual dia?',state:blankState}});
+  assert.equal(r.result.ok,true);assert.equal(r.generated,1);
+  assert.ok(!r.calls.some(c=>c.url.includes('getBase64FromMediaMessage')||c.body?.contents?.[0]?.parts?.[0]?.inlineData));
+});
+
+test('audio respects human lock, quota, batching and stale-turn fences',async()=>{
+  const locked=await run({audio:true,texts:['[audio]'],history:[{handoff:true}]});
+  assert.equal(locked.sent,0);assert.ok(!locked.calls.some(c=>c.url.includes('getBase64FromMediaMessage')));
+  const exhausted=await run({audio:true,texts:['[audio]'],usage:{['gemini_clinic_'+new Date().toISOString().slice(0,10)]:80}});
+  assert.match(exhausted.events[0].ai_error,/daily_limit_reached/);
+  assert.ok(!exhausted.calls.some(c=>c.url.includes('getBase64FromMediaMessage')));
+  const stale=await run({grounded:true,audio:true,texts:['[audio]'],stale:true,response:{action:'reply',reply:'Para qual dia?',state:blankState}});
+  assert.equal(stale.sent,0);assert.equal(stale.saved.length,0);assert.deepEqual(stale.finishes,['retry']);
+  const batch=await run({audio:true,texts:['[audio]','[audio]','[audio]']});
+  assert.equal(batch.events[0].ai_error,'audio_batch_limit');
+});
+
+test('two audios retain both message IDs and produce only one answer',async()=>{
+  const r=await run({grounded:true,audio:true,texts:['[audio]','[audio]'],response:{action:'reply',reply:'Para qual dia?',state:blankState}});
+  assert.equal(r.sent,1);assert.equal(r.generated,1);
+  assert.deepEqual(Object.keys(r.events[0].raw_payload.audio_transcriptions),['e0','e1']);
+});
+
+test('transcriptions from previous turns remain available as evidence in the same session',async()=>{
+  const r=await run({grounded:true,texts:['Oi'],history:[{id:'old-audio',direction:'inbound',message_text:'[audio]',created_at:'2026-09-29T10:00:00Z',
+    raw_payload:{audio_transcriptions:{'old-audio':{version:'whatsapp_audio_v1',status:'transcribed',text:'Quero bronze'}}}}],
+    response:{action:'reply',reply:'Para qual dia?',state:blankState}});
+  const input=r.calls.find(c=>c.url.includes('generateContent')).body.contents[0].parts[0].text;
+  assert.match(input,/Quero bronze/);assert.doesNotMatch(input,/\[audio\]/);
+});
 
 test('single unit accepts Sim, Sexta-feira and Jacuacanga without demanding unit evidence',async()=>{
   for(const text of ['Sim','Sexta-feira','Jacuacanga']) {
@@ -235,6 +316,62 @@ test('capacity booking checks availability and uses atomic RPC, never plain appo
 test('unavailable times produce alternatives without creating or promising a booking',async()=>{
   const r=await run({grounded:true,scheduling,texts:schedulingTexts,available:['11:30','13:00'],response:{action:'create_appointment',reply:'Certo',state:schedulingState}});
   assert.equal(r.saved.length,0);assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/11:30, 13:00/);
+});
+
+test('selected available time advances to name instead of repeating the slot menu',async()=>{
+  for(const action of ['reply','check_availability','create_appointment']) {
+    const r=await run({grounded:true,scheduling:singleUnitScheduling,texts:schedulingTexts,
+      available:['10:00','11:30'],response:{action,reply:'Certo, 10:00. Qual seu nome completo?',
+        state:{...schedulingState,customer_name:'',name_evidence:'',unit_id:'',unit_evidence:''}}});
+    assert.equal(r.events[0].handoff,false);assert.equal(r.saved.length,0);
+    const reply=r.calls.find(c=>c.url.includes('sendText')).body.text;
+    assert.match(reply,/nome completo/);assert.doesNotMatch(reply,/Qual hor|11:30/);
+  }
+});
+
+test('a selected valid time never licenses invented alternative times',async()=>{
+  const r=await run({grounded:true,scheduling:singleUnitScheduling,texts:schedulingTexts,
+    available:['10:00'],response:{action:'reply',reply:'Horarios disponiveis: 10:00, 18:20.',state:schedulingState}});
+  const reply=r.calls.find(c=>c.url.includes('sendText')).body.text;
+  assert.match(reply,/Posso registrar/);assert.doesNotMatch(reply,/18:20/);assert.equal(r.saved.length,0);
+});
+
+test('selecting Quero 15 ja falei is time evidence, not an age or service price',async()=>{
+  for(const [text,valid] of [['Quero 15, ja falei',true],['Prefiro 15',true],['15',true],['Quero 15 dias',false],['Quero 15/10',false]]) {
+    const r=await run({grounded:true,scheduling:singleUnitScheduling,
+      texts:['Bronze Classico','29/09/2099',text],available:['15:00','16:30'],
+      response:{action:'reply',reply:'Certo, 15:00. Qual seu nome?',state:{...blankState,
+        service_id:'bronze',service_evidence:'e0',date:'2099-09-29',date_evidence:'e1',time:'15:00',time_evidence:'e2'}}});
+    assert.equal(r.events[0].handoff,!valid,text);
+    if(valid)assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/nome completo/);
+  }
+});
+
+test('sequential service, date, selected time and name persist one pending reservation before payment',async()=>{
+  const history=[];
+  const choices=[
+    {text:'Quero agendar Bronze Classico',action:'reply',reply:'Para qual dia?',state:{...blankState,service_id:'bronze',service_evidence:'e0'}},
+    {text:'29/09/2099',action:'check_availability',reply:'',state:{...blankState,service_id:'bronze',service_evidence:'h0',date:'2099-09-29',date_evidence:'e0'}},
+    {text:'15:00',action:'reply',reply:'Certo, 15:00. Qual seu nome completo?',state:{...blankState,service_id:'bronze',service_evidence:'h0',date:'2099-09-29',date_evidence:'h1',time:'15:00',time_evidence:'e0'}},
+    {text:'Maria Souza',action:'create_appointment',reply:'',state:{...blankState,service_id:'bronze',service_evidence:'h0',date:'2099-09-29',date_evidence:'h1',time:'15:00',time_evidence:'h2',customer_name:'Maria Souza',name_evidence:'e0'}},
+  ];
+  let booking;
+  for(const [i,choice] of choices.entries()) {
+    const r=await run({grounded:true,scheduling:singleUnitScheduling,sessionMode:true,history,texts:[choice.text],
+      available:['15:00','16:30'],response:{action:choice.action,reply:choice.reply,state:choice.state}});
+    assert.equal(r.result.ok,true);assert.equal(r.sent,1);assert.equal(r.events[0].handoff,false);
+    const reply=r.calls.find(c=>c.url.includes('sendText')).body.text;
+    if(i===1)assert.match(reply,/15:00, 16:30/);
+    if(i===2){assert.match(reply,/nome completo/);assert.doesNotMatch(reply,/16:30/);}
+    if(i<3)assert.equal(r.saved.length,0);
+    else {assert.equal(r.saved.length,1);booking=r.saved[0];assert.equal(booking.status,'pending_payment');assert.match(reply,/pendente/);}
+    history.push({id:'h'+i,direction:'inbound',message_text:choice.text,created_at:new Date(Date.now()-5000+ i).toISOString()});
+    history.push({id:'a'+i,direction:'outbound',message_text:reply,created_at:new Date(Date.now()-4999+i).toISOString(),raw_payload:{grounding:{revision:'canonical_v2',prompt_revision:'test-v2'}}});
+  }
+  const paid=await run({grounded:true,texts:['SINAL PAGO'],appointments:[{...booking,created_at:new Date().toISOString()}]});
+  assert.equal(paid.saved[0].status,'payment_reported');assert.equal(paid.events[0].stage,'Verificar Sinal');
+  assert.equal(paid.sent,1);assert.equal(paid.generated,0);
+  assert.equal(paid.calls.find(c=>c.url.includes('sendText')).body.text,'Ta bom! Vou confirmar aqui, um momento');
 });
 test('model cannot offer invented plural horarios disponiveis or infer the weekday grid',async()=>{
   const r=await run({grounded:true,scheduling,texts:schedulingTexts,available:['11:30'],response:{action:'reply',reply:'Temos horarios disponiveis as 15:00 e 16:30.',state:schedulingState}});

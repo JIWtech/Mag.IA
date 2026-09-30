@@ -61,7 +61,14 @@ async function schedulingValidateAction(context, generated, action) {
   try {
     const availability = await schedulingCheck(context, state);
     if (!Array.isArray(availability.available_starts)) throw new Error('Invalid availability result');
-    if (action === 'create_appointment' && availability.available_starts.includes(state.time)) return generated;
+    if (state.time && availability.available_starts.includes(state.time)) {
+      if (!state.customer_name) return {...generated, text:'Qual \u00e9 o seu nome completo, por favor?'};
+      if (action === 'create_appointment') return generated;
+      // A valid selection advances the flow; never replace it with the same slot menu.
+      return {...generated,
+        text:'Posso registrar seu pr\u00e9-agendamento para ' + state.date.split('-').reverse().join('/')
+          + ' \u00e0s ' + state.time + ', pendente do sinal?'};
+    }
     return { ...generated, text: availability.available_starts.length
       ? 'Para ' + state.date.split('-').reverse().join('/') + ', posso oferecer ' + availability.available_starts.join(', ')
         + '. Qual hor\u00e1rio voc\u00ea prefere?'

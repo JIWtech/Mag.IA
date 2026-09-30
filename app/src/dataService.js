@@ -3,6 +3,7 @@ import { getAuthClient, isAuthRequired } from './authService';
 import { loadUserTenants, enabledChannels } from './tenantAccess';
 import { prepareConversationEvents } from './conversationEvents';
 import { applyConversationLifecycle } from './conversationLifecycle';
+import { salesBoardEnabled, salesCards } from './salesKanban';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -273,6 +274,16 @@ async function loadKanbanConfig(tenantId) {
     return null;
   }
 
+  if (salesBoardEnabled({board})) {
+    const {data:leads,error:leadsError} = await supabase.from('sales_leads').select('*')
+      .eq('tenant_id',tenantId).order('updated_at',{ascending:false}).limit(500);
+    if (leadsError) throw new Error('Nao foi possivel carregar o Kanban comercial.');
+    const {data:documents,error:documentsError} = await supabase.from('sales_documents')
+      .select('lead_id,extracted,verification_status').eq('tenant_id',tenantId).limit(500);
+    if (documentsError) throw new Error('Nao foi possivel carregar documentos comerciais.');
+    return {board,columns:columns||[],salesLeads:(leads||[]).map(lead=>({...lead,
+      documents:(documents||[]).filter(doc=>doc.lead_id===lead.id)}))};
+  }
   return {
     board,
     columns: columns || [],
@@ -742,6 +753,7 @@ export function emptyKanban() {
 
 function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null, followUpJobs = []) {
   const columns = buildKanbanColumns(kanbanConfig);
+  if (salesBoardEnabled(kanbanConfig)) return salesCards(columns,kanbanConfig.salesLeads,kanbanConfig.board.settings.stages);
   const latestByChat = new Map();
   const eventCountsByChat = new Map();
   const appointmentsById = new Map(appointments.map((appointment) => [appointment.id, appointment]));
@@ -1297,6 +1309,15 @@ function statusAppointmentLabel(status) {
 }
 
 export async function moveKanbanCard(activeTenantSlug, card, targetColumnKey, agentName = null) {
+  if (card.salesLeadId) {
+    const client = getClient();
+    if (!client) throw new Error('Sessao necessaria para mover interesse comercial.');
+    const {data,error} = await client.rpc('magia_sales_move',{
+      p_lead:card.salesLeadId,p_stage:targetColumnKey,p_revision:card.salesRevision,
+    });
+    if (error) throw new Error('A etapa nao foi alterada. Atualize o quadro e confira sua permissao.');
+    return data;
+  }
   const canonical = canonicalKanbanKey(targetColumnKey);
   const tenantSlug = activeTenantSlug || 'clinica_nubia';
 

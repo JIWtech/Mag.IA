@@ -52,6 +52,8 @@ async function runTurn() {
   const event = { tenant_id: context.tenant.id, tenant_slug: tenantSlug, channel_type: 'whatsapp',
     service: 'geral', stage: 'Conversas IA', handoff: false, ai_provider: 'rules', raw_payload: {} };
 
+  if (salesEnabled(context)) return runSalesTurn(context, history, event, control);
+
   if (normalized === '/reset' || normalized === 'reset') {
     if (!await commit()) return { ok: true, skipped: true };
     event.ai_provider = 'conversation_reset'; event.service = 'conversation_closed'; event.stage = 'Reset';
@@ -67,6 +69,16 @@ async function runTurn() {
     event.service = control.lockEvent?.service || 'atendimento_humano';
     await saveEvent(event); await complete('done');
     return { ok: true, human_lock: true, skipped: true };
+  }
+  try {
+    await transcribeTurnAudio(context);
+  } catch (error) {
+    if (!await commit()) return {ok:true,skipped:true,reason:'superseded'};
+    Object.assign(event,{ai_provider:'audio_handoff',handoff:true,stage:'Atendimento humano',service:'atendimento_humano',
+      ai_error:String(error.message).slice(0,160)});
+    await saveEvent(event);
+    const sent=await sendChannelMessage(context,'Recebi seu \u00e1udio, mas n\u00e3o consegui processar com seguran\u00e7a agora. S\u00f3 um momentinho, vou chamar a equipe para continuar com voc\u00ea.',event);
+    await complete('done');return {ok:true,handoff:true,...sent};
   }
   if (isPaymentSignalPaidText(rawText, context)) {
     if (!await commit()) return { ok: true, skipped: true };
@@ -94,7 +106,7 @@ async function runTurn() {
     event.ai_provider = 'previous_context_lookup';
     if (recalled.handoff) event.stage = 'Atendimento humano';
     event.raw_payload.previous_context = { reason:recalled.reason, appointment_id:recalled.appointment_id || null };
-  } else if (grounded && (turn.history_overflow || JSON.stringify(history.map(e => e.message_text)).length > 65000)) {
+  } else if (grounded && (turn.history_overflow || JSON.stringify(history.map(audioHistoryText)).length > 65000)) {
     responseText = 'Vou chamar uma pessoa da equipe para continuar com os detalhes que voc\u00ea j\u00e1 enviou.';
     event.ai_provider = 'context_capacity_handoff'; event.handoff = true; event.stage = 'Atendimento humano';
   } else if (grounded && groundingDirectReply(context, rawText, history)) {

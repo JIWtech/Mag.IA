@@ -40,7 +40,7 @@ function groundingDirectReply(context, text, history = []) {
 function groundingHistory(history) {
   return history.filter(row => row.direction === 'inbound' && row.message_text
     && row.sender_type !== 'system' && row.ai_provider !== 'buffer').map(row => ({
-    id: row.id, received_at: row.created_at, text: row.message_text,
+    id: row.id, received_at: row.created_at, text: audioHistoryText(row),
   })).concat(turn.messages.map(row => ({ id: row.event_id, received_at: row.received_at, text: row.text })));
 }
 
@@ -69,7 +69,7 @@ function groundingDateFromEvidence(text, timestamp, context) {
 function groundingTimeFromEvidence(text) {
   const value=normalizeText(text);
   const m=value.match(/\b([01]?\d|2[0-3])(?::([0-5]\d)|h(?:([0-5]\d))?|\s*horas?)\b/)
-    || value.match(/^(?:as\s+)?([01]?\d|2[0-3])$/);
+    || value.match(/^(?:(?:as|quero|prefiro|pode ser)\s+)?([01]?\d|2[0-3])(?:\s*[,!]\s*(?:ja falei|por favor))?[.!?]?$/);
   return m ? m[1].padStart(2,'0')+':'+(m[2]||m[3]||'00') : null;
 }
 
@@ -133,7 +133,9 @@ function groundingValidateResponse(result, context, customerMessages, catalog, a
     : 'Vou chamar a equipe para consultar a disponibilidade desse servi\u00e7o. [HUMANO_SOLICITADO]', state };
   if (result.action === 'create_appointment') {
     if (schedulingEnabled(context) && !state.unit_id) return { text:schedulingRegionQuestion(context), state };
-    if (!state.customer_name || !service || !state.date || !state.time) throw new Error('Incomplete booking action');
+    if (!service || !state.date || !state.time || !state.customer_name) return {state,
+      text:!service ? 'Qual servi\u00e7o voc\u00ea quer agendar?' : !state.date ? 'Para qual dia voc\u00ea quer agendar?'
+        : !state.time ? 'Qual hor\u00e1rio voc\u00ea prefere?' : 'Qual \u00e9 o seu nome completo, por favor?'};
     return {text:'[ACAO: CRIAR_AGENDAMENTO|nome='+state.customer_name+'|servico='+service.name+'|data='+state.date
       +'|hora='+state.time+'|duracao='+Number(settingsFor(context).appointment_duration_minutes||60)+'|status=pending_payment]',state};
   }
