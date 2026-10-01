@@ -1,13 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
-import { getAuthClient, isAuthRequired } from './authService';
-import { loadUserTenants, enabledChannels } from './tenantAccess';
-import { prepareConversationEvents } from './conversationEvents';
-import { applyConversationLifecycle } from './conversationLifecycle';
+import { getAuthClient, isAuthRequired } from './authService.js';
+import { loadUserTenants, enabledChannels } from './tenantAccess.js';
+import { prepareConversationEvents } from './conversationEvents.js';
+import { applyConversationLifecycle } from './conversationLifecycle.js';
 import { salesBoardEnabled, salesCards } from './salesKanban';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const defaultTenantSlug = import.meta.env.VITE_TENANT_SLUG || 'jiw';
+const env = (typeof import.meta !== 'undefined' && import.meta.env) || {};
+const supabaseUrl = env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || '';
+const defaultTenantSlug = env.VITE_TENANT_SLUG || 'jiw';
 const tenantStorageKey = 'magia:selected-tenant-slug';
 const mediaObjectUrlCache = new Map();
 
@@ -607,7 +608,17 @@ function isGeneratedMediaLabel(text) {
   return /^\[(?:Imagem|Áudio|Video|Vídeo|Arquivo|Figurinha) recebida\]$/i.test(String(text || '').trim());
 }
 
-function eventsToConversations(events) {
+function resolveEventAgentName(event) {
+  const raw = asObject(event?.raw_payload);
+  const assigneeName = raw?.assignee?.name || raw?.assigned_to || raw?.agent_name;
+  if (assigneeName && typeof assigneeName === 'string') return assigneeName.trim();
+  if (event?.service === 'assign_conversation' && event?.sent_by_user) {
+    return String(event.sent_by_user).trim();
+  }
+  return null;
+}
+
+export function eventsToConversations(events) {
   const byChat = new Map();
 
   for (const event of prepareConversationEvents(events).reverse()) {
@@ -616,7 +627,12 @@ function eventsToConversations(events) {
     const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.contact_handle || event.id}`;
     const isHumanTransfer = Boolean(event.handoff && (normalizeStage(event.stage) === 'Atendimento humano' || event.service === 'manual_reply'));
     const isClosed = stageName === 'Finalizado' || event.service === 'conversation_closed' || event.ai_provider === 'conversation_closed';
-    const defaultOwner = isHumanTransfer ? 'Recepção / Núbia' : 'Assistente IA';
+    const explicitAgent = resolveEventAgentName(event);
+    const specificAttendant = event.sender_type === 'agent' && event.sent_by_user && !['Operador NORIA', 'Operador Mag.IA', 'Disparo NORIA', 'Sistema', 'IA'].includes(event.sent_by_user)
+      ? String(event.sent_by_user).trim()
+      : null;
+    const detectedAgent = explicitAgent || specificAttendant || null;
+    const initialOwner = detectedAgent || (isClosed ? 'Assistente IA' : isHumanTransfer ? null : 'Assistente IA');
 
     if (!byChat.has(key)) {
       byChat.set(key, {
@@ -628,7 +644,7 @@ function eventsToConversations(events) {
         channelType: channelType.type,
         status: isClosed ? 'finalizado' : isHumanTransfer ? 'atendimento_humano' : 'ia_ativa',
         stage: stageName,
-        owner: defaultOwner,
+        owner: initialOwner,
         unread: 0,
         lastMessage: event.message_text || mediaPreview(normalizeMedia(event.raw_payload)),
         lastAt: formatDate(event.created_at),
@@ -647,10 +663,16 @@ function eventsToConversations(events) {
     conversation.lastMessage = text || mediaPreview(media) || conversation.lastMessage;
     conversation.lastAt = formatDate(event.created_at);
     applyConversationLifecycle(conversation, event, stageName);
-    if (isClosed) conversation.owner = 'Assistente IA';
-    conversation.owner = isHumanTransfer ? 'Recepção / Núbia' : conversation.owner;
+    if (isClosed) {
+      conversation.owner = 'Assistente IA';
+    } else if (detectedAgent) {
+      conversation.owner = detectedAgent;
+    } else if (isHumanTransfer && !conversation.owner) {
+      conversation.owner = null;
+    }
     conversation.value = Math.max(conversation.value, estimatedValue(event));
     conversation.tags = Array.from(new Set([...conversation.tags, event.service, stageName].filter(Boolean)));
+    const messageSender = event.sent_by_user || detectedAgent || null;
     if (event.direction === 'outbound') {
       conversation.messages.push({
         from: event.sender_type === 'agent' ? 'agent' : event.sender_type === 'system' ? 'system' : 'ai',
@@ -658,12 +680,24 @@ function eventsToConversations(events) {
         at: formatDate(event.created_at),
         status: event.delivery_status,
         media,
+        sent_by: messageSender,
+        sender_type: event.sender_type,
       });
     } else {
-      conversation.messages.push({ from: 'contact', text: visibleText, at: formatDate(event.created_at), media });
+      conversation.messages.push({
+        from: 'contact',
+        text: visibleText,
+        at: formatDate(event.created_at),
+        media,
+      });
     }
     if (event.direction !== 'outbound' && event.response_text) {
-      conversation.messages.push({ from: 'ai', text: event.response_text, at: formatDate(event.created_at) });
+      conversation.messages.push({
+        from: 'ai',
+        text: event.response_text,
+        at: formatDate(event.created_at),
+        sent_by: 'Assistente IA',
+      });
     }
     conversation.events.push(`Serviço: ${event.service || 'geral'} - Etapa: ${stageName}`);
   }
@@ -751,7 +785,7 @@ export function emptyKanban() {
   return OFFICIAL_KANBAN_COLUMNS.map((column) => ({ ...column, cards: [] }));
 }
 
-function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null, followUpJobs = []) {
+function eventsToKanban(events, tenantSlug = '', appointments = [], kanbanConfig = null, followUpJobs = []) {
   const columns = buildKanbanColumns(kanbanConfig);
   if (salesBoardEnabled(kanbanConfig)) return salesCards(columns,kanbanConfig.salesLeads,kanbanConfig.board.settings.stages);
   const latestByChat = new Map();

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { canCloseConversation, requirePersistedClosure } from './conversationLifecycle';
 import { CHANNEL_OPTIONS, isTenantAuthorized } from './tenantAccess';
 import { createRoot } from 'react-dom/client';
@@ -144,12 +144,33 @@ function appDataSignature(value) {
   ));
 }
 
+function sanitizeCachedAppData(cached, tenantSlug) {
+  if (!cached || !Array.isArray(cached.conversations)) return cached;
+  const isNubia = tenantSlug === 'clinica_nubia';
+  const sanitizedConversations = cached.conversations.map((conv) => {
+    let owner = conv.owner;
+    if (!isNubia && owner && /recep[cç][aã]o\s*\/\s*n[uú]bia/i.test(owner)) {
+      owner = null;
+    }
+    const sanitizedMessages = (conv.messages || []).map((msg) => {
+      let sent_by = msg.sent_by;
+      if (!isNubia && sent_by && /recep[cç][aã]o\s*\/\s*n[uú]bia/i.test(sent_by)) {
+        sent_by = 'Operador NORIA';
+      }
+      return { ...msg, sent_by };
+    });
+    return { ...conv, owner, messages: sanitizedMessages };
+  });
+  return { ...cached, conversations: sanitizedConversations };
+}
+
 function loadCachedAppData(tenantSlug) {
   if (isAuthRequired()) return null;
   try {
     const raw = localStorage.getItem(`${appDataCachePrefix}${tenantSlug}`);
     const cached = raw ? JSON.parse(raw) : null;
-    return cached?.conversations ? cached : null;
+    if (!cached?.conversations) return null;
+    return sanitizeCachedAppData(cached, tenantSlug);
   } catch {
     return null;
   }
@@ -703,6 +724,7 @@ function App() {
         {active === 'dashboard' && <Dashboard conversations={appData.conversations} dataSource={appData.source} status={appData.status} ready={appDataReady} />}
         {active === 'conversas' && (
           <Conversations
+            key={activeTenantSlug}
             allowedChannels={allowedChannels}
             conversations={appData.conversations}
             tenantSlug={activeTenantSlug}
@@ -717,6 +739,7 @@ function App() {
         )}
         {active === 'kanban' && (
           <Kanban
+            key={activeTenantSlug}
             allowedChannels={allowedChannels}
             kanbanColumns={appData.kanbanColumns}
             tenantName={selectedTenant.name}
@@ -907,7 +930,7 @@ function Dashboard({ conversations, dataSource, status, ready = true }) {
 
                       <span className="stage-pill-text">{item.stage}</span>
 
-                      <span className="owner-text">{item.owner}</span>
+                      <span className="owner-text">{item.owner || (item.status === 'atendimento_humano' ? 'Atendimento humano' : 'Assistente IA')}</span>
 
                       <span className="message-preview-text" title={item.lastMessage}>
                         {formatConversationPreview(item.lastMessage)}
@@ -1199,12 +1222,37 @@ function Conversations({
     return filteredConversations.find((c) => c.id === selectedId) || filteredConversations[0];
   }, [filteredConversations, selectedId]);
 
+  const displayOwner = useMemo(() => {
+    if (!selected?.owner) return null;
+    const normalized = String(selected.owner).trim();
+    if (!normalized) return null;
+    if (normalized === selected.stage || normalized === 'Atendimento humano' || normalized === 'Assistente IA') return null;
+    if (tenantSlug !== 'clinica_nubia' && /recep[cç][aã]o\s*\/\s*n[uú]bia/i.test(normalized)) return null;
+    return normalized;
+  }, [selected?.owner, selected?.stage, tenantSlug]);
+
   const selectedCloseKey = JSON.stringify([tenantSlug, selected?.id]);
   const canEndSelected = canCloseConversation(selected, closedLocally[selectedCloseKey]);
 
   useEffect(() => {
     setShowCloseModal(false);
   }, [selectedCloseKey]);
+
+  useEffect(() => {
+    setSelectedId(conversations[0]?.id || null);
+    setDraft('');
+    setSendError('');
+    setShowCloseModal(false);
+    setShowAssignModal(false);
+    setMobileChatOpen(false);
+    setClosedLocally({});
+  }, [tenantSlug]);
+
+  useEffect(() => {
+    if (selectedId && !conversations.some((c) => c.id === selectedId)) {
+      setSelectedId(conversations[0]?.id || null);
+    }
+  }, [conversations, selectedId]);
 
   useEffect(() => {
     if (!initialConversationId) return;
@@ -1569,14 +1617,14 @@ function Conversations({
                   </span>
                   <span className="chat-header-dot">Â·</span>
                   <span className="chat-header-stage">{selected.stage}</span>
-                  {selected.owner && (
-                    <>
-                      <span className="chat-header-dot chat-header-owner-dot">Â·</span>
-                      <span className="chat-header-owner" title={`ResponsÃ¡vel: ${selected.owner}`}>
-                        {selected.owner}
-                      </span>
-                    </>
-                  )}
+                  {displayOwner && (
+  <>
+    <span className="chat-header-dot chat-header-owner-dot">·</span>
+    <span className="chat-header-owner" title={"Responsável: " + displayOwner}>
+      {displayOwner}
+    </span>
+  </>
+)}
                 </div>
               </div>
             </div>
@@ -1613,9 +1661,17 @@ function Conversations({
               const isSystem = message.from === 'system' || message.sender_type === 'system';
 
               let senderLabel = selected.contact;
-              if (isAi) senderLabel = 'Assistente IA';
-              else if (isAgent) senderLabel = message.sent_by || selected.owner || 'Operador';
-              else if (isSystem) senderLabel = 'Sistema';
+              if (isAi) {
+                senderLabel = 'Assistente IA';
+              } else if (isAgent) {
+                let agentSender = message.sent_by ? String(message.sent_by).trim() : null;
+                if (tenantSlug !== 'clinica_nubia' && agentSender && /recep[cç][aã]o\s*\/\s*n[uú]bia/i.test(agentSender)) {
+                  agentSender = null;
+                }
+                senderLabel = agentSender || displayOwner || 'Operador NORIA';
+              } else if (isSystem) {
+                senderLabel = 'Sistema';
+              }
 
               return (
                 <div key={`${message.at}-${index}`} className={`bubble ${isAi ? 'ai' : isAgent || isSystem ? 'agent' : 'contact'}`}>

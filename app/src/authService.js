@@ -1,10 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const configuredRequireAuth = import.meta.env.VITE_REQUIRE_AUTH;
+const env = (typeof import.meta !== 'undefined' && import.meta.env) || {};
+const supabaseUrl = env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || '';
+const configuredRequireAuth = env.VITE_REQUIRE_AUTH;
 const requireAuth = configuredRequireAuth === undefined
-  ? import.meta.env.MODE === 'production'
+  ? env.MODE === 'production'
   : String(configuredRequireAuth).toLowerCase() === 'true';
 
 let client = null;
