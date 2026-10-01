@@ -10,11 +10,11 @@ const mediaCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_send_produc
 const catalog = [{ category_key: 'pulseiras', label: 'Pulseiras', aliases: ['pulseira', 'pulseiras'], items: [1, 2, 3].map((n) => ({ url: `https://media.example/${n}.jpg` })) }];
 const env = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'test-key' };
 
-async function context(message, { history = [], boundary = null, environment = env, failSettings = false, failPrompt = false, failBoundary = false, tenant = 'loja', chat = 'chat', settings = {}, prompts = [], services = [], failCatalog = false } = {}) {
+async function context(message, { history = [], boundary = null, environment = env, failSettings = false, failPrompt = false, failBoundary = false, tenant = 'loja', chat = 'chat', settings = {}, prompts = [], services = [], failCatalog = false, avatar = {} } = {}) {
   const fn = new AsyncFunction('$json', '$env', '$getWorkflowStaticData', contextCode);
   const json = { tenant_slug: tenant, remoteJid: chat, messageText: message, raw_payload: { apikey: 'do-not-persist' } };
   const httpRequest = async ({ url }) => {
-    assert.ok(url.includes(tenant) || url.includes('tenant-test'));
+    assert.ok(url.includes(tenant) || url.includes('tenant-test') || url.includes('evolution.example'));
     if (url.includes('/channel_events?') && url.includes('&or=')) {
       assert.ok(url.includes('&channel_type=eq.whatsapp'));
       assert.ok(url.includes('&external_conversation_id=eq.' + encodeURIComponent(chat)));
@@ -23,6 +23,13 @@ async function context(message, { history = [], boundary = null, environment = e
     }
     if (url.includes('/channel_events?')) return history;
     if (url.includes('/tenants?')) return [{ id: 'tenant-test' }];
+    if (url.includes('/contacts?select=')) return avatar.contacts || [{ id: 'contact-test', avatar_url: null, avatar_fetched_at: new Date().toISOString() }];
+    if (url.endsWith('/rest/v1/contacts')) return [{ id: 'contact-test' }];
+    if (url.includes('/rest/v1/contacts?id=')) return [];
+    if (url.includes('/chat/fetchProfilePictureUrl/')) {
+      if (avatar.fail) throw new Error('provider unavailable');
+      return avatar.response || { profilePictureUrl: null };
+    }
     if (url.includes('/tenant_settings?')) {
       if (failSettings) throw Object.assign(new Error('permission denied'), { statusCode: 403 });
       return [{ settings: { product_media_catalog: catalog, system_prompt: 'Prompt do cliente', commerce_mode: true, ...settings } }];
@@ -81,6 +88,25 @@ test('explicit category selects three media items and strips incoming API key', 
   assert.equal(result.product_media_matches.length, 3);
   assert.equal(result.catalog_diagnostics.selection_source, 'current_message');
   assert.equal(result.raw_payload.apikey, undefined);
+});
+
+test('profile picture enrichment is non-critical when Evolution fails', async () => {
+  const result = await context('oi', {
+    environment: { ...env, EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'test', EVOLUTION_INSTANCE_LOJA: 'loja' },
+    avatar: { contacts: [{ id: 'contact-test', avatar_url: null, avatar_fetched_at: null }], fail: true },
+  });
+  assert.equal(result.raw_payload.contact_avatar.source, 'evolution_error');
+  assert.equal(result.avatarUrl, null);
+  assert.equal(result.promptText.includes('Mensagem: oi'), true);
+});
+
+test('profile picture URL is cached against the current tenant contact only', async () => {
+  const result = await context('oi', {
+    environment: { ...env, EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'test', EVOLUTION_INSTANCE_LOJA: 'loja' },
+    avatar: { contacts: [{ id: 'contact-test', avatar_url: null, avatar_fetched_at: null }], response: { profilePictureUrl: 'https://pps.example/avatar.jpg' } },
+  });
+  assert.equal(result.raw_payload.contact_avatar.avatarUrl, 'https://pps.example/avatar.jpg');
+  assert.equal(result.raw_payload.contact_avatar.source, 'evolution');
 });
 test('resend recovers category from inbound history even when previous send selected nothing', async () => {
   const result = await context('manda de novo', { history: [{ direction: 'inbound', message_text: 'pulseiras', raw_payload: {} }] });

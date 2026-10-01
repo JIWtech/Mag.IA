@@ -74,7 +74,7 @@ import {
   signOut,
   subscribeToAuthState,
 } from './authService';
-import { getIntegrationStatus, integrationTargets, sendN8nCommand } from './integration';
+import { applyKanbanFlowOrder, getIntegrationStatus, integrationTargets, requestKanbanFlowSuggestion, sendN8nCommand } from './integration';
 import {
   createBroadcastCampaign,
   emptyFunnel,
@@ -98,6 +98,9 @@ import {
   saveTeamAgent,
   updateTeamAgentStatus,
   loadTenantSettings,
+  getKanbanColumnKind,
+  validateKanbanOrderProposal,
+  sortConversationsByRecentActivity,
 } from './dataService';
 import noriaLogo from './assets/noria_logo.png';
 import { NoriaSelect } from './components/NoriaSelect';
@@ -346,6 +349,16 @@ function App() {
     } finally {
       kanbanMoveInFlightRef.current.delete(moveKey);
     }
+  };
+
+  const handleKanbanOrderApplied = (orderedAutomationKeys) => {
+    const positions = new Map(orderedAutomationKeys.map((key, index) => [key, index]));
+    setAppData((prev) => ({
+      ...prev,
+      kanbanColumns: [...(prev?.kanbanColumns || [])]
+        .map((column) => ({ ...column, position: positions.get(column.automationKey || column.id) }))
+        .sort((left, right) => left.position - right.position),
+    }));
   };
 
   const handleFinishConversationFromKanban = (card) => {
@@ -778,6 +791,7 @@ function App() {
             onOpenChat={handleOpenChatFromKanban}
             onOpenAppointment={handleOpenAppointmentFromKanban}
             onMoveCard={handleMoveKanbanCard}
+            onOrderApplied={handleKanbanOrderApplied}
             onFinishConversation={handleFinishConversationFromKanban}
             ready={appDataReady}
           />
@@ -851,8 +865,12 @@ function getConversationLastMessageOrigin(item) {
   return null;
 }
 
-function Dashboard({ conversations, dataSource, status, ready = true, onOpenConversation }) {
+function Dashboard({ conversations = [], dataSource, status, ready = true, onOpenConversation }) {
   const [visibleCount, setVisibleCount] = useState(10);
+
+  const sortedConversations = useMemo(() => {
+    return sortConversationsByRecentActivity(conversations);
+  }, [conversations]);
 
   const stats = useMemo(() => {
     const activeBot = conversations.filter((item) => item.status === 'ia_ativa').length;
@@ -883,13 +901,13 @@ function Dashboard({ conversations, dataSource, status, ready = true, onOpenConv
   function handleTableScroll(e) {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
     if (scrollHeight - scrollTop - clientHeight < 30) {
-      setVisibleCount((prev) => Math.min(prev + 5, conversations.length));
+      setVisibleCount((prev) => Math.min(prev + 5, sortedConversations.length));
     }
   }
 
   const displayedConversations = useMemo(() => {
-    return conversations.slice(0, visibleCount);
-  }, [conversations, visibleCount]);
+    return sortedConversations.slice(0, visibleCount);
+  }, [sortedConversations, visibleCount]);
 
   return (
     <section className="dashboard-page">
@@ -920,7 +938,7 @@ function Dashboard({ conversations, dataSource, status, ready = true, onOpenConv
           <PanelTitle
             icon={MessageCircle}
             title="Conversas recentes"
-            action={ready ? `${displayedConversations.length} de ${conversations.length}` : '—'}
+            action={ready ? `${displayedConversations.length} de ${sortedConversations.length}` : '—'}
           />
           <div className="table scrollable-table dashboard-table">
             <div className="table-head">
@@ -1020,7 +1038,7 @@ function Dashboard({ conversations, dataSource, status, ready = true, onOpenConv
                       </div>
                     );
                   })}
-                  {!conversations.length && (
+                  {!sortedConversations.length && (
                     <EmptyState
                       title="Nenhuma conversa real ainda"
                       text="Nenhuma conversa recebida."
@@ -2116,6 +2134,7 @@ function Kanban({
   onOpenChat,
   onOpenAppointment,
   onMoveCard,
+  onOrderApplied,
   onFinishConversation,
   ready = true,
 }) {
@@ -2129,6 +2148,9 @@ function Kanban({
   const [draggingCardId, setDraggingCardId] = useState(null);
   const [dragOverColumnId, setDragOverColumnId] = useState(null);
   const [activeColumnId, setActiveColumnId] = useState('');
+  const [flowProposal, setFlowProposal] = useState(null);
+  const [flowToast, setFlowToast] = useState('');
+  const [flowStatus, setFlowStatus] = useState('idle');
   const boardRef = useRef(null);
   const columnRefs = useRef(new Map());
   const channelTransitionTimersRef = useRef({ exit: null, enter: null });
@@ -2141,6 +2163,12 @@ function Kanban({
     if (timers.exit) window.clearTimeout(timers.exit);
     if (timers.enter) window.clearTimeout(timers.enter);
   }, []);
+
+  useEffect(() => {
+    if (!flowToast) return undefined;
+    const timeout = window.setTimeout(() => setFlowToast(''), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [flowToast]);
 
   const handleKanbanChannelChange = (nextChannel) => {
     if (pendingChannelFilterRef.current === nextChannel) return;
@@ -2180,6 +2208,59 @@ function Kanban({
   };
 
   const schedulingUrl = getTenantSchedulingLink(tenantSlug);
+
+  const orderedColumns = useMemo(() => (kanbanColumns || []).slice().sort(
+    (left, right) => Number(left.position || 0) - Number(right.position || 0),
+  ), [kanbanColumns]);
+
+  async function handleSuggestKanbanFlow() {
+    const boardId = orderedColumns[0]?.boardId;
+    if (!boardId || !orderedColumns.length) {
+      setFlowToast('Não foi possível organizar o fluxo deste tenant agora.');
+      return;
+    }
+    setFlowStatus('loading');
+    setFlowToast('');
+    try {
+      const result = await requestKanbanFlowSuggestion({
+        boardId,
+        tenantName,
+        columns: orderedColumns.map((column) => ({
+          name: column.title,
+          automationKey: column.automationKey || column.id,
+          kind: getKanbanColumnKind(column),
+          description: getColumnPresentation(column).description,
+        })),
+      }, tenantSlug);
+      const proposal = validateKanbanOrderProposal(orderedColumns, result?.proposal || result);
+      if (!proposal.valid) throw new Error('A sugestão da IA não contém exatamente as colunas deste Kanban.');
+      setFlowProposal(proposal);
+      setFlowStatus('review');
+    } catch (error) {
+      console.error('Falha ao sugerir organização do Kanban:', error);
+      setFlowToast('Não foi possível organizar o fluxo agora. Tente novamente.');
+      setFlowStatus('idle');
+    }
+  }
+
+  async function handleApplyKanbanFlow() {
+    if (!flowProposal?.valid) return;
+    const boardId = orderedColumns[0]?.boardId;
+    setFlowStatus('applying');
+    setFlowToast('');
+    try {
+      await applyKanbanFlowOrder({ boardId, orderedAutomationKeys: flowProposal.orderedAutomationKeys }, tenantSlug);
+      onOrderApplied?.(flowProposal.orderedAutomationKeys);
+      setFlowProposal(null);
+      setFlowStatus('idle');
+      setKanbanActionStatus('Organização do fluxo salva para este tenant.');
+      onChanged?.();
+    } catch (error) {
+      console.error('Falha ao aplicar organização do Kanban:', error);
+      setFlowToast('Não foi possível salvar a organização do fluxo. Tente novamente.');
+      setFlowStatus('review');
+    }
+  }
 
   function copySchedulingLink(cardId, link) {
     const targetLink = link || schedulingUrl;
@@ -2266,7 +2347,7 @@ function Kanban({
 
   const filteredColumns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    return (kanbanColumns || []).map((col) => {
+    return orderedColumns.map((col) => {
       const cards = (col?.cards || []).filter((card) => {
         const ownerStr = String(card?.owner || '');
         const channelStr = String(card?.channelType || card?.channel || '').toLowerCase();
@@ -2284,7 +2365,7 @@ function Kanban({
       });
       return { ...col, cards };
     });
-  }, [kanbanColumns, agentFilter, channelFilter, searchQuery]);
+  }, [orderedColumns, agentFilter, channelFilter, searchQuery]);
 
   useEffect(() => {
     if (!filteredColumns.some((column) => column.id === activeColumnId)) {
@@ -2429,9 +2510,38 @@ function Kanban({
               contentClassName="kanban-owner-select-content"
             />
           </div>
+          <button
+            type="button"
+            className="secondary-button kanban-ai-flow-button"
+            onClick={handleSuggestKanbanFlow}
+            disabled={flowStatus === 'loading' || flowStatus === 'applying' || !orderedColumns[0]?.boardId}
+          >
+            {flowStatus === 'loading' ? <><RefreshCcw className="kanban-ai-flow-icon spin" size={16} /> Analisando fluxo...</> : <><Sparkles className="kanban-ai-flow-icon" size={16} /> Organizar fluxo com IA</>}
+          </button>
           {kanbanActionStatus && <small className="kanban-action-status">{kanbanActionStatus}</small>}
         </div>
       </div>
+
+      {flowProposal && (
+        <section className="card" aria-live="polite">
+          <h3>Proposta de organização do fluxo</h3>
+          <div className="split-grid">
+            <div><strong>Ordem atual</strong><ol>{orderedColumns.map((column) => <li key={column.id}>{column.title}</li>)}</ol></div>
+            <div><strong>Sugestão da IA</strong><ol>{flowProposal.orderedAutomationKeys.map((key) => <li key={key}>{orderedColumns.find((column) => (column.automationKey || column.id) === key)?.title || key}</li>)}</ol></div>
+          </div>
+          {flowProposal.reasoning && <p>{flowProposal.reasoning}</p>}
+          <div className="row-actions">
+            <button type="button" className="secondary-button" onClick={() => { setFlowProposal(null); setFlowStatus('idle'); }}>Cancelar</button>
+            <button type="button" className="primary-button" onClick={handleApplyKanbanFlow} disabled={flowStatus === 'applying'}>{flowStatus === 'applying' ? <><RefreshCcw className="spin" size={16} /> Aplicando...</> : 'Aplicar organização'}</button>
+          </div>
+        </section>
+      )}
+      {flowToast && (
+        <div className="toast-notification" role="status">
+          <AlertCircle size={18} color="#fca5a5" />
+          <span>{flowToast}</span>
+        </div>
+      )}
 
       <div className="stage-navigation-wrapper">
         <div className="kanban-stage-navigation" aria-label="Navegação rápida entre etapas">

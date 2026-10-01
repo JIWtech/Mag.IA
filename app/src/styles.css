@@ -3621,6 +3621,49 @@ textarea:focus-visible {
   box-shadow: none;
 }
 
+/* Reaproveita exatamente a métrica dos controles do Kanban e o gradiente
+   primário NORIA utilizado nas ações de salvamento. */
+.kanban-toolbar .kanban-ai-flow-button {
+  min-height: 36px;
+  height: 36px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1;
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.92), rgba(72, 156, 255, 0.86) 58%, rgba(120, 97, 255, 0.84));
+  border-color: rgba(0, 224, 255, 0.48);
+  color: #06111f;
+  box-shadow: 0 4px 12px rgba(0, 224, 255, 0.14);
+}
+
+.kanban-toolbar .kanban-ai-flow-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, #00e0ff, #489cff 58%, #7861ff);
+  border-color: rgba(0, 224, 255, 0.7);
+  box-shadow: 0 6px 16px rgba(0, 224, 255, 0.2);
+}
+
+.kanban-toolbar .kanban-ai-flow-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.kanban-toolbar .kanban-ai-flow-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.kanban-toolbar .kanban-ai-flow-button:disabled {
+  background: var(--surface-elevated);
+  border-color: var(--line);
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.kanban-toolbar .kanban-ai-flow-icon {
+  color: #173d75;
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.34));
+}
+
 .kanban-toolbar .kanban-filter-control {
   border-color: color-mix(in srgb, var(--kanban-filter-accent, var(--line)) 18%, var(--line));
   background: linear-gradient(135deg, color-mix(in srgb, var(--kanban-filter-accent, var(--brand)) 7%, transparent), rgba(15, 24, 43, 0) 72%), var(--surface);

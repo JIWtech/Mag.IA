@@ -634,10 +634,37 @@ function isGeneratedMediaLabel(text) {
   return /^\[(?:Imagem|Áudio|Video|Vídeo|Arquivo|Figurinha) recebida\]$/i.test(String(text || '').trim());
 }
 
+export function getConversationActivityEpoch(conversation) {
+  if (!conversation) return 0;
+  const raw = conversation.lastActivityAt ?? conversation.updatedAt ?? conversation.createdAt;
+  if (typeof raw === 'number' && !Number.isNaN(raw)) return raw;
+  if (typeof raw === 'string' && raw) {
+    const epoch = Date.parse(raw);
+    if (!Number.isNaN(epoch)) return epoch;
+  }
+  return 0;
+}
+
+export function sortConversationsByRecentActivity(conversations = []) {
+  if (!Array.isArray(conversations)) return [];
+  return [...conversations].sort((a, b) => {
+    const epochA = getConversationActivityEpoch(a);
+    const epochB = getConversationActivityEpoch(b);
+    return epochB - epochA;
+  });
+}
+
 export function eventsToConversations(events) {
   const byChat = new Map();
 
-  for (const event of prepareConversationEvents(events).reverse()) {
+  const preparedEvents = prepareConversationEvents(events);
+  const sortedChronological = [...preparedEvents].sort((a, b) => {
+    const tA = a.created_at ? Date.parse(a.created_at) : 0;
+    const tB = b.created_at ? Date.parse(b.created_at) : 0;
+    return (Number.isNaN(tA) ? 0 : tA) - (Number.isNaN(tB) ? 0 : tB);
+  });
+
+  for (const event of sortedChronological) {
     // Mantém o evento em channel_events para auditoria, mas não materializa
     // operações internas como mensagens da conversa.
     if (isInternalOperationalEvent(event)) continue;
@@ -671,6 +698,7 @@ export function eventsToConversations(events) {
         unread: 0,
         lastMessage: event.message_text || mediaPreview(normalizeMedia(event.raw_payload)),
         lastAt: formatDate(event.created_at),
+        lastActivityAt: event.created_at || null,
         tags: [event.service, stageName].filter(Boolean),
         sentiment: sentimentFromEvent(event),
         value: estimatedValue(event),
@@ -685,7 +713,15 @@ export function eventsToConversations(events) {
     const text = event.message_text || media?.caption || '';
     const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
     conversation.lastMessage = text || mediaPreview(media) || conversation.lastMessage;
-    conversation.lastAt = formatDate(event.created_at);
+    const eventTime = event.created_at ? Date.parse(event.created_at) : NaN;
+    const currentActivityTime = conversation.lastActivityAt ? Date.parse(conversation.lastActivityAt) : NaN;
+    if (!Number.isNaN(eventTime) && (Number.isNaN(currentActivityTime) || eventTime >= currentActivityTime)) {
+      conversation.lastActivityAt = event.created_at;
+      conversation.lastAt = formatDate(event.created_at);
+    } else if (!conversation.lastActivityAt && event.created_at) {
+      conversation.lastActivityAt = event.created_at;
+      conversation.lastAt = formatDate(event.created_at);
+    }
     applyConversationLifecycle(conversation, event, stageName);
     if (isClosed) {
       conversation.owner = null;
@@ -713,7 +749,7 @@ export function eventsToConversations(events) {
     conversation.events.push(`Serviço: ${event.service || 'geral'} - Etapa: ${stageName}`);
   }
 
-  return Array.from(byChat.values()).sort((a, b) => compareDateLabel(b.lastAt, a.lastAt));
+  return sortConversationsByRecentActivity(Array.from(byChat.values()));
 }
 
 export const TENANT_SCHEDULING_LINKS = {
@@ -794,6 +830,35 @@ const KANBAN_KEY_ALIASES = {
 
 export function emptyKanban() {
   return OFFICIAL_KANBAN_COLUMNS.map((column) => ({ ...column, cards: [] }));
+}
+
+export function getKanbanColumnKind(column = {}) {
+  const key = canonicalKanbanKey(column.automationKey || column.automation_key || column.id || '');
+  if (['verificar_sinal', 'agendamentos', 'conversas_abandonadas', 'follow_ups'].includes(key)) return 'special_view';
+  return 'stage';
+}
+
+// A IA somente pode permutar as chaves das colunas já existentes. Esta validação
+// é executada antes de a proposta chegar à UI e antes de qualquer persistência.
+export function validateKanbanOrderProposal(columns = [], proposal = {}) {
+  const current = columns.map((column) => canonicalKanbanKey(
+    column.automationKey || column.automation_key || column.id,
+  )).filter(Boolean);
+  const suggested = Array.isArray(proposal?.orderedAutomationKeys)
+    ? proposal.orderedAutomationKeys.map(canonicalKanbanKey).filter(Boolean)
+    : [];
+  const currentSet = new Set(current);
+  const suggestedSet = new Set(suggested);
+  const valid = current.length > 0
+    && suggested.length === current.length
+    && suggestedSet.size === suggested.length
+    && [...currentSet].every((key) => suggestedSet.has(key));
+
+  return {
+    valid,
+    orderedAutomationKeys: valid ? suggested : [],
+    reasoning: typeof proposal?.reasoning === 'string' ? proposal.reasoning.trim() : '',
+  };
 }
 
 export function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null, followUpJobs = []) {
@@ -1361,8 +1426,10 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
-function compareDateLabel() {
-  return 0;
+function compareDateLabel(a, b) {
+  const epochA = a ? Date.parse(a) : 0;
+  const epochB = b ? Date.parse(b) : 0;
+  return (Number.isNaN(epochA) ? 0 : epochA) - (Number.isNaN(epochB) ? 0 : epochB);
 }
 
 export function formatCurrency(value) {
