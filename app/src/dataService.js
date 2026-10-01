@@ -1,12 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
-import { getAuthClient, isAuthRequired } from './authService';
-import { loadUserTenants, enabledChannels } from './tenantAccess';
-import { prepareConversationEvents } from './conversationEvents';
-import { applyConversationLifecycle } from './conversationLifecycle';
+import { getAuthClient, isAuthRequired } from './authService.js';
+import { loadUserTenants, enabledChannels } from './tenantAccess.js';
+import { prepareConversationEvents } from './conversationEvents.js';
+import { applyConversationLifecycle } from './conversationLifecycle.js';
+import { isEligibleForExternalOutbound, isInternalOperationalEvent } from './eventClassification.js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const defaultTenantSlug = import.meta.env.VITE_TENANT_SLUG || 'jiw';
+const runtimeEnv = import.meta.env || {};
+const supabaseUrl = runtimeEnv.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = runtimeEnv.VITE_SUPABASE_ANON_KEY || '';
+const defaultTenantSlug = runtimeEnv.VITE_TENANT_SLUG || 'jiw';
 const tenantStorageKey = 'magia:selected-tenant-slug';
 const mediaObjectUrlCache = new Map();
 
@@ -83,6 +85,15 @@ export function subscribeToClientEvents(onChange, activeTenantSlug = defaultTena
       {
         event: '*',
         schema: 'public',
+        table: 'contacts',
+      },
+      onChange,
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
         table: 'kanban_boards',
       },
       onChange,
@@ -122,7 +133,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     .select('settings').eq('tenant_id', tenant.id).maybeSingle();
   if (settingsError) throw new Error('Nao foi possivel carregar as configuracoes da empresa.');
   const tenantChannels = enabledChannels(uiSettings?.settings);
-  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig, followUpJobs] = await Promise.all([
+  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig, followUpJobs, contactAvatars] = await Promise.all([
     supabase
       .from('channel_events')
       .select('*')
@@ -134,6 +145,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     tenant ? loadBroadcastCampaigns(tenant.id) : [],
     tenant ? loadKanbanConfig(tenant.id) : null,
     tenant ? loadFollowUpJobs(tenant.id, activeTenantSlug) : [],
+    tenant ? loadContactAvatars(tenant.id) : [],
   ]);
   const { data, error } = eventsResult;
 
@@ -160,17 +172,20 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     data.map((event) => ({ ...event, raw_payload: asObject(event.raw_payload) })),
     supabase,
   );
+  const avatarIndex = buildContactAvatarIndex(contactAvatars, tenant.id);
+  const eventsWithAvatars = applyContactAvatars(eventsWithMediaUrls, avatarIndex);
+  const broadcastContactsWithAvatars = applyContactAvatarsToBroadcastContacts(broadcastContacts, avatarIndex);
 
   return {
     ...fallback,
     source: 'supabase',
     enabledChannels: tenantChannels,
-    conversations: eventsToConversations(eventsWithMediaUrls),
-    kanbanColumns: eventsToKanban(eventsWithMediaUrls, activeTenantSlug, appointments, kanbanConfig, followUpJobs),
-    funnelStages: eventsToFunnel(eventsWithMediaUrls),
-    status: buildStatus({ source: 'supabase', events: eventsWithMediaUrls, tenantSlug: activeTenantSlug }),
+    conversations: eventsToConversations(eventsWithAvatars),
+    kanbanColumns: eventsToKanban(eventsWithAvatars, activeTenantSlug, appointments, kanbanConfig, followUpJobs),
+    funnelStages: eventsToFunnel(eventsWithAvatars),
+    status: buildStatus({ source: 'supabase', events: eventsWithAvatars, tenantSlug: activeTenantSlug }),
     appointments,
-    broadcastContacts,
+    broadcastContacts: broadcastContactsWithAvatars,
     broadcastCampaigns,
   };
 }
@@ -310,16 +325,21 @@ export async function loadAppointmentScheduling(activeTenantSlug) {
   const config = data?.settings?.appointment_scheduling;
   if (!config?.enabled) return { enabled: false, tenantId: tenant.id };
   const { data: services, error: catalogError } = await supabase.from('tenant_service_catalog')
-    .select('external_id,name').eq('tenant_id', tenant.id).eq('active', true);
+    .select('external_id,name,category').eq('tenant_id', tenant.id).eq('active', true);
   if (catalogError) throw catalogError;
-  return { ...config, tenantId: tenant.id, services: services.filter(s => config.service_resources[s.external_id]) };
+  return { ...config, tenantId: tenant.id, services: services || [] };
 }
 
 export async function loadAppointmentAvailability(tenantId, unitId, serviceId, date) {
   const { data, error } = await getClient().rpc('magia_appointment_availability', {
     p_tenant: tenantId, p_unit: unitId, p_service: serviceId, p_date: date,
   });
-  if (error) throw error;
+  if (error) {
+    if (error.message?.includes('SCHEDULE_NOT_CONFIGURED')) {
+      return ['08:00', '09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
+    }
+    throw error;
+  }
   return data.available_starts;
 }
 
@@ -336,7 +356,30 @@ export async function saveAppointment(activeTenantSlug, appointment) {
       p_chat: appointment.externalConversationId || '', p_request: appointment.requestId,
       p_channel: appointment.channelType || 'manual', p_notes: appointment.notes || null,
     });
-    if (error) throw error;
+    if (error) {
+      if (error.message?.includes('SCHEDULE_NOT_CONFIGURED')) {
+        const startsAt = new Date(`${appointment.localDate}T${appointment.localTime}:00`).toISOString();
+        const { data: fallbackData, error: insertError } = await supabase
+          .from('appointments')
+          .insert({
+            tenant_id: tenant.id,
+            title: appointment.title || 'Agendamento',
+            starts_at: startsAt,
+            status: 'scheduled',
+            contact_name: appointment.contactName || null,
+            channel_type: appointment.channelType || 'manual',
+            external_conversation_id: appointment.externalConversationId || null,
+            notes: appointment.notes || null,
+            created_by: userId,
+            metadata: { unit_id: appointment.unitId, service_id: appointment.serviceId },
+          })
+          .select('*')
+          .single();
+        if (insertError) throw insertError;
+        return mapAppointment(fallbackData);
+      }
+      throw error;
+    }
     return mapAppointment(data);
   }
   const { data, error } = await supabase
@@ -591,16 +634,27 @@ function isGeneratedMediaLabel(text) {
   return /^\[(?:Imagem|Áudio|Video|Vídeo|Arquivo|Figurinha) recebida\]$/i.test(String(text || '').trim());
 }
 
-function eventsToConversations(events) {
+export function eventsToConversations(events) {
   const byChat = new Map();
 
   for (const event of prepareConversationEvents(events).reverse()) {
+    // Mantém o evento em channel_events para auditoria, mas não materializa
+    // operações internas como mensagens da conversa.
+    if (isInternalOperationalEvent(event)) continue;
+
     const channelType = normalizeChannel(event.channel_type);
     const stageName = normalizeStage(event.stage);
     const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.contact_handle || event.id}`;
     const isHumanTransfer = Boolean(event.handoff && (normalizeStage(event.stage) === 'Atendimento humano' || event.service === 'manual_reply'));
     const isClosed = stageName === 'Finalizado' || event.service === 'conversation_closed' || event.ai_provider === 'conversation_closed';
-    const defaultOwner = isHumanTransfer ? 'Recepção / Núbia' : 'Assistente IA';
+    const payload = asObject(event.raw_payload);
+    const eventAssignee = payload?.assignee;
+    const initialOwner = eventAssignee?.name || payload?.assigned_to || (
+      event.sent_by_user && !['Operador NORIA', 'Operador Mag.IA', 'Disparo NORIA'].includes(event.sent_by_user)
+        ? event.sent_by_user
+        : null
+    );
+    const initialOwnerId = eventAssignee?.id || payload?.assignee_id || null;
 
     if (!byChat.has(key)) {
       byChat.set(key, {
@@ -612,7 +666,8 @@ function eventsToConversations(events) {
         channelType: channelType.type,
         status: isClosed ? 'finalizado' : isHumanTransfer ? 'atendimento_humano' : 'ia_ativa',
         stage: stageName,
-        owner: defaultOwner,
+        owner: initialOwner,
+        ownerId: initialOwnerId,
         unread: 0,
         lastMessage: event.message_text || mediaPreview(normalizeMedia(event.raw_payload)),
         lastAt: formatDate(event.created_at),
@@ -621,6 +676,7 @@ function eventsToConversations(events) {
         value: estimatedValue(event),
         messages: [],
         events: [],
+        avatarUrl: normalizeAvatarUrl(event.avatar_url || payload.avatarUrl || payload.profilePictureUrl),
       });
     }
 
@@ -631,8 +687,13 @@ function eventsToConversations(events) {
     conversation.lastMessage = text || mediaPreview(media) || conversation.lastMessage;
     conversation.lastAt = formatDate(event.created_at);
     applyConversationLifecycle(conversation, event, stageName);
-    if (isClosed) conversation.owner = 'Assistente IA';
-    conversation.owner = isHumanTransfer ? 'Recepção / Núbia' : conversation.owner;
+    if (isClosed) {
+      conversation.owner = null;
+      conversation.ownerId = null;
+    } else if (initialOwner) {
+      conversation.owner = initialOwner;
+      conversation.ownerId = initialOwnerId;
+    }
     conversation.value = Math.max(conversation.value, estimatedValue(event));
     conversation.tags = Array.from(new Set([...conversation.tags, event.service, stageName].filter(Boolean)));
     if (event.direction === 'outbound') {
@@ -735,28 +796,40 @@ export function emptyKanban() {
   return OFFICIAL_KANBAN_COLUMNS.map((column) => ({ ...column, cards: [] }));
 }
 
-function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null, followUpJobs = []) {
+export function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null, followUpJobs = []) {
   const columns = buildKanbanColumns(kanbanConfig);
   const latestByChat = new Map();
   const eventCountsByChat = new Map();
+  const conversationStatesByChat = new Map();
   const appointmentsById = new Map(appointments.map((appointment) => [appointment.id, appointment]));
+  const eventCardsByConversation = new Map();
+
+  for (const event of prepareConversationEvents(events).reverse()) {
+    if (isInternalOperationalEvent(event)) continue;
+    const key = canonicalConversationKey(event.channel_type, event.external_conversation_id, event.id);
+    if (!conversationStatesByChat.has(key)) conversationStatesByChat.set(key, { status: 'ia_ativa' });
+    applyConversationLifecycle(conversationStatesByChat.get(key), event, normalizeStage(event.stage));
+  }
 
   for (const event of events) {
-    const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.id}`;
+    const key = canonicalConversationKey(event.channel_type, event.external_conversation_id, event.id);
     eventCountsByChat.set(key, (eventCountsByChat.get(key) || 0) + 1);
-    if (!latestByChat.has(key)) latestByChat.set(key, event);
+    const current = latestByChat.get(key);
+    if (!current || isMoreRecentRecord(event, current)) latestByChat.set(key, event);
   }
 
   const defaultSchedulingUrl = getTenantSchedulingLink(tenantSlug);
 
-  for (const event of latestByChat.values()) {
-    const key = `${event.channel_type || 'unknown'}:${event.external_conversation_id || event.id}`;
+  for (const [key, event] of latestByChat) {
     const channelType = normalizeChannel(event.channel_type);
-    const targetCandidates = pickColumn(event.stage, event.handoff, event.message_text, {
+    const conversationState = conversationStatesByChat.get(key);
+    const targetCandidates = conversationState?.status === 'atendimento_humano'
+      ? ['com_humano', 'conversas_humanos', 'aguardando_humano']
+      : pickColumn(event.stage, event.handoff, event.message_text, {
       direction: event.direction,
       isFirstContact: (eventCountsByChat.get(key) || 0) <= 1,
       event,
-    });
+      });
     const target = targetCandidates.find((candidate) => findKanbanColumn(columns, candidate)) || targetCandidates[0];
     const column = findKanbanColumn(columns, target) || columns[0];
     const relatedAppointmentId = event.raw_payload?.payment_signal?.appointment_update?.appointment?.id
@@ -792,7 +865,8 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
       aiReason = 'Primeiro contato recebido';
     }
 
-    column.cards.push({
+    const ownerMetadata = ownerMetadataFromKanbanEvent(target, event);
+    const card = {
       id: `card-${event.id}`,
       externalConversationId: event.external_conversation_id,
       title: event.contact_name || `Contato ${channelType.label}`,
@@ -802,7 +876,9 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
       stage: normalizeStage(event.stage),
       targetColumnId: target,
       value: formatCurrency(estimatedValue(event)),
-      owner: ownerFromKanbanTarget(target, event),
+      owner: ownerMetadata.name,
+      ownerId: ownerMetadata.id,
+      ownerKind: ownerMetadata.kind,
       aiReason,
       appointmentId: relatedAppointmentId,
       appointmentStatus: relatedAppointment?.status || '',
@@ -810,10 +886,23 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
       schedulingLink: defaultSchedulingUrl,
       hasSchedulingLink: Boolean(defaultSchedulingUrl) && (target === 'agendamentos' || hasSchedulingSignal(event.message_text)),
       lastAt: formatDate(event.created_at),
-    });
+    };
+    column.cards.push(card);
+    eventCardsByConversation.set(key, { card, column, occurredAt: event.created_at });
   }
 
-  const appointmentCards = appointments
+  const latestAppointmentsByConversation = new Map();
+  for (const appointment of appointments.filter((item) => item.status !== 'cancelled')) {
+    const key = canonicalConversationKey(
+      appointment.channelType || appointment.channel_type,
+      appointment.externalConversationId || appointment.external_conversation_id,
+      `appointment-${appointment.id}`,
+    );
+    const current = latestAppointmentsByConversation.get(key);
+    if (!current || isMoreRecentRecord(appointment, current)) latestAppointmentsByConversation.set(key, appointment);
+  }
+
+  const appointmentCards = [...latestAppointmentsByConversation.values()]
     .filter((appointment) => appointment.status !== 'cancelled')
     .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt))
     .map((appointment) => ({
@@ -836,6 +925,33 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
     }));
 
   for (const appointmentCard of appointmentCards) {
+    const key = canonicalConversationKey(
+      appointmentCard.channelType,
+      appointmentCard.externalConversationId,
+      appointmentCard.id,
+    );
+    const matchingEvent = eventCardsByConversation.get(key);
+
+    if (matchingEvent) {
+      const appointment = latestAppointmentsByConversation.get(key);
+      if (isMoreRecentRecord(appointment, { updated_at: matchingEvent.occurredAt })) {
+        matchingEvent.column.cards = matchingEvent.column.cards.filter((card) => card.id !== matchingEvent.card.id);
+        const targetColumn = findKanbanColumn(columns, appointmentCard.targetColumnId) || findKanbanColumn(columns, 'agendamentos');
+        if (targetColumn) {
+          const canonicalCard = mergeAppointmentCard(appointmentCard, matchingEvent.card);
+          targetColumn.cards.push(canonicalCard);
+          eventCardsByConversation.set(key, {
+            card: canonicalCard,
+            column: targetColumn,
+            occurredAt: appointmentTimestamp(appointment),
+          });
+        }
+      } else {
+        Object.assign(matchingEvent.card, enrichCardWithAppointment(matchingEvent.card, appointmentCard));
+      }
+      continue;
+    }
+
     const targetColumn = findKanbanColumn(columns, appointmentCard.targetColumnId) || findKanbanColumn(columns, 'agendamentos');
     if (targetColumn) {
       targetColumn.cards.push(appointmentCard);
@@ -856,6 +972,102 @@ function eventsToKanban(events, tenantSlug = 'clinica_nubia', appointments = [],
   return columns;
 }
 
+async function loadContactAvatars(tenantId) {
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from('contacts')
+    .select('tenant_id, source_channel, external_handle, avatar_url')
+    .eq('tenant_id', tenantId)
+    .is('deleted_at', null)
+    .not('external_handle', 'is', null)
+    .limit(1000);
+  if (error) {
+    // A interface continua disponível enquanto a migration ainda não foi aplicada.
+    console.warn('Contact avatars fallback:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+function contactAvatarKey(channel, externalHandle) {
+  return `${normalizeChannel(channel).type}:${String(externalHandle || '').trim()}`;
+}
+
+export function normalizeAvatarUrl(value) {
+  const url = String(value || '').trim();
+  return /^https:\/\//i.test(url) ? url : null;
+}
+
+export function buildContactAvatarIndex(contacts = [], tenantId = '') {
+  const index = new Map();
+  for (const contact of contacts) {
+    if (tenantId && contact?.tenant_id !== tenantId) continue;
+    const avatarUrl = normalizeAvatarUrl(contact?.avatar_url || contact?.avatarUrl);
+    if (!avatarUrl || !contact?.external_handle) continue;
+    index.set(contactAvatarKey(contact.source_channel, contact.external_handle), avatarUrl);
+  }
+  return index;
+}
+
+function applyContactAvatars(events, avatarIndex) {
+  return events.map((event) => ({
+    ...event,
+    avatar_url: avatarIndex.get(contactAvatarKey(event.channel_type, event.external_conversation_id || event.contact_handle)) || null,
+  }));
+}
+
+function applyContactAvatarsToBroadcastContacts(contacts, avatarIndex) {
+  return contacts.map((contact) => ({
+    ...contact,
+    avatarUrl: avatarIndex.get(contactAvatarKey(contact.channel_type || contact.channelType, contact.external_conversation_id || contact.externalConversationId)) || null,
+  }));
+}
+
+function canonicalConversationKey(channelType, externalConversationId, fallbackId = '') {
+  const normalizedChannel = normalizeChannel(channelType).type || 'unknown';
+  const conversationId = String(externalConversationId || fallbackId || '').trim();
+  return `${normalizedChannel}::${conversationId || 'unknown'}`;
+}
+
+function appointmentTimestamp(appointment) {
+  const raw = appointment?.raw || appointment || {};
+  return raw.updated_at || raw.occurred_at || raw.created_at || appointment?.updatedAt || appointment?.createdAt || '';
+}
+
+function isMoreRecentRecord(candidate, current) {
+  const candidateAt = Date.parse(candidate?.created_at || appointmentTimestamp(candidate));
+  const currentAt = Date.parse(current?.created_at || appointmentTimestamp(current));
+  if (!Number.isFinite(candidateAt)) return false;
+  if (!Number.isFinite(currentAt)) return true;
+  return candidateAt > currentAt;
+}
+
+function enrichCardWithAppointment(card, appointmentCard) {
+  return {
+    ...card,
+    appointmentId: appointmentCard.appointmentId,
+    appointmentStatus: appointmentCard.appointmentStatus,
+    appointmentMetadata: appointmentCard.appointmentMetadata,
+    actionType: appointmentCard.actionType || card.actionType,
+    hasSchedulingLink: card.hasSchedulingLink || appointmentCard.targetColumnId === 'agendamentos',
+  };
+}
+
+function mergeAppointmentCard(appointmentCard, eventCard) {
+  return {
+    ...appointmentCard,
+    title: eventCard.title || appointmentCard.title,
+    channel: eventCard.channel || appointmentCard.channel,
+    channelType: eventCard.channelType || appointmentCard.channelType,
+    externalConversationId: eventCard.externalConversationId || appointmentCard.externalConversationId,
+    owner: eventCard.owner || appointmentCard.owner,
+    ownerId: eventCard.ownerId || null,
+    ownerKind: eventCard.ownerKind || null,
+    schedulingLink: eventCard.schedulingLink,
+    hasSchedulingLink: eventCard.hasSchedulingLink || appointmentCard.targetColumnId === 'agendamentos',
+  };
+}
+
 function addFollowUpCards(columns, followUpJobs, latestByChat, tenantSlug) {
   if (tenantSlug !== 'clinica_nubia_oficial') return;
   const column = findKanbanColumn(columns, 'follow_ups');
@@ -863,7 +1075,7 @@ function addFollowUpCards(columns, followUpJobs, latestByChat, tenantSlug) {
 
   const nextJobByConversation = new Map();
   for (const job of followUpJobs) {
-    const key = `${job.channel_type || 'whatsapp'}:${job.external_conversation_id || ''}`;
+    const key = canonicalConversationKey(job.channel_type || 'whatsapp', job.external_conversation_id, job.id);
     if (!job.external_conversation_id) continue;
     const current = nextJobByConversation.get(key);
     // A claimed job is the active execution; otherwise show the earliest pending step.
@@ -979,6 +1191,9 @@ function pickColumn(stage, handoff, messageText = '', context = {}) {
   const norm = normalizeStage(stage);
   const text = String(messageText || '').toLowerCase();
   const event = context.event || {};
+  const manualTarget = canonicalKanbanKey(event?.raw_payload?.kanban_transition?.to_column);
+
+  if (manualTarget) return [manualTarget];
 
   if (isKanbanClosed(event, norm)) return ['finalizadas', 'conversas_andamento'];
   if (isKanbanPaymentSignal(event, norm)) return ['verificar_sinal', 'aguardando_humano', 'conversas_humanos'];
@@ -1034,11 +1249,25 @@ function isKanbanAbandoned(event, context = {}) {
   return Date.now() - createdAt > abandonedAfterHours * 60 * 60 * 1000;
 }
 
-function ownerFromKanbanTarget(target, event) {
-  if (target === 'com_humano') return event.sent_by_user || event.raw_payload?.assignee?.name || 'Atendimento humano';
-  if (target === 'aguardando_humano') return 'Aguardando humano';
-  if (target === 'finalizadas') return 'Finalizado';
-  return event.handoff ? 'Atendimento humano' : 'Assistente IA';
+function ownerMetadataFromKanbanEvent(target, event) {
+  const payload = asObject(event?.raw_payload);
+  const assignee = asObject(payload?.assignee);
+  const assigneeId = assignee?.id || payload?.assignee_id || null;
+  const assigneeName = assignee?.name || payload?.assigned_to || null;
+
+  if (assigneeId) {
+    return {
+      id: String(assigneeId),
+      name: assigneeName || event.sent_by_user || 'Atendimento humano',
+      kind: 'agent',
+    };
+  }
+  if (target === 'aguardando_humano') return { id: null, name: 'Aguardando humano', kind: 'human' };
+  if (target === 'finalizadas') return { id: null, name: 'Finalizado', kind: 'system' };
+  if (isKanbanAssignedToHuman(event) || event?.handoff || target === 'com_humano') {
+    return { id: null, name: event?.sent_by_user || assigneeName || 'Atendimento humano', kind: 'human' };
+  }
+  return { id: null, name: 'Assistente IA', kind: 'ai' };
 }
 
 function canonicalKanbanKey(key) {
@@ -1180,10 +1409,10 @@ export async function saveTeamAgent(tenantSlug, agent) {
   const storageKey = `magia:team-agents:${tenantSlug}`;
   const newRecord = {
     tenant_slug: tenantSlug,
-    name: agent.name,
-    role: agent.role || 'Atendente',
-    branch: agent.branch || 'Matriz',
-    shift: agent.shift || 'Integral',
+    name: agent.name?.trim(),
+    role: agent.role?.trim() || null,
+    branch: agent.branch?.trim() ? agent.branch.trim() : null,
+    shift: agent.shift?.trim() ? agent.shift.trim() : null,
     status: agent.status || 'online',
     is_active: true,
   };
@@ -1217,7 +1446,8 @@ export async function updateTeamAgentStatus(agentId, newStatus, tenantSlug) {
       await supabase
         .from('team_agents')
         .update({ status: newStatus, updated_at: new Date().toISOString() })
-        .eq('id', agentId);
+        .eq('id', agentId)
+        .eq('tenant_slug', tenantSlug);
     }
   } catch (e) {
     console.warn('Falha ao atualizar status do team_agent no Supabase:', e);
@@ -1239,7 +1469,8 @@ export async function removeTeamAgent(agentId, tenantSlug) {
       await supabase
         .from('team_agents')
         .delete()
-        .eq('id', agentId);
+        .eq('id', agentId)
+        .eq('tenant_slug', tenantSlug);
     }
   } catch (e) {
     console.warn('Falha ao remover team_agent do Supabase:', e);
@@ -1251,6 +1482,33 @@ export async function removeTeamAgent(agentId, tenantSlug) {
       const updated = current.filter((ag) => ag.id !== agentId);
       localStorage.setItem(storageKey, JSON.stringify(updated));
     } catch (e) { }
+  }
+}
+
+export async function loadTenantSettings(tenantSlug) {
+  const supabase = getClient();
+  if (!supabase || !tenantSlug) return null;
+  const tenant = await loadTenant(tenantSlug);
+  if (!tenant) return null;
+  try {
+    const { data, error } = await supabase
+      .from('tenant_settings')
+      .select('timezone, business_hours, settings')
+      .eq('tenant_id', tenant.id)
+      .maybeSingle();
+    if (error) {
+      console.warn('Falha ao carregar tenant_settings:', error.message);
+      return null;
+    }
+    return {
+      timezone: data?.timezone || 'America/Sao_Paulo',
+      businessHours: (data?.business_hours && Object.keys(data.business_hours).length > 0) ? data.business_hours : null,
+      business_hours: (data?.business_hours && Object.keys(data.business_hours).length > 0) ? data.business_hours : null,
+      settings: data?.settings || {},
+    };
+  } catch (e) {
+    console.warn('Erro ao carregar tenant_settings:', e);
+    return null;
   }
 }
 
@@ -1294,6 +1552,10 @@ function statusAppointmentLabel(status) {
 export async function moveKanbanCard(activeTenantSlug, card, targetColumnKey, agentName = null) {
   const canonical = canonicalKanbanKey(targetColumnKey);
   const tenantSlug = activeTenantSlug || 'clinica_nubia';
+  const sourceColumn = canonicalKanbanKey(card.targetColumnId || card.stage || '');
+
+  // A mesma etapa não é uma transição e não deve criar auditoria duplicada.
+  if (sourceColumn && sourceColumn === canonical) return [];
 
   let stage = 'Qualificacao';
   let service = 'kanban_move';
@@ -1345,7 +1607,7 @@ export async function moveKanbanCard(activeTenantSlug, card, targetColumnKey, ag
     channel_type: channelType,
     external_conversation_id: conversationId,
     external_message_id: `kanban_move_${Date.now()}`,
-    direction: 'outbound',
+    direction: 'internal',
     sender_type: senderType,
     sent_by_user: sentByUser,
     contact_name: contactName,
@@ -1354,9 +1616,12 @@ export async function moveKanbanCard(activeTenantSlug, card, targetColumnKey, ag
     service,
     stage,
     handoff,
-    delivery_status: 'delivered',
+    delivery_status: 'internal',
     ai_provider: 'kanban_action',
     raw_payload: {
+      event_type: 'kanban_stage_changed',
+      event_category: 'kanban',
+      is_internal: true,
       kanban_transition: {
         from_stage: card.stage,
         to_column: canonical,
@@ -1378,3 +1643,5 @@ export async function moveKanbanCard(activeTenantSlug, card, targetColumnKey, ag
 
   return [newEvent];
 }
+
+export { isEligibleForExternalOutbound, isInternalOperationalEvent };
