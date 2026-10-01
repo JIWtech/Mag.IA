@@ -87,14 +87,15 @@ import {
   loadAppointmentScheduling,
   loadAppointmentAvailability,
   subscribeToClientEvents,
-  updateBroadcastCampaign,
-  updateBroadcastRecipient,
   upsertBroadcastContacts,
   removeTeamAgent,
   saveTeamAgent,
   updateTeamAgentStatus,
 } from './dataService';
 import noriaLogo from './assets/noria_logo.png';
+import dashboardAndConversationImage from './assets/Gemini_Generated_Image_d690hrd690hrd690.jpg';
+import settingsInterfaceImage from './assets/Gemini_Generated_Image_ygl2jfygl2jfygl2.jpg';
+import conversationInterfaceImage from './assets/Gemini_Generated_Image_yu95g1yu95g1yu95.jpg';
 import './styles.css';
 
 const menu = [
@@ -2394,11 +2395,15 @@ function Funnel({ funnelStages, tenantName }) {
 }
 
 function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantSlug, onChanged, ready = true, allowedChannels = CHANNEL_OPTIONS.map(c => c.id) }) {
-  const defaultChannel = allowedChannels.includes('telegram') ? 'telegram' : allowedChannels[0] || 'whatsapp';
+  const defaultChannel = allowedChannels.includes('whatsapp') ? 'whatsapp' : allowedChannels[0] || 'telegram';
+  const availableChannels = CHANNEL_OPTIONS.filter((channel) => allowedChannels.includes(channel.id));
   const [draftContacts, setDraftContacts] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [messageText, setMessageText] = useState('');
   const [campaignName, setCampaignName] = useState('');
+  const [sendIntervalSeconds, setSendIntervalSeconds] = useState(3);
+  const [channelType, setChannelType] = useState(defaultChannel);
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [stageFilter, setStageFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
@@ -2407,12 +2412,16 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   const stages = useMemo(() => Array.from(new Set(conversations.map((item) => item.stage).filter(Boolean))), [conversations]);
   const selectedContacts = allContacts.filter((contact) => selected.has(contact.key));
 
+  useEffect(() => {
+    if (!allowedChannels.includes(channelType)) setChannelType(defaultChannel);
+  }, [allowedChannels, channelType, defaultChannel]);
+
   async function handleFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
       const parsed = await parseContactFile(file);
-      const normalized = parsed.map((row) => normalizeImportedContact(row, defaultChannel))
+      const normalized = parsed.map((row) => normalizeImportedContact(row, channelType))
         .filter((row) => row.externalConversationId && allowedChannels.includes(row.channelType));
       setDraftContacts((prev) => mergeBroadcastContacts(prev, normalized));
       setSelected((prev) => {
@@ -2466,64 +2475,41 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   async function sendCampaign() {
     const text = messageText.trim();
     if (!text || !selectedContacts.length || busy) return;
+    if (selectedContacts.length > 500) {
+      setStatus('Cada campanha pode incluir no maximo 500 contatos. Reduza a selecao para continuar.');
+      return;
+    }
     setBusy(true);
     setStatus('Preparando disparo...');
-    let sent = 0;
-    let failed = 0;
     let campaign = null;
     try {
       const savedContacts = await upsertBroadcastContacts(tenantSlug, selectedContacts);
       const recipients = mergeBroadcastContacts(savedContacts, selectedContacts);
       campaign = await createBroadcastCampaign(tenantSlug, {
         name: campaignName.trim() || `Disparo ${new Date().toLocaleDateString('pt-BR')}`,
-        message_template: text,
-        channelType: defaultChannel,
-        total_recipients: recipients.length,
-        status: 'sending',
+        messageText: text,
+        channelType,
+        sendIntervalSeconds: Math.max(2, Math.min(Number(sendIntervalSeconds) || 3, 10)),
+        consentConfirmed,
+        status: 'queued',
       }, recipients);
-
-      for (const contact of recipients) {
-        try {
-          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, { status: 'sending' });
-          const result = await sendN8nCommand('broadcast_send', {
-            channel_type: contact.channel_type || contact.channelType || defaultChannel,
-            external_conversation_id: contact.external_conversation_id || contact.externalConversationId,
-            contact_name: contact.name || contact.contact_name || 'Contato',
-            message_text: text,
-            sent_by_user: 'Disparo NORIA',
-          }, tenantSlug);
-          sent += 1;
-          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
-            status: 'sent',
-            sent_at: new Date().toISOString(),
-            external_message_id: result.external_message_id || null,
-          });
-          setStatus(`Enviando... ${sent} enviados, ${failed} falhas.`);
-        } catch (error) {
-          failed += 1;
-          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
-            status: 'failed',
-            error: error.message || String(error),
-          }).catch(() => {});
-        }
-      }
-
-      await updateBroadcastCampaign(campaign.id, {
-        status: failed ? 'partial_error' : 'sent',
-        sent_count: sent,
-        failed_count: failed,
-        sent_at: new Date().toISOString(),
-      });
-      setStatus(`Disparo concluido: ${sent} enviados, ${failed} falhas.`);
+      setStatus('Campanha salva. O n8n está enviando os contatos em sequência...');
+      const result = await sendN8nCommand('broadcast_campaign', {
+        campaign_id: campaign.id,
+        sent_by_user: 'Disparo NORIA',
+      }, tenantSlug);
+      setStatus(result.queued
+        ? 'Campanha aceita e enfileirada. O processamento segue no n8n em segundo plano; acompanhe o historico para ver o progresso.'
+        : `Campanha concluida: ${Number(result.sent_count || 0)} enviados, ${Number(result.failed_count || 0)} falhas.`);
       setMessageText('');
       setCampaignName('');
       setSelected(new Set());
+      setConsentConfirmed(false);
       await onChanged?.();
     } catch (error) {
-      if (campaign?.id) {
-        await updateBroadcastCampaign(campaign.id, { status: 'failed', failed_count: selectedContacts.length }).catch(() => {});
-      }
-      setStatus(error.message || 'Falha ao executar disparo.');
+      setStatus(campaign?.id
+        ? `Nao foi possivel confirmar a execucao da campanha ${campaign.name}. Atualize o historico antes de tentar novamente para evitar mensagens duplicadas. ${error.message || ''}`
+        : error.message || 'Falha ao preparar disparo.');
     } finally {
       setBusy(false);
     }
@@ -2538,7 +2524,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
             <label className="file-drop">
               <FileSpreadsheet size={22} />
               <strong>Importar contatos</strong>
-              <span>XLSX ou CSV com nome e chat_id/telegram_id.</span>
+              <span>XLSX ou CSV com nome e telefone/chat_id. O canal selecionado será usado como padrão.</span>
               <input type="file" accept=".xlsx,.csv,.txt" onChange={handleFile} />
             </label>
             <div className="header-actions">
@@ -2551,13 +2537,25 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
               </label>
               <button className="secondary-button" type="button" onClick={addStageContacts} disabled={!stageFilter}>Adicionar</button>
             </div>
+            <div className="broadcast-audience-note"><ShieldCheck size={16} /><span>Envie somente para contatos que autorizaram receber mensagens da sua empresa.</span></div>
           </div>
 
           <div className="broadcast-composer">
             <label>Nome da campanha<input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Ex: Confirmacao de horarios" /></label>
-            <label className="textarea-label">Mensagem<textarea value={messageText} onChange={(event) => setMessageText(event.target.value)} placeholder="Digite a mensagem que sera enviada aos contatos selecionados." /></label>
+            <label>Canal padrão para contatos importados<select value={channelType} onChange={(event) => setChannelType(event.target.value)}>{availableChannels.map((channel) => <option key={channel.id} value={channel.id}>{channel.label}</option>)}</select></label>
+            <label className="textarea-label">Mensagem<textarea value={messageText} onChange={(event) => setMessageText(event.target.value)} placeholder="Escreva a mensagem da campanha. Use {{nome}} para personalizar." /></label>
+            <div className="broadcast-message-tools">
+              <span>Personalização disponível: <code>{'{{nome}}'}</code></span>
+              <label>Intervalo entre envios
+                <select value={sendIntervalSeconds} onChange={(event) => setSendIntervalSeconds(Number(event.target.value))}>
+                  <option value={2}>2 segundos</option><option value={3}>3 segundos</option><option value={5}>5 segundos</option><option value={10}>10 segundos</option>
+                </select>
+              </label>
+            </div>
+            {messageText.trim() && <div className="broadcast-preview"><small>PRÉVIA DA MENSAGEM</small><p>{messageText.replace(/\{\{\s*nome\s*\}\}/gi, selectedContacts[0]?.name || selectedContacts[0]?.contact_name || 'Maria')}</p></div>}
+            <label className="broadcast-consent"><input type="checkbox" checked={consentConfirmed} onChange={(event) => setConsentConfirmed(event.target.checked)} /><span>Confirmo que os contatos selecionados autorizaram o recebimento destas mensagens e que a campanha segue as preferências de comunicação da empresa.</span></label>
             <div className="header-actions">
-              <button className="primary-button" type="button" onClick={sendCampaign} disabled={busy || !messageText.trim() || !selectedContacts.length}>
+              <button className="primary-button" type="button" onClick={sendCampaign} disabled={busy || !messageText.trim() || !selectedContacts.length || !consentConfirmed}>
                 <Send size={16} /> Enviar para {selectedContacts.length}
               </button>
               <small>{status}</small>
@@ -2618,7 +2616,8 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
                   <article className="campaign-card" key={campaign.id}>
                     <div>
                       <strong>{campaign.name}</strong>
-                      <span>{campaign.total_recipients || 0} contatos - {campaign.sent_count || 0} enviados - {campaign.failed_count || 0} falhas</span>
+                    <span>{campaign.total_recipients || 0} contatos - {campaign.sent_count || 0} enviados - {campaign.failed_count || 0} falhas - {CHANNEL_OPTIONS.find((channel) => channel.id === campaign.channel_type)?.label || campaign.channel_type}</span>
+                    {campaign.last_error && <span className="campaign-error-detail">Execucao interrompida; confira o historico de envio antes de tentar novamente. {campaign.last_error}</span>}
                     </div>
                     <Badge value={campaign.status} status={campaign.status === 'sent' ? 'ia_ativa' : 'channel'} />
                   </article>
@@ -3195,6 +3194,7 @@ function HomePage() {
         </a>
         <nav className="home-nav-links" aria-label="Navegação principal">
           <a href="#produto">Produto</a>
+          <a href="#ecossistema">Ecossistema</a>
           <a href="#operacao">Operação</a>
           <a href="#seguranca">Estrutura</a>
         </nav>
@@ -3206,7 +3206,7 @@ function HomePage() {
       <section id="inicio" className="home-hero">
         <div className="home-hero-copy">
           <div className="home-eyebrow"><span className="home-live-dot" /> Plataforma de atendimento e operação</div>
-          <h1>Atendimento que acompanha o ritmo da sua empresa.</h1>
+          <h1>Tudo conectado.<br /><span>Todo atendimento em movimento.</span></h1>
           <p>
             Centralize conversas, mantenha a equipe no contexto e conduza cada oportunidade
             até o próximo passo, com IA e atendimento humano no mesmo fluxo.
@@ -3224,44 +3224,11 @@ function HomePage() {
           </div>
         </div>
 
-        <div className="home-product-preview" aria-label="Prévia da plataforma NORIA">
-          <div className="home-preview-topbar">
-            <div className="home-preview-brand"><span className="home-preview-mark">N</span> Central de atendimento</div>
-            <span className="home-preview-status"><i /> Em operação</span>
-          </div>
-          <div className="home-preview-body">
-            <aside className="home-preview-sidebar">
-              <span className="home-preview-nav active"><LayoutDashboard size={16} /></span>
-              <span className="home-preview-nav"><MessageCircle size={16} /></span>
-              <span className="home-preview-nav"><KanbanSquare size={16} /></span>
-              <span className="home-preview-nav"><CalendarDays size={16} /></span>
-            </aside>
-            <section className="home-preview-content">
-              <div className="home-preview-heading">
-                <div>
-                  <small>VISÃO GERAL</small>
-                  <strong>Atendimento de hoje</strong>
-                </div>
-                <span>Atualizado agora</span>
-              </div>
-              <div className="home-preview-metrics">
-                <div><small>Conversas ativas</small><strong>24</strong><span>+8 hoje</span></div>
-                <div><small>Aguardando equipe</small><strong>03</strong><span className="amber">prioridade</span></div>
-                <div><small>Agendamentos</small><strong>12</strong><span>esta semana</span></div>
-              </div>
-              <div className="home-preview-columns">
-                <div className="home-preview-column">
-                  <span>Novos contatos <b>08</b></span>
-                  <article><i className="avatar cyan">AM</i><div><strong>Ana Martins</strong><small>Quero saber os horários</small></div></article>
-                  <article><i className="avatar violet">LC</i><div><strong>Luiza Costa</strong><small>Mensagem recebida agora</small></div></article>
-                </div>
-                <div className="home-preview-column">
-                  <span>Em andamento <b>06</b></span>
-                  <article><i className="avatar green">RS</i><div><strong>Rafaela Souza</strong><small>Pré-agendamento em andamento</small></div></article>
-                  <article className="home-followup-card"><small>FOLLOW-UP</small><strong>Retomar em 3 horas</strong><span>Sem resposta desde 10:42</span></article>
-                </div>
-              </div>
-            </section>
+        <div className="home-hero-visual">
+          <HeroSignalFlow />
+          <div className="home-product-preview" aria-label="Prévia da plataforma NORIA">
+            <img src={dashboardAndConversationImage} alt="Prévia visual do dashboard e das conversas na NORIA" />
+            <span className="home-preview-caption"><i /> Dashboard e conversas conectados</span>
           </div>
         </div>
       </section>
@@ -3277,23 +3244,66 @@ function HomePage() {
             <div className="home-feature-icon"><MessageCircle size={21} /></div>
             <h3>Conversas em contexto</h3>
             <p>Mensagens de canais conectados ficam em uma só visão, com histórico e o status de cada atendimento.</p>
+            <FeatureMiniature type="conversation" />
             <span>WhatsApp · Telegram · atendimento manual</span>
           </article>
           <article className="home-feature-card">
             <div className="home-feature-icon violet"><KanbanSquare size={21} /></div>
             <h3>Kanban operacional</h3>
             <p>Visualize oportunidades por etapa, distribua a equipe e acompanhe handoffs sem sair da conversa.</p>
+            <FeatureMiniature type="kanban" />
           </article>
           <article className="home-feature-card">
             <div className="home-feature-icon green"><CalendarDays size={21} /></div>
             <h3>Agenda conectada</h3>
             <p>Conduza o agendamento a partir do atendimento e mantenha a operação alinhada com os horários registrados.</p>
+            <FeatureMiniature type="agenda" />
           </article>
           <article className="home-feature-card">
-            <div className="home-feature-icon amber"><Bot size={21} /></div>
-            <h3>IA configurada por empresa</h3>
-            <p>Prompt, catálogo, regras e limites ficam isolados por empresa para respostas que respeitam a operação.</p>
+            <div className="home-feature-icon violet"><UsersRound size={21} /></div>
+            <h3>Gestão de equipe</h3>
+            <p>Cadastre agentes, organize permissões e acompanhe quem assume cada atendimento.</p>
+            <FeatureMiniature type="team" />
           </article>
+        </div>
+      </section>
+
+      <section className="home-section home-interface-gallery" aria-labelledby="interface-gallery-title">
+        <div className="home-gallery-intro">
+          <span className="home-section-kicker">A OPERAÇÃO EM UMA ÚNICA INTERFACE</span>
+          <h2 id="interface-gallery-title">Veja a conversa, a equipe e a configuração no mesmo produto.</h2>
+          <p>Uma visão feita para quem precisa responder rápido, acompanhar cada atendimento e manter as regras de cada empresa bem definidas.</p>
+        </div>
+        <div className="home-gallery-grid">
+          <figure className="home-gallery-card home-gallery-conversation">
+            <img src={conversationInterfaceImage} alt="Prévia visual da central de conversas da NORIA" />
+            <figcaption><MessageCircle size={17} /><span><strong>Central de conversas</strong><small>Histórico, contexto e próximo passo no mesmo lugar.</small></span></figcaption>
+          </figure>
+          <figure className="home-gallery-card home-gallery-settings">
+            <img src={settingsInterfaceImage} alt="Prévia visual das configurações e da equipe na NORIA" />
+            <figcaption><UsersRound size={17} /><span><strong>Configuração por empresa</strong><small>Equipe, canais e regras reunidos em uma operação.</small></span></figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="ecossistema" className="home-section home-ecosystem-section">
+        <div className="home-ecosystem-copy">
+          <span className="home-section-kicker">UMA PLATAFORMA, UM FLUXO CONTÍNUO</span>
+          <h2>Menos telas soltas.<br /><span>Mais contexto para agir.</span></h2>
+          <p>Da primeira mensagem ao próximo passo, cada recurso compartilha o mesmo contexto operacional.</p>
+        </div>
+        <div className="home-ecosystem-map" aria-label="Recursos conectados da plataforma NORIA">
+          <EcosystemLink className="link-top-left" />
+          <EcosystemLink className="link-top-right" />
+          <EcosystemLink className="link-bottom-left" />
+          <EcosystemLink className="link-bottom-right" />
+          <div className="home-ecosystem-core"><img src={noriaLogo} alt="" /><span>OPERAÇÃO NORIA</span></div>
+          <article className="home-ecosystem-node node-conversas"><MessageCircle size={19} /><strong>Conversas</strong><small>WhatsApp e Telegram</small></article>
+          <article className="home-ecosystem-node node-ia"><Bot size={19} /><strong>IA e regras</strong><small>Contexto por empresa</small></article>
+          <article className="home-ecosystem-node node-kanban"><KanbanSquare size={19} /><strong>Kanban</strong><small>Etapas e equipe</small></article>
+          <article className="home-ecosystem-node node-agenda"><CalendarDays size={19} /><strong>Agenda</strong><small>Horários no fluxo</small></article>
+          <article className="home-ecosystem-node node-followup"><Clock3 size={19} /><strong>Follow-ups</strong><small>Retomada com critério</small></article>
+          <article className="home-ecosystem-node node-handoff"><UsersRound size={19} /><strong>Equipe</strong><small>Handoff com histórico</small></article>
         </div>
       </section>
 
@@ -3377,6 +3387,39 @@ function HomePage() {
       </footer>
     </main>
   );
+}
+
+function HeroSignalFlow() {
+  return (
+    <svg className="home-hero-signal-flow" viewBox="0 0 740 580" aria-hidden="true" fill="none">
+      <defs>
+        <linearGradient id="hero-flow-cyan" x1="60" y1="520" x2="690" y2="40" gradientUnits="userSpaceOnUse"><stop stopColor="#00E0FF" stopOpacity="0" /><stop offset="0.35" stopColor="#00E0FF" stopOpacity="0.92" /><stop offset="0.72" stopColor="#7161FF" stopOpacity="0.78" /><stop offset="1" stopColor="#7161FF" stopOpacity="0" /></linearGradient>
+        <filter id="hero-flow-glow" x="-20%" y="-30%" width="140%" height="160%"><feGaussianBlur stdDeviation="5" /></filter>
+      </defs>
+      <path d="M-20 500C160 464 149 336 318 350C488 363 509 103 765 58" stroke="url(#hero-flow-cyan)" strokeWidth="15" strokeOpacity="0.22" filter="url(#hero-flow-glow)" />
+      <path d="M-20 500C160 464 149 336 318 350C488 363 509 103 765 58" stroke="url(#hero-flow-cyan)" strokeWidth="2" />
+      <path d="M-25 535C178 474 205 402 349 412C517 423 558 198 770 165" stroke="url(#hero-flow-cyan)" strokeWidth="1.4" strokeOpacity="0.75" />
+      <path d="M80 570C223 469 337 501 447 455C554 410 586 297 744 262" stroke="url(#hero-flow-cyan)" strokeWidth="1" strokeOpacity="0.4" />
+      <circle cx="318" cy="350" r="4" fill="#00E0FF" /><circle cx="509" cy="103" r="3" fill="#8D75FF" /><circle cx="447" cy="455" r="3" fill="#00E0FF" />
+    </svg>
+  );
+}
+
+function EcosystemLink({ className }) {
+  return <span className={`home-ecosystem-link ${className}`} aria-hidden="true" />;
+}
+
+function FeatureMiniature({ type }) {
+  if (type === 'conversation') {
+    return <div className="home-feature-mini feature-mini-conversation" aria-hidden="true"><aside><i /><i /><i /><i /></aside><section><span /><p /><p className="sent" /><p className="sent short" /></section></div>;
+  }
+  if (type === 'kanban') {
+    return <div className="home-feature-mini feature-mini-kanban" aria-hidden="true"><span><i /><i /></span><span><i /><i className="violet" /></span><span><i className="green" /></span></div>;
+  }
+  if (type === 'agenda') {
+    return <div className="home-feature-mini feature-mini-agenda" aria-hidden="true"><header><i /><i /><i /></header><section>{Array.from({ length: 14 }, (_, index) => <i className={index === 4 || index === 9 ? 'active' : ''} key={index} />)}</section></div>;
+  }
+  return <div className="home-feature-mini feature-mini-team" aria-hidden="true"><i>AM</i><i>CL</i><i>RS</i><span><b /> <b /></span></div>;
 }
 
 function ConversationShowcase() {

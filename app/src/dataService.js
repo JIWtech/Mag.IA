@@ -393,22 +393,32 @@ export async function createBroadcastCampaign(activeTenantSlug, campaign, recipi
   const tenant = await loadTenant(activeTenantSlug);
   if (!tenant) throw new Error('Tenant nao encontrado');
   const userId = await currentUserId();
+  if (campaign.consentConfirmed !== true) throw new Error('Confirme que todos os contatos autorizaram o recebimento das mensagens.');
+  const messageText = String(campaign.messageText || campaign.message_text || campaign.message_template || '').trim();
+  const validRecipients = (Array.isArray(recipients) ? recipients : []).filter((recipient) =>
+    String(recipient.external_conversation_id || recipient.externalConversationId || '').trim());
+  if (!messageText) throw new Error('Escreva a mensagem da campanha antes de enviar.');
+  if (!validRecipients.length) throw new Error('Selecione ao menos um contato valido.');
+  if (validRecipients.length > 500) throw new Error('Cada campanha pode incluir no maximo 500 contatos.');
   const { data: campaignRow, error: campaignError } = await supabase
     .from('broadcast_campaigns')
     .insert({
       tenant_id: tenant.id,
       name: campaign.name,
       channel_type: campaign.channelType || 'telegram',
-      message_text: campaign.messageText,
-      status: 'sending',
-      total_recipients: recipients.length,
+      message_text: messageText,
+      status: campaign.status || 'queued',
+      total_recipients: validRecipients.length,
+      send_interval_seconds: Math.max(2, Math.min(Number(campaign.sendIntervalSeconds) || 3, 10)),
+      consent_confirmed_at: new Date().toISOString(),
+      consent_confirmed_by: userId,
       created_by: userId,
     })
     .select('*')
     .single();
   if (campaignError) throw campaignError;
 
-  const recipientRows = recipients.map((recipient) => ({
+  const recipientRows = validRecipients.map((recipient) => ({
     tenant_id: tenant.id,
     campaign_id: campaignRow.id,
     contact_id: recipient.id || null,

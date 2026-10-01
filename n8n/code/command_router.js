@@ -200,11 +200,30 @@ async function main(helpers) {
   const command = required(input.command, 'command');
   const tenantSlug = required(input.tenant_slug, 'tenant_slug').toLowerCase();
   const payload = input.payload || {};
-  if (!['manual_reply', 'broadcast_send', 'close_conversation', 'assign_conversation', 'confirm_payment_signal'].includes(command)) throw new Error('command nao suportado: ' + command);
+  if (!['manual_reply', 'broadcast_send', 'broadcast_campaign', 'close_conversation', 'assign_conversation', 'confirm_payment_signal'].includes(command)) throw new Error('command nao suportado: ' + command);
 
   const user = await validateUserSession();
   const tenant = await loadTenant(tenantSlug);
   await assertTenantMember(user.id, tenant.id);
+
+  if (command === 'broadcast_campaign') {
+    const campaignId = required(payload.campaign_id, 'payload.campaign_id');
+    const { supabaseUrl } = supabaseConfig();
+    const campaignPath = supabaseUrl + '/rest/v1/broadcast_campaigns?tenant_id=eq.' + encodeURIComponent(tenant.id)
+      + '&id=eq.' + encodeURIComponent(campaignId);
+    const candidates = await httpJson('GET', campaignPath + '&select=*', serviceHeaders());
+    const candidate = Array.isArray(candidates) ? candidates[0] : null;
+    if (!candidate) throw new Error('Campanha nao encontrada nesta empresa');
+    if (!candidate.consent_confirmed_at) throw new Error('Campanha sem confirmacao de autorizacao dos contatos');
+    if (!['queued', 'scheduled'].includes(candidate.status)) throw new Error('Campanha nao esta aguardando envio');
+
+    const claimedRows = await httpJson('PATCH', campaignPath + '&status=in.(queued,scheduled)',
+      serviceHeaders('return=representation'), { status: 'sending', started_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    const campaign = Array.isArray(claimedRows) ? claimedRows[0] : null;
+    if (!campaign) throw new Error('Campanha ja foi iniciada ou alterada');
+    return { ok: true, command, campaign_id: campaign.id, tenant_id: tenant.id, tenant_slug: tenantSlug,
+      status: 'sending', queued: true, sent_by_user: user.email || payload.sent_by_user || 'NORIA' };
+  }
 
   const channelType = required(payload.channel_type, 'payload.channel_type').toLowerCase();
   const externalConversationId = required(payload.external_conversation_id, 'payload.external_conversation_id');
