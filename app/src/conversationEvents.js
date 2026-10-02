@@ -1,7 +1,7 @@
 function chatKey(event) {
   return JSON.stringify([
     event.tenant_id || event.tenant_slug || '',
-    event.channel_type || '',
+    (event.channel_type || '').toLowerCase(),
     event.external_conversation_id || event.contact_handle || event.id,
   ]);
 }
@@ -20,7 +20,7 @@ export function prepareConversationEvents(events) {
   });
   const outgoingByChat = new Map();
   for (const event of unique) {
-    if (event.direction !== 'outbound' || ['agent', 'system'].includes(event.sender_type)) continue;
+    if (event.direction !== 'outbound' || ['agent', 'system', 'human', 'operator'].includes(event.sender_type)) continue;
     const key = chatKey(event);
     if (!outgoingByChat.has(key)) outgoingByChat.set(key, []);
     outgoingByChat.get(key).push(event);

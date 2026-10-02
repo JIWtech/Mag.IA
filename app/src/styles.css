@@ -1309,14 +1309,13 @@ textarea:focus-visible {
 
 .conversation-avatar-wrapper.compact .channel-avatar-badge {
   position: absolute;
-  bottom: -2px;
-  right: -2px;
-  width: 15px;
-  height: 15px;
+  bottom: 0;
+  right: 0;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
   border: 1.5px solid var(--surface);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
 }
 
 .table-contact-info {
@@ -1529,7 +1528,7 @@ textarea:focus-visible {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 16px;
   flex-shrink: 0;
 }
 
@@ -1544,55 +1543,61 @@ textarea:focus-visible {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  padding: 14px 18px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto;
-  grid-template-areas:
-    "icon label"
-    "icon value";
-  column-gap: 14px;
-  row-gap: 2px;
+  padding: 16px 20px;
+  height: 90px;
+  min-height: 90px;
+  display: flex;
   align-items: center;
+  justify-content: center;
+  gap: 18px;
   box-shadow: var(--shadow-sm);
   position: relative;
   overflow: hidden;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow);
 }
 
 .metric-card-conversas {
   border-left: 3px solid var(--brand);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 5%, transparent) 0%, transparent 70%), var(--surface);
 }
 
 .metric-card-conversas .metric-icon {
-  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
   color: var(--brand);
-  border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand) 28%, transparent);
 }
 
 .metric-card-bot {
   border-left: 3px solid var(--violet);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--violet) 5%, transparent) 0%, transparent 70%), var(--surface);
 }
 
 .metric-card-bot .metric-icon {
-  background: color-mix(in srgb, var(--violet) 10%, transparent);
+  background: color-mix(in srgb, var(--violet) 12%, transparent);
   color: var(--violet);
-  border: 1px solid color-mix(in srgb, var(--violet) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--violet) 28%, transparent);
 }
 
 .metric-card-human {
   border-left: 3px solid var(--amber);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--amber) 5%, transparent) 0%, transparent 70%), var(--surface);
 }
 
 .metric-card-human .metric-icon {
-  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
   color: var(--amber);
-  border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber) 28%, transparent);
 }
 
 .metric-icon {
-  grid-area: icon;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1601,28 +1606,35 @@ textarea:focus-visible {
   margin-bottom: 0;
 }
 
+.metric-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+
 .metric-card .metric-label {
-  grid-area: label;
   font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
+  font-weight: 550;
+  color: var(--muted);
   letter-spacing: -0.1px;
-  line-height: 1.2;
+  line-height: 1.25;
   margin-bottom: 0;
+  white-space: nowrap;
 }
 
 .metric-value-wrap {
-  grid-area: value;
   display: flex;
   align-items: baseline;
   min-height: auto;
 }
 
 .metric-card .metric-value {
-  font-size: 28px;
-  font-weight: 700;
+  font-size: 30px;
+  font-weight: 750;
   letter-spacing: -0.6px;
-  line-height: 1.1;
+  line-height: 1.05;
   color: var(--text);
 }
 
@@ -2476,34 +2488,45 @@ textarea:focus-visible {
 
 .channel-avatar-badge {
   position: absolute;
-  bottom: -3px;
-  right: -3px;
-  width: 18px;
-  height: 18px;
+  bottom: 0px;
+  right: 0px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
-  border: 2px solid var(--surface);
+  border: 1.5px solid var(--surface);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+  display: block;
+  pointer-events: auto;
+  cursor: default;
+}
+
+.channel-avatar-badge svg {
+  display: none;
 }
 
 .channel-avatar-badge.channel-telegram {
   background: #229ed9;
-  color: #ffffff;
 }
 
 .channel-avatar-badge.channel-whatsapp {
   background: #25d366;
-  color: #ffffff;
 }
 
 .channel-avatar-badge.channel-instagram {
   background: #e1306c;
-  color: #ffffff;
 }
 
 .channel-avatar-badge.channel-webchat {
-  background: var(--brand-soft);
-  color: var(--brand);
+  background: var(--brand);
+}
+
+/* Suporte estrutural preparado para presença real quando disponível */
+.channel-avatar-badge.presence-online {
+  background: #22c55e !important;
+}
+
+.channel-avatar-badge.presence-offline {
+  background: #64748b !important;
 }
 
 .conversation-item-main {
@@ -2560,7 +2583,16 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.last-message-sender {
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .conversation-item.active .last-message {
+  color: var(--text);
+}
+
+.conversation-item.active .last-message-sender {
   color: var(--text);
 }
 
@@ -2797,6 +2829,16 @@ textarea:focus-visible {
   color: var(--brand);
 }
 
+.chat-header-owner-chip.is-ai {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.chat-header-owner-chip.is-ai .owner-chip-icon {
+  color: #38bdf8;
+}
+
 .chat-header-owner-chip.no-owner {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -2869,6 +2911,7 @@ textarea:focus-visible {
 
 .composer input {
   flex: 1;
+  min-width: 0;
   height: 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -3297,16 +3340,15 @@ textarea:focus-visible {
   }
 
   .chat-header-avatar-wrap .channel-avatar-badge {
-    width: 14px;
-    height: 14px;
-    bottom: -2px;
-    right: -2px;
-    border: 2px solid var(--surface);
+    width: 8px;
+    height: 8px;
+    bottom: 0px;
+    right: 0px;
+    border: 1.5px solid var(--surface);
   }
 
   .chat-header-avatar-wrap .channel-avatar-badge svg {
-    width: 7.5px;
-    height: 7.5px;
+    display: none;
   }
 
   .chat-header-main-info {
@@ -3621,30 +3663,37 @@ textarea:focus-visible {
   box-shadow: none;
 }
 
-/* Reaproveita exatamente a métrica dos controles do Kanban e o gradiente
-   primário NORIA utilizado nas ações de salvamento. */
+/* Reaproveita a métrica dos controles da toolbar e o gradiente suave oficial NORIA */
 .kanban-toolbar .kanban-ai-flow-button {
   min-height: 36px;
   height: 36px;
-  padding: 0 18px;
+  padding: 0 14px;
   border-radius: 8px;
   font-size: 12.5px;
+  font-weight: 600;
   line-height: 1;
-  background: linear-gradient(135deg, rgba(0, 224, 255, 0.92), rgba(72, 156, 255, 0.86) 58%, rgba(120, 97, 255, 0.84));
-  border-color: rgba(0, 224, 255, 0.48);
+  background: var(--brand-gradient);
+  border: 1px solid rgba(0, 224, 255, 0.45);
   color: #06111f;
-  box-shadow: 0 4px 12px rgba(0, 224, 255, 0.14);
+  box-shadow: 0 2px 10px rgba(0, 224, 255, 0.16);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, border-color 160ms ease, filter 160ms ease;
 }
 
 .kanban-toolbar .kanban-ai-flow-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  background: linear-gradient(135deg, #00e0ff, #489cff 58%, #7861ff);
+  filter: brightness(1.06);
   border-color: rgba(0, 224, 255, 0.7);
-  box-shadow: 0 6px 16px rgba(0, 224, 255, 0.2);
+  box-shadow: 0 4px 14px rgba(0, 224, 255, 0.24);
 }
 
 .kanban-toolbar .kanban-ai-flow-button:active:not(:disabled) {
   transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .kanban-toolbar .kanban-ai-flow-button:focus-visible {
@@ -3657,11 +3706,20 @@ textarea:focus-visible {
   border-color: var(--line);
   color: var(--muted);
   box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+  filter: none;
 }
 
 .kanban-toolbar .kanban-ai-flow-icon {
-  color: #173d75;
-  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.34));
+  color: #f59e0b;
+  filter: drop-shadow(0 1px 2px rgba(6, 17, 31, 0.35));
+  flex-shrink: 0;
+}
+
+.kanban-toolbar .kanban-ai-flow-button:disabled .kanban-ai-flow-icon {
+  color: var(--muted);
+  filter: none;
 }
 
 .kanban-toolbar .kanban-filter-control {
@@ -4104,9 +4162,10 @@ textarea:focus-visible {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 10px;
-  min-height: 214px;
+  min-height: 185px;
   padding: 12px 11px 11px 14px;
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 7px;
   transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
@@ -4229,15 +4288,20 @@ textarea:focus-visible {
 
 .card-subtitle {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 18px;
   color: var(--text);
+  opacity: 0.88;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  text-overflow: ellipsis;
+  max-height: 36px;
+  flex: 0 0 auto;
   overflow-wrap: break-word;
-  word-break: break-word;
+  word-break: normal;
+  min-height: 36px;
 }
 
 .ai-verification-badge {
@@ -4401,6 +4465,16 @@ textarea:focus-visible {
   opacity: 0.65;
 }
 
+.kanban-card-owner {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
 .kanban-card-footer {
   display: flex;
   align-items: center;
@@ -4412,12 +4486,22 @@ textarea:focus-visible {
 }
 
 .card-owner-info {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text);
   font-weight: 500;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-owner-info svg {
+  flex-shrink: 0;
+  color: var(--muted);
 }
 
 .open-chat-action-btn {
@@ -7416,6 +7500,12 @@ button:disabled {
   .appointment-save-row {
     align-items: flex-start;
     flex-direction: column;
+    width: 100%;
+  }
+
+  .appointment-save-row .primary-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .appointment-card-heading,
@@ -8708,7 +8798,8 @@ button:disabled {
 
   .settings-agent-actions .settings-agent-delete-btn {
     height: 38px;
-    width: 38px;
+    width: auto;
+    min-width: 38px;
     justify-content: center;
     display: inline-flex;
     align-items: center;
@@ -8719,6 +8810,18 @@ button:disabled {
 
   .settings-agent-actions .btn-text-mobile {
     display: inline;
+  }
+}
+
+@media (max-width: 380px) {
+  .settings-agent-actions .btn-text-mobile {
+    display: none;
+  }
+
+  .settings-agent-actions .settings-agent-delete-btn {
+    width: 38px;
+    padding: 0;
+    flex-shrink: 0;
   }
 }
 
@@ -9428,53 +9531,59 @@ button:disabled {
 /* Modal Responsive Rules */
 @media (max-width: 768px) {
   .modal-backdrop {
-    padding: 14px;
+    padding: 12px;
   }
 
   .modal-panel {
-    max-height: calc(100dvh - 28px);
-    width: min(540px, calc(100vw - 28px));
+    max-height: calc(100dvh - 24px);
+    width: min(540px, calc(100% - 16px));
+    overflow: hidden;
   }
 
   .assign-modal-panel {
-    width: min(400px, calc(100vw - 32px)) !important;
+    width: min(400px, calc(100% - 16px)) !important;
   }
 
   .modal-header {
-    padding: 16px 18px 12px;
+    padding: 14px 16px 12px;
   }
 
   .modal-body {
-    padding: 14px 16px 16px;
-    max-height: calc(100dvh - 160px);
+    padding: 14px 16px;
+    max-height: calc(100dvh - 140px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .confirm-modal-header {
-    padding: 16px 18px 12px;
+    padding: 14px 16px 12px;
   }
 
   .confirm-modal-body {
-    padding: 14px 18px;
+    padding: 14px 16px;
+    max-height: calc(100dvh - 140px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .confirm-modal-footer {
-    padding: 12px 18px 16px;
+    padding: 12px 16px;
   }
 }
 
 @media (max-width: 480px) {
   .modal-backdrop {
-    padding: 10px;
+    padding: 8px;
   }
 
   .modal-panel {
-    max-height: calc(100dvh - 20px);
-    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 16px);
+    width: min(100%, calc(100vw - 16px));
     border-radius: 14px;
   }
 
   .assign-modal-panel {
-    width: calc(100vw - 32px) !important;
+    width: min(400px, calc(100vw - 20px)) !important;
   }
 
   .agent-card-meta {
@@ -9485,8 +9594,8 @@ button:disabled {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 10px;
-    padding: 12px 18px 16px;
+    gap: 8px;
+    padding: 12px 14px;
   }
 
   .confirm-cancel-btn {
@@ -9505,6 +9614,34 @@ button:disabled {
     font-size: 13px;
     font-weight: 600;
     box-shadow: none;
+  }
+}
+
+@media (max-height: 480px) {
+  .modal-panel {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .modal-header,
+  .confirm-modal-header,
+  .assign-modal-header {
+    padding: 10px 14px;
+  }
+
+  .modal-body,
+  .confirm-modal-body,
+  .assign-modal-body {
+    padding: 10px 14px;
+    max-height: calc(100dvh - 105px);
+    overflow-y: auto;
+  }
+
+  .assign-agent-list {
+    max-height: calc(100dvh - 120px);
+  }
+
+  .confirm-modal-footer {
+    padding: 8px 14px;
   }
 }
 
@@ -9558,6 +9695,34 @@ button:disabled {
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+/* ==========================================================================
+   Telas com Baixa Altura (Viewport Height <= 700px)
+   ========================================================================== */
+@media (max-height: 700px) {
+  .main {
+    padding: 14px 18px;
+  }
+
+  .topbar {
+    min-height: 48px;
+    margin-bottom: 10px;
+  }
+
+  .kanban-title-block h1 {
+    font-size: 22px;
+    padding-bottom: 4px;
+  }
+
+  .kanban-title-accent {
+    height: 26px;
+  }
+
+  .dashboard-page .metric-card {
+    height: 74px;
+    min-height: 74px;
   }
 }
 
@@ -9625,15 +9790,15 @@ button:disabled {
   }
 
   .dashboard-page .metric-card {
-    padding: 12px 14px;
-    column-gap: 10px;
-    row-gap: 2px;
-    min-height: auto;
+    padding: 14px 16px;
+    height: 84px;
+    min-height: 84px;
+    gap: 14px;
   }
 
   .dashboard-page .metric-card .metric-icon {
-    width: 32px;
-    height: 32px;
+    width: 38px;
+    height: 38px;
     margin-bottom: 0;
   }
 
@@ -9643,7 +9808,7 @@ button:disabled {
   }
 
   .dashboard-page .metric-card .metric-value {
-    font-size: 24px;
+    font-size: 26px;
   }
 
   .dashboard-main-grid {
@@ -9723,9 +9888,26 @@ button:disabled {
     color: var(--brand);
   }
 
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .topbar-brand-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
   .topbar-title-row {
-    grid-column: 1;
-    grid-row: 1;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -9761,25 +9943,38 @@ button:disabled {
   }
 
   .topbar-subtitle {
-    grid-column: 2;
-    grid-row: 2;
     font-size: 11px;
     margin: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    text-align: right;
     color: var(--text);
     max-width: 190px;
   }
 
   .topbar-actions {
-    display: contents;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .topbar-actions .noria-select-trigger {
+    height: 32px;
+    padding: 0 8px;
+    font-size: 12px;
+    max-width: 175px;
+    min-width: 0;
+    width: auto;
+    border-radius: 6px;
+    gap: 6px;
+  }
+
+  .topbar-actions .noria-select-value-wrap {
+    font-size: 12px;
   }
 
   .topbar-actions .select-label {
-    grid-column: 1;
-    grid-row: 2;
     height: 32px;
     padding: 0 8px;
     font-size: 12px;
@@ -9798,12 +9993,10 @@ button:disabled {
   }
 
   .topbar-utility-buttons {
-    grid-column: 2;
-    grid-row: 1;
-    justify-self: end;
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    flex-shrink: 0;
   }
 
   .topbar-utility-buttons .icon-button {
@@ -9834,14 +10027,14 @@ button:disabled {
 
   .dashboard-page .metric-card {
     padding: 10px 12px;
-    column-gap: 8px;
-    row-gap: 2px;
-    min-height: auto;
+    height: 78px;
+    min-height: 78px;
+    gap: 10px;
   }
 
   .dashboard-page .metric-card .metric-icon {
-    width: 28px;
-    height: 28px;
+    width: 34px;
+    height: 34px;
     margin-bottom: 0;
   }
 
@@ -9862,15 +10055,23 @@ button:disabled {
   .dashboard-table {
     border: none;
     background: transparent;
-    overflow: visible;
+    overflow: hidden;
   }
 
   .dashboard-table .table-body {
-    overflow: visible;
-    max-height: none;
+    overflow-y: auto;
+    max-height: clamp(360px, 58dvh, 540px);
     display: flex;
     flex-direction: column;
     gap: 10px;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+
+  .dashboard-recent-conversations-sentinel {
+    width: 100%;
+    height: 1px;
   }
 
   .dashboard-table .table-row {
@@ -9972,13 +10173,31 @@ button:disabled {
     overflow-x: auto;
   }
 
-  .table-head,
-  .table-row {
+  .table:not(.dashboard-table) .table-head,
+  .table:not(.dashboard-table) .table-row {
     min-width: 760px;
   }
 
   .funnel-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 6px 12px;
+  }
+
+  .funnel-row > div:first-child {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .funnel-row em {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+  }
+
+  .funnel-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .form-row-two,
@@ -9998,38 +10217,69 @@ button:disabled {
   }
 
   .dashboard-page .metric-card {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    grid-template-rows: auto auto;
-    grid-template-areas:
-      "icon label"
-      "icon value";
-    column-gap: 12px;
-    row-gap: 2px;
+    display: flex;
     align-items: center;
-    padding: 12px 16px;
-    min-height: auto;
+    justify-content: flex-start;
+    padding: 14px 18px;
+    height: 80px;
+    min-height: 80px;
+    gap: 16px;
     text-align: left;
   }
 
   .dashboard-page .metric-card .metric-icon {
-    grid-area: icon;
+    width: 40px;
+    height: 40px;
     margin-bottom: 0;
     margin-right: 0;
-    width: 34px;
-    height: 34px;
   }
 
   .dashboard-page .metric-card .metric-label {
-    grid-area: label;
-    flex: none;
     font-size: 13px;
     margin-bottom: 0;
   }
 
   .dashboard-page .metric-card .metric-value {
-    grid-area: value;
-    font-size: 24px;
+    font-size: 26px;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px 10px;
+    align-items: center;
+  }
+
+  .topbar-brand-block {
+    grid-column: 1;
+    min-width: 0;
+  }
+
+  .topbar-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .topbar-actions .noria-select-trigger {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+    height: 34px;
+    font-size: 12px;
+  }
+
+  .topbar-utility-buttons {
+    flex-shrink: 0;
+  }
+
+  .page-context-tenant {
+    display: none;
   }
 }
 
@@ -10060,8 +10310,8 @@ button:disabled {
 @media (max-width: 768px) {
   .kanban-toolbar {
     width: 100%;
-    padding: 8px 12px;
-    gap: 8px;
+    padding: 10px 12px;
+    gap: 12px;
     border-radius: 8px;
   }
 
@@ -10071,6 +10321,11 @@ button:disabled {
     align-items: stretch;
   }
 
+  .kanban-toolbar .kanban-ai-flow-button {
+    width: 100%;
+    justify-content: center;
+  }
+
   .kanban-toolbar-search-group {
     width: 100%;
     min-width: 0;
@@ -10078,6 +10333,7 @@ button:disabled {
 
   .kanban-toolbar-filter-group {
     width: 100%;
+    gap: 8px;
   }
 
   .kanban-toolbar-filter-group+.kanban-toolbar-filter-group {
@@ -10085,20 +10341,28 @@ button:disabled {
     padding-left: 0;
   }
 
-  .kanban-toolbar-filter-group .chips {
+  .kanban-toolbar-channel-group .chips {
     width: 100%;
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    gap: 6px;
-    padding-bottom: 2px;
-    scroll-snap-type: x proximity;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
-  .kanban-toolbar-filter-group .chips::-webkit-scrollbar {
-    display: none;
+  .kanban-toolbar-channel-group .chip {
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+    padding-inline: 10px;
+  }
+
+  .kanban-toolbar .kanban-owner-select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .kanban-toolbar .kanban-ai-flow-button {
+    min-height: 40px;
   }
 
   .kanban-toolbar-agents-row {
@@ -10142,6 +10406,7 @@ button:disabled {
   }
 
   .kanban-card {
+    min-height: 180px;
     padding: 10px;
     gap: 7px;
   }
@@ -10166,8 +10431,8 @@ button:disabled {
   }
 
   .kanban-toolbar {
-    padding: 8px 10px;
-    gap: 7px;
+    padding: 10px;
+    gap: 8px;
   }
 
   .kanban-toolbar-search-group .search-box input {
@@ -10193,6 +10458,7 @@ button:disabled {
   }
 
   .kanban-card {
+    min-height: 178px;
     padding: 9px;
     gap: 6px;
   }
@@ -10233,11 +10499,13 @@ button:disabled {
 
 .kanban-card-quick-actions {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   gap: 6px;
   margin-top: auto;
-  padding-top: 8px;
+  padding-top: 7px;
   border-top: 1px solid var(--line);
+  min-width: 0;
 }
 
 .card-quick-btn {
@@ -10263,6 +10531,8 @@ button:disabled {
 
 .card-quick-btn span {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-quick-btn:hover {

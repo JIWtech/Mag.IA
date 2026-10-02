@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { canCloseConversation } from './conversationLifecycle';
 import { kanbanAgentFilterValue, KANBAN_OWNER_FILTERS, matchesKanbanOwnerFilter } from './kanbanFilters';
 import { CHANNEL_OPTIONS, isTenantAuthorized } from './tenantAccess';
@@ -15,6 +15,7 @@ import {
   Building2,
   CalendarCheck,
   CalendarDays,
+  CarFront,
   Check,
   CheckCheck,
   CheckCircle2,
@@ -22,6 +23,7 @@ import {
   CircleDollarSign,
   Clock3,
   FileSpreadsheet,
+  Flame,
   Copy,
   ExternalLink,
   Eye,
@@ -58,6 +60,7 @@ import {
   UsersRound,
   X,
   Video,
+  Wrench,
 } from 'lucide-react';
 import {
   agents,
@@ -86,11 +89,16 @@ import {
   loadClientData,
   loadTeamAgents,
   moveKanbanCard,
+  isGenesisSalesTenant,
+  orderKanbanColumnsForTenant,
   persistTenantSlug,
   saveAppointment,
   loadAppointmentScheduling,
   loadAppointmentAvailability,
   subscribeToClientEvents,
+  shouldRefreshConversationState,
+  createDebouncedRealtimeRefresh,
+  resolveConversationHeaderOwner,
   updateBroadcastCampaign,
   updateBroadcastRecipient,
   upsertBroadcastContacts,
@@ -101,6 +109,18 @@ import {
   getKanbanColumnKind,
   validateKanbanOrderProposal,
   sortConversationsByRecentActivity,
+  sortKanbanCardsByConversationActivity,
+  applyIncomingEventToConversations,
+  applyIncomingEventToKanban,
+  applyConversationReadState,
+  canonicalConversationKey,
+  conversationReadKey,
+  getLatestReadableEvent,
+  markConversationRead,
+  normalizeAvatarUrl,
+  shouldAdvanceConversationRead,
+  subscribeToConversationReads,
+  upsertConversationReadMarker,
 } from './dataService';
 import noriaLogo from './assets/noria_logo.png';
 import { NoriaSelect } from './components/NoriaSelect';
@@ -220,6 +240,8 @@ function getInitialAppData(tenantSlug) {
         appointments: [],
         broadcastContacts: [],
         broadcastCampaigns: [],
+        conversationReads: [],
+        tenantId: null,
       },
       ready: false,
     };
@@ -234,6 +256,8 @@ function getInitialAppData(tenantSlug) {
       appointments: [],
       broadcastContacts: [],
       broadcastCampaigns: [],
+      conversationReads: [],
+      tenantId: null,
     },
     ready: true,
   };
@@ -268,6 +292,8 @@ function App() {
   const scopeKey = JSON.stringify([session?.user?.id || 'local', activeTenantSlug]);
   const currentScope = useRef(scopeKey);
   const kanbanMoveInFlightRef = useRef(new Set());
+  const conversationViewRef = useRef({ canonicalKey: '', visible: false });
+  const conversationReadTimersRef = useRef(new Map());
   currentScope.current = hasTenantAccess ? scopeKey : '';
   const allowedChannels = appData.enabledChannels || [];
 
@@ -276,6 +302,90 @@ function App() {
   const [initialConversationId, setInitialConversationId] = useState(null);
   const [prefilledAppointment, setPrefilledAppointment] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  const scheduleConversationRead = useCallback((conversation) => {
+    const userId = session?.user?.id || null;
+    const tenantId = appData.tenantId;
+    const latestEvent = getLatestReadableEvent(conversation);
+    if (!tenantId || !userId || !conversation || !latestEvent?.eventId || !latestEvent?.createdAt) return;
+
+    const channelType = conversation.channelType || conversation.channel;
+    const externalConversationId = conversation.externalConversationId || conversation.normalizedExternalId;
+    const key = conversationReadKey(tenantId, userId, channelType, externalConversationId);
+    const knownMarker = (appData.conversationReads || []).find((marker) => conversationReadKey(
+      marker.tenant_id,
+      marker.user_id,
+      marker.channel_type,
+      marker.external_conversation_id,
+    ) === key);
+    if (!shouldAdvanceConversationRead(knownMarker, latestEvent)) return;
+
+    const optimisticMarker = {
+      tenant_id: tenantId,
+      user_id: userId,
+      channel_type: channelType,
+      external_conversation_id: externalConversationId,
+      last_read_event_id: latestEvent.eventId,
+      last_read_at: latestEvent.createdAt,
+    };
+    setAppData((previous) => {
+      if (!previous || previous.tenantId !== tenantId) return previous;
+      const previousMarker = (previous.conversationReads || []).find((marker) => conversationReadKey(
+        marker.tenant_id,
+        marker.user_id,
+        marker.channel_type,
+        marker.external_conversation_id,
+      ) === key);
+      if (!shouldAdvanceConversationRead(previousMarker, latestEvent)) return previous;
+      const conversationReads = upsertConversationReadMarker(previous.conversationReads || [], optimisticMarker);
+      return {
+        ...previous,
+        conversationReads,
+        conversations: applyConversationReadState(previous.conversations, conversationReads, tenantId, userId),
+      };
+    });
+
+    const existingTimer = conversationReadTimersRef.current.get(key);
+    if (existingTimer) window.clearTimeout(existingTimer);
+    const timer = window.setTimeout(async () => {
+      conversationReadTimersRef.current.delete(key);
+      try {
+        const persistedMarker = await markConversationRead({
+          tenantId,
+          channelType,
+          externalConversationId,
+          lastReadEventId: latestEvent.eventId,
+        });
+        if (!persistedMarker) return;
+        setAppData((previous) => {
+          if (!previous || previous.tenantId !== tenantId) return previous;
+          const conversationReads = upsertConversationReadMarker(previous.conversationReads || [], persistedMarker);
+          return {
+            ...previous,
+            conversationReads,
+            conversations: applyConversationReadState(previous.conversations, conversationReads, tenantId, userId),
+          };
+        });
+      } catch (error) {
+        console.warn('Nao foi possivel salvar a leitura da conversa:', error.message || error);
+        refreshData({ showLoading: false });
+      }
+    }, 180);
+    conversationReadTimersRef.current.set(key, timer);
+  }, [appData.conversationReads, appData.tenantId, session?.user?.id]);
+
+  const handleConversationViewStateChange = useCallback(({ conversation, visible } = {}) => {
+    conversationViewRef.current = {
+      canonicalKey: conversation?.canonicalKey || '',
+      visible: Boolean(visible && conversation?.canonicalKey),
+    };
+    if (conversationViewRef.current.visible) scheduleConversationRead(conversation);
+  }, [scheduleConversationRead]);
+
+  useEffect(() => () => {
+    for (const timer of conversationReadTimersRef.current.values()) window.clearTimeout(timer);
+    conversationReadTimersRef.current.clear();
+  }, [activeTenantSlug, session?.user?.id]);
 
   useEffect(() => {
     function handleGlobalKeyDown(e) {
@@ -312,9 +422,9 @@ function App() {
     setActive('agendamentos');
   };
 
-  const handleMoveKanbanCard = async (card, targetColumnKey) => {
+  const handleMoveKanbanCard = async (card, targetColumnKey, targetColObj = null) => {
     const currentColumn = String(card.targetColumnId || card.stage || '');
-    if (currentColumn === targetColumnKey) return;
+    if (currentColumn === targetColumnKey || (targetColObj && currentColumn === targetColObj.id)) return;
 
     const moveKey = [
       activeTenantSlug,
@@ -330,10 +440,22 @@ function App() {
       const nextColumns = prev.kanbanColumns.map((col) => {
         const filteredCards = (col.cards || []).filter((c) => c.id !== card.id);
         const colKey = col.automationKey || col.id;
-        if (colKey === targetColumnKey || col.id === targetColumnKey) {
+        const matchesTarget =
+          colKey === targetColumnKey ||
+          col.id === targetColumnKey ||
+          (targetColObj && (
+            col.id === targetColObj.id ||
+            col.automationKey === targetColObj.automationKey ||
+            col.title === targetColObj.title
+          ));
+        if (matchesTarget) {
           return {
             ...col,
-            cards: [{ ...card, stage: targetColumnKey, targetColumnId: targetColumnKey }, ...filteredCards],
+            cards: sortKanbanCardsByConversationActivity([{
+              ...card,
+              stage: targetColObj?.title || targetColumnKey,
+              targetColumnId: col.automationKey || targetColumnKey,
+            }, ...filteredCards]),
           };
         }
         return { ...col, cards: filteredCards };
@@ -342,7 +464,24 @@ function App() {
     });
 
     try {
-      await moveKanbanCard(activeTenantSlug, card, targetColumnKey);
+      const [persistedMove] = await moveKanbanCard(activeTenantSlug, card, targetColumnKey, null, targetColObj);
+      if (persistedMove?.salesLeadId) {
+        setAppData((prev) => ({
+          ...prev,
+          kanbanColumns: (prev?.kanbanColumns || []).map((column) => ({
+            ...column,
+            cards: (column.cards || []).map((currentCard) => currentCard.id === card.id
+              ? {
+                ...currentCard,
+                salesLeadId: persistedMove.salesLeadId,
+                salesStageKey: persistedMove.salesStageKey,
+                salesRevision: persistedMove.salesRevision,
+                salesAiLocked: persistedMove.salesAiLocked,
+              }
+              : currentCard),
+          })),
+        }));
+      }
     } catch (err) {
       console.warn('Falha ao salvar movimentação de card no banco:', err);
       refreshData({ showLoading: false });
@@ -361,12 +500,21 @@ function App() {
     }));
   };
 
-  const handleFinishConversationFromKanban = (card) => {
+  const handleFinishConversationFromKanban = async (card) => {
+    if (isGenesisSalesTenant(activeTenantSlug)) {
+      try {
+        await moveKanbanCard(activeTenantSlug, card, 'conversation_closed');
+        refreshData({ showLoading: false });
+      } catch (err) {
+        console.warn('Falha ao encerrar conversa do Kanban:', err);
+      }
+      return;
+    }
     handleMoveKanbanCard(card, 'finalizadas');
   };
 
   useEffect(() => {
-    document.title = 'NORIA — Inteligência em movimento';
+    document.title = 'NORIA';
     try {
       localStorage.removeItem('magia:team-agents');
     } catch (e) { }
@@ -439,15 +587,36 @@ function App() {
             ...conv,
             owner: agent.name,
             ownerId: agent.id,
+            ownerKind: 'agent',
             status: 'atendimento_humano',
             messages: newMessages,
           };
         }
         return conv;
       });
+      const nextKanbanColumns = (prev.kanbanColumns || []).map((col) => ({
+        ...col,
+        cards: (col.cards || []).map((card) => {
+          if (
+            card.canonicalKey === selectedConversation?.canonicalKey
+            || (selectedConversation?.normalizedExternalId && card.normalizedExternalId === selectedConversation.normalizedExternalId)
+            || (selectedConversation?.externalConversationId && card.externalConversationId === selectedConversation.externalConversationId)
+            || card.id === selectedConversation?.id
+          ) {
+            return {
+              ...card,
+              owner: agent.name,
+              ownerId: agent.id,
+              ownerKind: 'agent',
+            };
+          }
+          return card;
+        }),
+      }));
       return {
         ...prev,
         conversations: nextConversations,
+        kanbanColumns: nextKanbanColumns,
       };
     });
 
@@ -515,7 +684,9 @@ function App() {
         appointments: appData.appointments || [],
         broadcastContacts: appData.broadcastContacts || [],
         broadcastCampaigns: appData.broadcastCampaigns || [],
-      }, activeTenantSlug);
+        conversationReads: appData.conversationReads || [],
+        tenantId: appData.tenantId || null,
+      }, activeTenantSlug, session?.user?.id || null);
       if (currentScope.current !== requestedScope) return;
       setLoadError('');
       cacheAppData(activeTenantSlug, data);
@@ -560,6 +731,7 @@ function App() {
 
   useEffect(() => {
     if (!hasTenantAccess) return undefined;
+    const userId = session?.user?.id || null;
     setDataScope(scopeKey);
     setLoadError('');
     persistTenantSlug(activeTenantSlug);
@@ -573,28 +745,81 @@ function App() {
     }
     refreshData({ showLoading: false });
 
-    let lastRealtimeRefresh = 0;
-    const refreshFromRealtime = () => {
-      const now = Date.now();
-      if (now - lastRealtimeRefresh < 800) return;
-      lastRealtimeRefresh = now;
+    const refreshFromRealtime = createDebouncedRealtimeRefresh(() => {
       refreshData({ showLoading: false });
-    };
+    });
 
-    const unsubscribe = subscribeToClientEvents(() => {
-      refreshFromRealtime();
+    const unsubscribe = subscribeToClientEvents((payload) => {
+      if (payload?.table === 'channel_events' && payload?.new) {
+        const incomingEvent = payload.new;
+        const incomingConversationKey = canonicalConversationKey(
+          incomingEvent.channel_type,
+          incomingEvent.external_conversation_id,
+          incomingEvent.contact_handle || incomingEvent.id,
+          activeTenantSlug,
+        );
+        const markIncomingAsRead = conversationViewRef.current.visible
+          && conversationViewRef.current.canonicalKey === incomingConversationKey;
+        setAppData((prev) => {
+          if (!prev) return prev;
+          const nextConversations = applyIncomingEventToConversations(
+            prev.conversations,
+            incomingEvent,
+            activeTenantSlug,
+            { markIncomingAsRead },
+          );
+          const nextKanbanColumns = applyIncomingEventToKanban(
+            prev.kanbanColumns,
+            incomingEvent,
+            activeTenantSlug,
+          );
+          return {
+            ...prev,
+            conversations: nextConversations,
+            kanbanColumns: nextKanbanColumns,
+          };
+        });
+
+        if (shouldRefreshConversationState(incomingEvent)) {
+          refreshFromRealtime();
+        }
+      } else {
+        refreshFromRealtime();
+      }
     }, activeTenantSlug);
+
+    const unsubscribeConversationReads = subscribeToConversationReads((payload) => {
+      const marker = payload?.new;
+      if (!marker?.tenant_id || !marker?.user_id) {
+        refreshFromRealtime();
+        return;
+      }
+      setAppData((prev) => {
+        if (!prev || marker.tenant_id !== prev.tenantId || marker.user_id !== userId) return prev;
+        const conversationReads = upsertConversationReadMarker(prev.conversationReads || [], marker);
+        return {
+          ...prev,
+          conversationReads,
+          conversations: applyConversationReadState(prev.conversations, conversationReads, prev.tenantId, userId),
+        };
+      });
+    }, userId);
 
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') refreshData({ showLoading: false });
     };
     document.addEventListener('visibilitychange', refreshWhenVisible);
+    // O Realtime é o mecanismo primário. Mantemos um fallback pouco frequente
+    // para tabelas ainda não cobertas pela subscription, sem recarregar todo o
+    // conjunto de dados a cada 10 segundos.
     const fallbackPolling = window.setInterval(() => {
       refreshData({ showLoading: false });
-    }, 10000);
+    }, 5 * 60 * 1000);
 
     return () => {
       unsubscribe();
+      unsubscribeConversationReads();
+      refreshFromRealtime.cancel();
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       window.clearInterval(fallbackPolling);
     };
@@ -777,7 +1002,9 @@ function App() {
             initialConversationId={initialConversationId}
             onInitialConversationOpened={() => setInitialConversationId(null)}
             onNavigateSettings={() => setActive('configuracoes')}
+            onConversationViewStateChange={handleConversationViewStateChange}
             ready={appDataReady}
+            kanbanColumns={appData.kanbanColumns}
           />
         )}
         {active === 'kanban' && (
@@ -849,28 +1076,59 @@ function formatConversationPreview(message) {
 
 function getConversationLastMessageOrigin(item) {
   if (!item) return null;
+  if (item.lastMessageSender) return item.lastMessageSender;
   const messages = item.messages;
   if (Array.isArray(messages) && messages.length > 0) {
     const lastMsg = messages[messages.length - 1];
     if (lastMsg) {
-      if (lastMsg.from === 'ai' || lastMsg.sender_type === 'bot') return 'Assistente IA';
+      if (lastMsg.from === 'ai' || lastMsg.sender_type === 'bot') return 'IA';
       if (lastMsg.from === 'agent' || lastMsg.sender_type === 'agent') {
-        return lastMsg.sent_by || item.owner || 'Atendente humano';
+        return lastMsg.sent_by || item.owner || 'Atendente';
       }
       if (lastMsg.from === 'system' || lastMsg.sender_type === 'system') return 'Sistema';
       if (lastMsg.from === 'contact' || lastMsg.sender_type === 'contact') return 'Cliente';
     }
   }
-  if (item.lastMessageSender) return item.lastMessageSender;
   return null;
 }
 
 function Dashboard({ conversations = [], dataSource, status, ready = true, onOpenConversation }) {
-  const [visibleCount, setVisibleCount] = useState(10);
+  const [isMobileRecentList, setIsMobileRecentList] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+  ));
+  const [visibleCount, setVisibleCount] = useState(() => (isMobileRecentList ? 5 : 10));
+  const recentConversationsListRef = useRef(null);
+  const recentConversationsSentinelRef = useRef(null);
 
   const sortedConversations = useMemo(() => {
     return sortConversationsByRecentActivity(conversations);
   }, [conversations]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)');
+    const syncRecentListMode = (event) => setIsMobileRecentList(event.matches);
+    mediaQuery.addEventListener('change', syncRecentListMode);
+    return () => mediaQuery.removeEventListener('change', syncRecentListMode);
+  }, []);
+
+  useEffect(() => {
+    setVisibleCount(isMobileRecentList ? 5 : 10);
+  }, [conversations, isMobileRecentList]);
+
+  useEffect(() => {
+    const sentinel = recentConversationsSentinelRef.current;
+    const list = recentConversationsListRef.current;
+    if (!ready || !isMobileRecentList || visibleCount >= sortedConversations.length || !sentinel || !list) return undefined;
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return;
+      setVisibleCount((current) => Math.min(current + 5, sortedConversations.length));
+      observer.disconnect();
+    }, { root: list, rootMargin: '0px 0px 96px' });
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [isMobileRecentList, ready, sortedConversations.length, visibleCount]);
 
   const stats = useMemo(() => {
     const activeBot = conversations.filter((item) => item.status === 'ia_ativa').length;
@@ -917,15 +1175,17 @@ function Dashboard({ conversations = [], dataSource, status, ready = true, onOpe
           return (
             <article className={`metric-card metric-card-${stat.id}`} key={stat.id || stat.label}>
               <div className="metric-icon">
-                <Icon size={18} />
+                <Icon size={22} />
               </div>
-              <span className="metric-label">{stat.label}</span>
-              <div className="metric-value-wrap">
-                {ready ? (
-                  <strong className="metric-value">{stat.value}</strong>
-                ) : (
-                  <div className="metric-skeleton-value skeleton-block" />
-                )}
+              <div className="metric-info">
+                <span className="metric-label">{stat.label}</span>
+                <div className="metric-value-wrap">
+                  {ready ? (
+                    <strong className="metric-value">{stat.value}</strong>
+                  ) : (
+                    <div className="metric-skeleton-value skeleton-block" />
+                  )}
+                </div>
               </div>
             </article>
           );
@@ -951,7 +1211,7 @@ function Dashboard({ conversations = [], dataSource, status, ready = true, onOpe
               <span className="th-time">Horário</span>
               <span className="th-action">Ação</span>
             </div>
-            <div className="table-body" onScroll={handleTableScroll}>
+            <div className="table-body" ref={recentConversationsListRef} onScroll={isMobileRecentList ? undefined : handleTableScroll}>
               {!ready ? (
                 [1, 2, 3, 4, 5, 6, 7].map((i) => (
                   <div className="table-row table-row-skeleton" key={i}>
@@ -986,9 +1246,7 @@ function Dashboard({ conversations = [], dataSource, status, ready = true, onOpe
                       <div className="table-row" key={item.id}>
                         <div className="table-contact-cell">
                           <div className="conversation-avatar-wrapper compact">
-                            <div className="conversation-avatar">
-                              {getInitials(item.contact)}
-                            </div>
+                            <ContactAvatar name={item.contact} avatarUrl={item.avatarUrl} />
                           </div>
                           <div className="table-contact-info">
                             <strong className="contact-name">{item.contact}</strong>
@@ -1038,6 +1296,9 @@ function Dashboard({ conversations = [], dataSource, status, ready = true, onOpe
                       </div>
                     );
                   })}
+                  {isMobileRecentList && displayedConversations.length < sortedConversations.length && (
+                    <div className="dashboard-recent-conversations-sentinel" ref={recentConversationsSentinelRef} aria-hidden="true" />
+                  )}
                   {!sortedConversations.length && (
                     <EmptyState
                       title="Nenhuma conversa real ainda"
@@ -1080,10 +1341,23 @@ function getInitials(name) {
 
 function ContactAvatar({ name, avatarUrl, className = 'conversation-avatar' }) {
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [avatarUrl]);
+  const validUrl = normalizeAvatarUrl(avatarUrl);
 
-  if (avatarUrl && !failed) {
-    return <div className={`${className} has-image`}><img src={avatarUrl} alt="" onError={() => setFailed(true)} /></div>;
+  useEffect(() => {
+    setFailed(false);
+  }, [validUrl]);
+
+  if (validUrl && !failed) {
+    return (
+      <div className={`${className} has-image`}>
+        <img
+          src={validUrl}
+          alt={name ? `Foto de perfil de ${name}` : ''}
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      </div>
+    );
   }
   return <div className={className}>{getInitials(name)}</div>;
 }
@@ -1094,6 +1368,43 @@ function getChannelClass(channel) {
   if (type.includes('insta')) return 'channel-instagram';
   if (type.includes('telegram')) return 'channel-telegram';
   return 'channel-webchat';
+}
+
+function ContactAvatarBadge({ channel, presence = null }) {
+  const channelType = channel || 'whatsapp';
+  const channelClass = getChannelClass(channelType);
+  const channelLabel = String(channelType).toLowerCase().includes('telegram')
+    ? 'Telegram'
+    : String(channelType).toLowerCase().includes('insta')
+      ? 'Instagram'
+      : 'WhatsApp';
+
+  // Nota de integridade de dados:
+  // O Supabase e as APIs/webhooks de mensageria (ex: WhatsApp) não fornecem dados de presença
+  // de contatos (online/offline). O indicador visual atua como um pip discreto (6–8px) indicando
+  // o canal de atendimento de origem sem fingir que o contato está online.
+  // Caso futuramente seja conectada uma fonte de presença real, os estados 'online' e 'offline'
+  // já estão prontos estruturalmente.
+  const title = presence === 'online'
+    ? 'Contato online'
+    : presence === 'offline'
+      ? 'Contato offline'
+      : `Canal: ${channelLabel}`;
+
+  const presenceClass = presence === 'online'
+    ? 'presence-online'
+    : presence === 'offline'
+      ? 'presence-offline'
+      : 'presence-unknown';
+
+  return (
+    <span
+      className={`channel-avatar-badge ${channelClass} ${presenceClass}`}
+      title={title}
+      aria-label={title}
+      role="status"
+    />
+  );
 }
 
 function MediaAttachment({ media, onMediaLoad }) {
@@ -1150,13 +1461,35 @@ function Conversations({
   initialConversationId = null,
   onInitialConversationOpened,
   onNavigateSettings = null,
+  onConversationViewStateChange = null,
   ready = true,
+  kanbanColumns = [],
 }) {
-  const [selectedId, setSelectedId] = useState(conversations[0]?.id || null);
+  const [selectedId, setSelectedId] = useState(null);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(() => (
+    typeof window === 'undefined' || window.matchMedia('(min-width: 769px)').matches
+  ));
+  const [isDocumentVisible, setIsDocumentVisible] = useState(() => (
+    typeof document === 'undefined' || document.visibilityState === 'visible'
+  ));
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef(null);
+
+  const kanbanCardsByConversationKey = useMemo(() => {
+    const map = new Map();
+    if (!Array.isArray(kanbanColumns)) return map;
+    for (const column of kanbanColumns) {
+      for (const card of (column.cards || [])) {
+        if (card.canonicalKey && !map.has(card.canonicalKey)) map.set(card.canonicalKey, card);
+        if (card.normalizedExternalId && !map.has(card.normalizedExternalId)) map.set(card.normalizedExternalId, card);
+        if (card.externalConversationId && !map.has(card.externalConversationId)) map.set(card.externalConversationId, card);
+        if (card.id && !map.has(card.id)) map.set(card.id, card);
+      }
+    }
+    return map;
+  }, [kanbanColumns]);
 
   const isSearchExpanded = searchOpen || Boolean(query && query.trim() !== '');
 
@@ -1204,6 +1537,20 @@ function Conversations({
   const assignModalCloseBtnRef = useRef(null);
   const messagesEndRef = React.useRef(null);
   const messageStreamRef = React.useRef(null);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 769px)');
+    const syncViewport = () => setIsDesktopViewport(mediaQuery.matches);
+    const syncVisibility = () => setIsDocumentVisible(document.visibilityState === 'visible');
+    syncViewport();
+    syncVisibility();
+    mediaQuery.addEventListener?.('change', syncViewport);
+    document.addEventListener('visibilitychange', syncVisibility);
+    return () => {
+      mediaQuery.removeEventListener?.('change', syncViewport);
+      document.removeEventListener('visibilitychange', syncVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     if (showCloseModal) {
@@ -1301,6 +1648,7 @@ function Conversations({
         conversation.contact,
         conversation.company,
         conversation.lastMessage,
+        conversation.lastMessageSender,
         conversation.stage,
         ...(conversation.tags || []),
       ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
@@ -1323,33 +1671,54 @@ function Conversations({
   }, [conversations, filter, channelFilter, query]);
 
   const selected = useMemo(() => {
-    if (!filteredConversations.length) return null;
-    return filteredConversations.find((c) => c.id === selectedId) || filteredConversations[0];
-  }, [filteredConversations, selectedId]);
+    return conversations.find((conversation) => conversation.id === selectedId) || null;
+  }, [conversations, selectedId]);
 
-  const validOwnerAgent = useMemo(() => {
+  useEffect(() => {
+    if (!ready || !conversations.length) {
+      if (selectedId && !conversations.length) setSelectedId(null);
+      return;
+    }
+    if (!conversations.some((conversation) => conversation.id === selectedId)) {
+      setSelectedId(conversations[0].id);
+    }
+  }, [conversations, ready, selectedId]);
+
+  const selectedConversationIsVisible = Boolean(
+    selected
+    && ready
+    && isDocumentVisible
+    && (isDesktopViewport || mobileChatOpen),
+  );
+
+  useEffect(() => {
+    onConversationViewStateChange?.({
+      conversation: selected,
+      visible: selectedConversationIsVisible,
+    });
+    return () => onConversationViewStateChange?.({ conversation: null, visible: false });
+  }, [
+    onConversationViewStateChange,
+    selected?.id,
+    selected?.messages?.length,
+    selectedConversationIsVisible,
+  ]);
+
+  const matchingKanbanCard = useMemo(() => {
     if (!selected) return null;
-    if (!Array.isArray(agentsList) || agentsList.length === 0) return null;
+    return kanbanCardsByConversationKey.get(selected.canonicalKey)
+      || (selected.normalizedExternalId && kanbanCardsByConversationKey.get(selected.normalizedExternalId))
+      || (selected.externalConversationId && kanbanCardsByConversationKey.get(selected.externalConversationId))
+      || kanbanCardsByConversationKey.get(selected.id)
+      || null;
+  }, [selected, kanbanCardsByConversationKey]);
 
-    // 1. Try matching by stable ID if available
-    if (selected.ownerId) {
-      const matchById = agentsList.find((ag) => String(ag.id) === String(selected.ownerId));
-      if (matchById) return matchById;
-    }
-
-    // 2. If no ID match or no ownerId, check by exact name against tenant's agents
-    if (selected.owner && typeof selected.owner === 'string') {
-      const trimmedOwner = selected.owner.trim().toLowerCase();
-      // Never treat AI, system, or generic status as a human agent
-      if (['assistente ia', 'ia', 'sistema', 'atendimento humano', 'aguardando humano', 'finalizado'].includes(trimmedOwner)) {
-        return null;
-      }
-      const matchByName = agentsList.find((ag) => ag.name && ag.name.trim().toLowerCase() === trimmedOwner);
-      if (matchByName) return matchByName;
-    }
-
-    return null;
-  }, [selected?.owner, selected?.ownerId, agentsList]);
+  const headerOwner = useMemo(
+    () => resolveConversationHeaderOwner(selected, matchingKanbanCard, agentsList),
+    [selected, matchingKanbanCard, agentsList],
+  );
+  const validOwnerAgent = headerOwner.kind === 'agent' ? headerOwner : null;
+  const isAiOwner = headerOwner.kind === 'ai';
 
   const selectedCloseKey = JSON.stringify([tenantSlug, selected?.id]);
   const canEndSelected = canCloseConversation(selected, closedLocally[selectedCloseKey]);
@@ -1361,7 +1730,10 @@ function Conversations({
   useEffect(() => {
     if (!initialConversationId) return;
     const conversation = conversations.find((item) => (
-      item.id === initialConversationId || item.externalConversationId === initialConversationId
+      item.id === initialConversationId
+      || item.externalConversationId === initialConversationId
+      || item.canonicalKey === initialConversationId
+      || item.normalizedExternalId === initialConversationId
     ));
     if (!conversation) return;
     setQuery('');
@@ -1654,9 +2026,10 @@ function Conversations({
                 >
                   <div className="conversation-avatar-wrapper">
                     <ContactAvatar name={conversation.contact} avatarUrl={conversation.avatarUrl} />
-                    <span className={`channel-avatar-badge ${getChannelClass(conversation.channelType || conversation.channel)}`}>
-                      <ChannelIcon channel={conversation.channelType || conversation.channel} size={10} />
-                    </span>
+                    <ContactAvatarBadge
+                      channel={conversation.channelType || conversation.channel}
+                      presence={conversation.presence}
+                    />
                   </div>
 
                   <div className="conversation-item-main">
@@ -1665,7 +2038,17 @@ function Conversations({
                       <small className="timestamp">{conversation.lastAt}</small>
                     </div>
                     <div className="conversation-item-bottom">
-                      <span className="last-message">{formatConversationPreview(conversation.lastMessage)}</span>
+                      <span
+                        className="last-message"
+                        title={conversation.lastMessageSender
+                          ? `${conversation.lastMessageSender}: ${formatConversationPreview(conversation.lastMessage)}`
+                          : formatConversationPreview(conversation.lastMessage)}
+                      >
+                        {conversation.lastMessageSender && (
+                          <span className="last-message-sender">{conversation.lastMessageSender}: </span>
+                        )}
+                        <span className="last-message-text">{formatConversationPreview(conversation.lastMessage)}</span>
+                      </span>
                       {(conversation.unread || 0) > 0 && (
                         <span className="item-unread-badge" aria-label={`${conversation.unread} mensagens não lidas`}>
                           {conversation.unread}
@@ -1701,9 +2084,10 @@ function Conversations({
               </button>
               <div className="chat-header-avatar-wrap">
                 <ContactAvatar name={selected.contact} avatarUrl={selected.avatarUrl} />
-                <span className={`channel-avatar-badge ${getChannelClass(selected.channelType || selected.channel)}`}>
-                  <ChannelIcon channel={selected.channelType || selected.channel} size={10} />
-                </span>
+                <ContactAvatarBadge
+                  channel={selected.channelType || selected.channel}
+                  presence={selected.presence}
+                />
               </div>
               <div className="chat-header-main-info">
                 <div className="chat-header-name-row">
@@ -1711,10 +2095,14 @@ function Conversations({
                 </div>
                 <div className="chat-header-sub">
                   <span className="chat-header-stage-chip">{selected.stage}</span>
-                  <div className={`chat-header-owner-chip ${validOwnerAgent ? 'has-owner' : 'no-owner'}`}>
-                    <UserRound size={12} className="owner-chip-icon" />
+                  <div className={`chat-header-owner-chip ${validOwnerAgent ? 'has-owner' : isAiOwner ? 'is-ai' : 'no-owner'}`}>
+                    {isAiOwner ? (
+                      <Bot size={12} className="owner-chip-icon" />
+                    ) : (
+                      <UserRound size={12} className="owner-chip-icon" />
+                    )}
                     <span className="owner-chip-name">
-                      {validOwnerAgent ? validOwnerAgent.name : 'Sem responsável'}
+                      {validOwnerAgent ? validOwnerAgent.name : isAiOwner ? 'Assistente IA' : 'Sem responsável'}
                     </span>
                   </div>
                 </div>
@@ -1727,7 +2115,7 @@ function Conversations({
                 type="button"
                 onClick={handleOpenCloseModal}
                 disabled={ending || !canEndSelected}
-                title={canEndSelected ? 'Encerrar atendimento' : 'Disponível durante um atendimento da IA'}
+                title={canEndSelected ? 'Encerrar atendimento' : 'Atendimento já finalizado'}
                 aria-label="Encerrar atendimento"
               >
                 <CheckCircle2 size={16} />
@@ -1919,7 +2307,9 @@ function Conversations({
               ) : agentsList.length > 0 ? (
                 <div className="assign-agent-list">
                   {agentsList.map((agent) => {
-                    const isCurrent = selected.owner === agent.name;
+                    const isCurrent = (validOwnerAgent && String(validOwnerAgent.id) === String(agent.id))
+                      || (validOwnerAgent && validOwnerAgent.name === agent.name)
+                      || selected.owner === agent.name;
                     return (
                       <div
                         key={agent.id}
@@ -2108,6 +2498,238 @@ function useHorizontalMouseDragScroll(containerRef, { blockInteractiveTargets = 
   }, [containerRef, blockInteractiveTargets]);
 }
 
+function useKanbanDragAutoScroll(containerRef, isDragging, onColumnHover) {
+  const scrollStateRef = useRef({
+    frameId: null,
+    speed: 0,
+    originalScrollBehavior: '',
+    lastCoords: null,
+    lastHoveredColId: null,
+  });
+
+  useEffect(() => {
+    if (!isDragging) return undefined;
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    const state = scrollStateRef.current;
+    const EDGE_ZONE = 110;
+    const MIN_SPEED = 2.5;
+    const MAX_SPEED = 18;
+
+    const stopLoop = () => {
+      state.speed = 0;
+      if (state.frameId !== null) {
+        window.cancelAnimationFrame(state.frameId);
+        state.frameId = null;
+      }
+      if (state.originalScrollBehavior) {
+        container.style.scrollBehavior = state.originalScrollBehavior;
+        state.originalScrollBehavior = '';
+      }
+    };
+
+    const scrollStep = () => {
+      const currentContainer = containerRef.current;
+      if (!currentContainer || state.speed === 0) {
+        state.frameId = null;
+        return;
+      }
+
+      const maxScroll = Math.max(0, currentContainer.scrollWidth - currentContainer.clientWidth);
+      const currentScroll = currentContainer.scrollLeft;
+      const speed = state.speed;
+
+      let didScroll = false;
+      if (speed > 0 && currentScroll < maxScroll) {
+        currentContainer.scrollLeft = Math.min(maxScroll, currentScroll + speed);
+        didScroll = true;
+      } else if (speed < 0 && currentScroll > 0) {
+        currentContainer.scrollLeft = Math.max(0, currentScroll + speed);
+        didScroll = true;
+      }
+
+      // Se moveu o scroll e temos coordenadas do cursor, atualiza a coluna sob o cursor
+      if (didScroll && state.lastCoords && typeof onColumnHover === 'function') {
+        const el = document.elementFromPoint(state.lastCoords.x, state.lastCoords.y);
+        const colEl = el?.closest?.('.kanban-column');
+        if (colEl) {
+          const colId = colEl.getAttribute('data-column-id');
+          if (colId && colId !== state.lastHoveredColId) {
+            state.lastHoveredColId = colId;
+            onColumnHover(colId);
+          }
+        } else if (state.lastHoveredColId !== null) {
+          state.lastHoveredColId = null;
+          onColumnHover(null);
+        }
+      }
+
+      if (didScroll) {
+        state.frameId = window.requestAnimationFrame(scrollStep);
+      } else {
+        state.frameId = null;
+      }
+    };
+
+    const startLoop = () => {
+      if (state.frameId === null) {
+        if (!state.originalScrollBehavior) {
+          state.originalScrollBehavior = container.style.scrollBehavior;
+        }
+        container.style.scrollBehavior = 'auto';
+        state.frameId = window.requestAnimationFrame(scrollStep);
+      }
+    };
+
+    const handleWindowDragOver = (event) => {
+      const currentContainer = containerRef.current;
+      if (!currentContainer) return;
+
+      const rect = currentContainer.getBoundingClientRect();
+      const x = event.clientX;
+      const y = event.clientY;
+      state.lastCoords = { x, y };
+
+      // Se o cursor estiver fora dos limites verticais do Kanban (+/- 60px de tolerância), para o auto-scroll
+      if (y < rect.top - 60 || y > rect.bottom + 60) {
+        stopLoop();
+        return;
+      }
+
+      // Zona de auto-scroll à esquerda
+      if (x < rect.left + EDGE_ZONE && x >= rect.left - 50) {
+        const dist = Math.max(0, x - rect.left);
+        const ratio = 1 - Math.min(1, dist / EDGE_ZONE);
+        const eased = ratio * ratio;
+        state.speed = -(MIN_SPEED + (MAX_SPEED - MIN_SPEED) * eased);
+        startLoop();
+      }
+      // Zona de auto-scroll à direita
+      else if (x > rect.right - EDGE_ZONE && x <= rect.right + 50) {
+        const dist = Math.max(0, rect.right - x);
+        const ratio = 1 - Math.min(1, dist / EDGE_ZONE);
+        const eased = ratio * ratio;
+        state.speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * eased;
+        startLoop();
+      }
+      // Fora das zonas de borda
+      else {
+        stopLoop();
+      }
+    };
+
+    const handleDragEndOrDrop = () => {
+      stopLoop();
+      state.lastCoords = null;
+      state.lastHoveredColId = null;
+    };
+
+    window.addEventListener('dragover', handleWindowDragOver, { passive: true });
+    window.addEventListener('dragend', handleDragEndOrDrop);
+    window.addEventListener('drop', handleDragEndOrDrop);
+
+    return () => {
+      stopLoop();
+      state.lastCoords = null;
+      state.lastHoveredColId = null;
+      window.removeEventListener('dragover', handleWindowDragOver);
+      window.removeEventListener('dragend', handleDragEndOrDrop);
+      window.removeEventListener('drop', handleDragEndOrDrop);
+    };
+  }, [containerRef, isDragging, onColumnHover]);
+}
+
+function useKanbanWheelScroll(containerRef) {
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    let lastVerticalScrollTime = 0;
+    let restoreTimer = null;
+
+    const handleWheel = (event) => {
+      if (event.defaultPrevented) return;
+
+      // Se o scroll horizontal nativo for predominante (ex: trackpad com gesto horizontal), deixa o navegador agir
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        return;
+      }
+
+      // Analisa a hierarquia para verificar se o cursor está sobre uma lista vertical de cards
+      const target = event.target;
+      const cardsContainer = target?.closest?.('.column-cards-container');
+
+      if (cardsContainer) {
+        const scrollableDistance = cardsContainer.scrollHeight - cardsContainer.clientHeight;
+        const hasVerticalScroll = scrollableDistance > 3;
+
+        // Se a coluna possui scroll vertical e o usuário não estiver segurando Shift (padrão para forçar horizontal)
+        if (hasVerticalScroll && !event.shiftKey) {
+          const isScrollingDown = event.deltaY > 0;
+          const isScrollingUp = event.deltaY < 0;
+          const isAtBottom = cardsContainer.scrollTop + cardsContainer.clientHeight >= cardsContainer.scrollHeight - 3;
+          const isAtTop = cardsContainer.scrollTop <= 3;
+
+          // Se há espaço para rolar verticalmente na direção do wheel, preserva o scroll vertical dos cards
+          if ((isScrollingDown && !isAtBottom) || (isScrollingUp && !isAtTop)) {
+            lastVerticalScrollTime = Date.now();
+            return;
+          }
+
+          // Se acabou de rolar verticalmente (nos últimos 180ms), amortece o final da rolagem
+          // para não disparar um salto horizontal repentino no mesmo gesto contínuo
+          if (Date.now() - lastVerticalScrollTime < 180) {
+            return;
+          }
+        }
+      }
+
+      // Normalização do delta proporcional ao deltaMode
+      let delta = event.deltaY;
+      if (event.deltaMode === 1) {
+        // DOM_DELTA_LINE (típico de roda de mouse no Windows)
+        delta *= 30;
+      } else if (event.deltaMode === 2) {
+        // DOM_DELTA_PAGE
+        delta *= container.clientWidth * 0.8;
+      }
+
+      // Limita a velocidade por tick para evitar saltos bruscos
+      const clampedDelta = Math.max(-160, Math.min(160, delta));
+      if (clampedDelta === 0) return;
+
+      const maxScroll = Math.max(0, container.scrollWidth - container.clientWidth);
+      if (maxScroll <= 0) return;
+
+      const currentScroll = container.scrollLeft;
+      const targetScroll = Math.max(0, Math.min(maxScroll, currentScroll + clampedDelta));
+
+      // Impede o scroll vertical da página principal (body)
+      event.preventDefault();
+
+      if (targetScroll !== currentScroll) {
+        if (container.style.scrollBehavior !== 'auto') {
+          container.style.scrollBehavior = 'auto';
+        }
+        container.scrollLeft = targetScroll;
+
+        window.clearTimeout(restoreTimer);
+        restoreTimer = window.setTimeout(() => {
+          if (container) container.style.scrollBehavior = '';
+        }, 150);
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      window.clearTimeout(restoreTimer);
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [containerRef]);
+}
+
 function displayContactPhone(contact) {
   const raw = String(contact.phone || contact.external_conversation_id || contact.externalConversationId || '').trim();
   if (!raw) return 'Telefone não informado';
@@ -2157,6 +2779,8 @@ function Kanban({
   const pendingChannelFilterRef = useRef(null);
 
   useHorizontalMouseDragScroll(boardRef, { blockInteractiveTargets: true });
+  useKanbanDragAutoScroll(boardRef, Boolean(draggingCardId), setDragOverColumnId);
+  useKanbanWheelScroll(boardRef);
 
   useEffect(() => () => {
     const timers = channelTransitionTimersRef.current;
@@ -2209,9 +2833,10 @@ function Kanban({
 
   const schedulingUrl = getTenantSchedulingLink(tenantSlug);
 
-  const orderedColumns = useMemo(() => (kanbanColumns || []).slice().sort(
-    (left, right) => Number(left.position || 0) - Number(right.position || 0),
-  ), [kanbanColumns]);
+  const orderedColumns = useMemo(
+    () => orderKanbanColumnsForTenant(kanbanColumns || [], tenantSlug),
+    [kanbanColumns, tenantSlug],
+  );
 
   async function handleSuggestKanbanFlow() {
     const boardId = orderedColumns[0]?.boardId;
@@ -2315,6 +2940,16 @@ function Kanban({
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase();
 
+    const navigationLabel = column.navigationLabel || '';
+    if (/sales_closed/.test(key)) return { tone: 'green', shortLabel: navigationLabel || 'Negócio fechado', description: 'Venda efetivamente concluída.', Icon: CheckCircle2 };
+    if (/sales_after_sales/.test(key)) return { tone: 'blue', shortLabel: navigationLabel || 'Pós-venda', description: 'Atendimentos de manutenção e pós-venda.', Icon: Wrench };
+    if (/sales_appraisal/.test(key)) return { tone: 'amber', shortLabel: navigationLabel || 'Avaliação de retoma', description: 'Avaliação de veículo para retoma.', Icon: CarFront };
+    if (/sales_financing/.test(key)) return { tone: 'violet', shortLabel: navigationLabel || 'Financiamento', description: 'Fila operacional de financiamento.', Icon: CircleDollarSign };
+    if (/sales_hot/.test(key)) return { tone: 'amber', shortLabel: navigationLabel || 'Leads quentes', description: 'Leads de compra com prioridade comercial.', Icon: Flame };
+    if (/sales_human/.test(key)) return { tone: 'violet', shortLabel: navigationLabel || 'Atendimento humano', description: 'Atendimento assumido pela equipe.', Icon: UserRound };
+    if (/sales_qualifying/.test(key)) return { tone: 'cyan', shortLabel: navigationLabel || 'Qualificação IA', description: 'IA coletando informações comerciais.', Icon: Bot };
+    if (/sales_new/.test(key)) return { tone: 'blue', shortLabel: navigationLabel || 'Novos contatos', description: 'Novos contatos aguardando qualificação.', Icon: MessageCircle };
+
     if (/finalizada/.test(key)) {
       return { tone: 'green', shortLabel: 'Finalizadas', description: 'Atendimentos concluídos.', Icon: CheckCircle2 };
     }
@@ -2372,6 +3007,36 @@ function Kanban({
       setActiveColumnId(filteredColumns[0]?.id || '');
     }
   }, [activeColumnId, filteredColumns]);
+
+  useEffect(() => {
+    const board = boardRef.current;
+    if (!board || !filteredColumns.length) return undefined;
+
+    const updateActiveColumn = () => {
+      const boardBounds = board.getBoundingClientRect();
+      let mostVisibleColumnId = filteredColumns[0]?.id || '';
+      let largestVisibleWidth = -1;
+      for (const column of filteredColumns) {
+        const element = columnRefs.current.get(column.id);
+        if (!element) continue;
+        const bounds = element.getBoundingClientRect();
+        const visibleWidth = Math.max(0, Math.min(bounds.right, boardBounds.right) - Math.max(bounds.left, boardBounds.left));
+        if (visibleWidth > largestVisibleWidth) {
+          largestVisibleWidth = visibleWidth;
+          mostVisibleColumnId = column.id;
+        }
+      }
+      setActiveColumnId((current) => current === mostVisibleColumnId ? current : mostVisibleColumnId);
+    };
+
+    updateActiveColumn();
+    board.addEventListener('scroll', updateActiveColumn, { passive: true });
+    window.addEventListener('resize', updateActiveColumn);
+    return () => {
+      board.removeEventListener('scroll', updateActiveColumn);
+      window.removeEventListener('resize', updateActiveColumn);
+    };
+  }, [filteredColumns]);
 
   function scrollToColumn(columnId) {
     const board = boardRef.current;
@@ -2436,7 +3101,7 @@ function Kanban({
       if (!data?.card) return;
       if (data.sourceColumnId === targetColumn.id) return;
       if (onMoveCard) {
-        onMoveCard(data.card, targetColumn.automationKey || targetColumn.id);
+        onMoveCard(data.card, targetColumn.automationKey || targetColumn.id, targetColumn);
       }
     } catch (err) {
       console.warn('Erro ao processar drop no Kanban:', err);
@@ -2568,7 +3233,28 @@ function Kanban({
         </div>
       </div>
 
-      <div className="kanban-board kanban-scroll-drag-surface" ref={boardRef}>
+      <div
+        className="kanban-board kanban-scroll-drag-surface"
+        ref={boardRef}
+        onDragOver={(e) => {
+          if (draggingCardId) {
+            e.preventDefault();
+          }
+        }}
+        onDrop={(e) => {
+          if (!draggingCardId) return;
+          e.preventDefault();
+          const el = document.elementFromPoint(e.clientX, e.clientY);
+          const colEl = el?.closest?.('.kanban-column');
+          const colId = colEl?.getAttribute('data-column-id');
+          const targetCol = filteredColumns.find((c) => String(c.id) === String(colId));
+          if (targetCol) {
+            handleDrop(e, targetCol);
+          } else {
+            handleDragEnd();
+          }
+        }}
+      >
         {filteredColumns.map((column) => {
           const isWaitingColumn = column.automationKey === 'aguardando_humano' || column.id === 'aguardando_humano';
           const isFinishedColumn = column.automationKey === 'finalizadas' || column.id === 'finalizadas';
@@ -2580,6 +3266,7 @@ function Kanban({
             <div
               className={`kanban-column kanban-column--${presentation.tone} ${isDragOver ? 'is-dragover' : ''}`}
               key={column.id}
+              data-column-id={column.id}
               ref={(node) => {
                 if (node) columnRefs.current.set(column.id, node);
                 else columnRefs.current.delete(column.id);
@@ -2628,6 +3315,8 @@ function Kanban({
                           draggable={true}
                           onDragStart={(e) => handleDragStart(e, card, column)}
                           onDragEnd={handleDragEnd}
+                          onDragOver={(e) => handleDragOver(e, column)}
+                          onDrop={(e) => handleDrop(e, column)}
                         >
                           <div className="kanban-card-header">
                             <div className="contact-title-line">
@@ -2639,7 +3328,7 @@ function Kanban({
                             <small className="card-time">{card.lastAt}</small>
                           </div>
 
-                          <p className="card-subtitle">{formatConversationPreview(card.subtitle)}</p>
+                          <p className="card-subtitle" title={card.subtitle || ''}>{formatConversationPreview(card.subtitle)}</p>
 
                           {isWaitingColumn && (
                             <div className="waiting-sla-badge">
@@ -2713,10 +3402,14 @@ function Kanban({
                             </button>
                           )}
 
-                          <div className="kanban-card-footer">
+                          <div className="kanban-card-owner">
                             <div className="card-owner-info">
-                              <UserRound size={12} />
-                              <span>{card.owner}</span>
+                              {card.ownerKind === 'ai' || card.owner === 'Assistente IA' ? (
+                                <Bot size={12} />
+                              ) : (
+                                <UserRound size={12} />
+                              )}
+                              <span>{card.owner || 'Sem responsável'}</span>
                             </div>
                           </div>
 
@@ -4276,6 +4969,11 @@ function LoginPage() {
           {/* Top Accent Line Sutil com Pulso Móvel Mobile */}
           <div className="auth-card-top-accent" aria-hidden="true">
             <div className="auth-card-top-pulse" />
+          </div>
+
+          <div className="auth-mobile-brand">
+            <img src={noriaLogo} alt="NORIA" className="auth-mobile-logo-img" />
+            <span className="auth-mobile-tagline">INTELIGÊNCIA EM MOVIMENTO</span>
           </div>
 
           <h1 className="auth-title">Bem-vindo</h1>
