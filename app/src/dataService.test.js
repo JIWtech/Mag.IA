@@ -46,6 +46,7 @@ function event(overrides = {}) {
     external_conversation_id: 'chat-1',
     contact_name: 'Cliente',
     direction: 'inbound',
+    sender_type: 'contact',
     stage: 'Qualificacao',
     created_at: '2026-09-28T10:00:00.000Z',
     raw_payload: {},
@@ -2573,4 +2574,161 @@ test('sales control: resume_ai clears old Carlos assignment before a later unass
   const { card } = materializeSalesControl(history.reverse(), genesisLead('sales_human', { ai_locked: true }));
   assert.equal(card.owner, 'Wesley');
   assert.equal(card.ownerId, 'agent-w');
+});
+
+test('contact identity only trusts inbound contact events across conversations, Kanban, and realtime', () => {
+  const inbound = event({
+    id: 'identity-inbound',
+    external_conversation_id: 'identity-chat',
+    contact_handle: '5511999999999',
+    contact_name: 'João da Silva',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: 'Olá',
+    created_at: '2026-10-02T10:00:00.000Z',
+  });
+  const manualReply = event({
+    id: 'identity-manual',
+    external_conversation_id: 'identity-chat',
+    contact_handle: '5511999999999',
+    contact_name: 'Gênesis automóveis',
+    direction: 'outbound',
+    sender_type: 'agent',
+    service: 'manual_reply',
+    sent_by_user: 'Wesley',
+    message_text: 'Como posso ajudar?',
+    created_at: '2026-10-02T10:01:00.000Z',
+  });
+  const aiReply = event({
+    id: 'identity-ai',
+    external_conversation_id: 'identity-chat',
+    contact_handle: '5511999999999',
+    contact_name: 'Outro nome inválido',
+    direction: 'outbound',
+    sender_type: 'assistant',
+    ai_provider: 'gemini',
+    message_text: 'Resposta da IA',
+    created_at: '2026-10-02T10:02:00.000Z',
+  });
+
+  const [conversation] = eventsToConversations([inbound, manualReply, aiReply]);
+  const [card] = cardsFor(eventsToKanban([inbound, manualReply, aiReply]), 'identity-chat');
+  assert.equal(conversation.contact, 'João da Silva');
+  assert.equal(card.title, 'João da Silva');
+  assert.equal(conversation.messages.at(-1).from, 'ai');
+
+  const [outboundOnly] = eventsToConversations([manualReply]);
+  const [outboundOnlyCard] = cardsFor(eventsToKanban([manualReply]), 'identity-chat');
+  assert.equal(outboundOnly.contact, '5511999999999');
+  assert.equal(outboundOnlyCard.title, '5511999999999');
+
+  const [realInboundGenesis] = eventsToConversations([
+    { ...inbound, contact_name: 'Gênesis automóveis' },
+  ]);
+  assert.equal(realInboundGenesis.contact, 'Gênesis automóveis');
+
+  const realtime = applyIncomingEventToConversations(
+    eventsToConversations([inbound]),
+    manualReply,
+  );
+  assert.equal(realtime[0].contact, 'João da Silva');
+  assert.equal(realtime[0].messages.at(-1).from, 'agent');
+});
+
+test('contact identity requires a useful trusted name and keeps Conversations and Kanban consistent', () => {
+  const phone = '5521985198468';
+  for (const invalidName of ['', '..', '...', '🌙', '🐝🐝', phone]) {
+    const inbound = event({
+      id: `identity-invalid-${invalidName || 'empty'}`,
+      external_conversation_id: `identity-invalid-${invalidName || 'empty'}`,
+      contact_handle: phone,
+      contact_name: invalidName,
+      direction: 'inbound',
+      sender_type: 'contact',
+    });
+    const [conversation] = eventsToConversations([inbound]);
+    const [card] = cardsFor(eventsToKanban([inbound]), inbound.external_conversation_id);
+    assert.equal(conversation.contact, phone, invalidName || 'empty');
+    assert.equal(card.title, phone, invalidName || 'empty');
+  }
+
+  for (const validName of ['🚛 CD Tids', 'Oficina_j3a', 'Gênesis automóveis']) {
+    const inbound = event({
+      id: `identity-valid-${validName}`,
+      external_conversation_id: `identity-valid-${validName}`,
+      contact_handle: phone,
+      contact_name: validName,
+      direction: 'inbound',
+      sender_type: 'contact',
+    });
+    const [conversation] = eventsToConversations([inbound]);
+    const [card] = cardsFor(eventsToKanban([inbound]), inbound.external_conversation_id);
+    assert.equal(conversation.contact, validName);
+    assert.equal(card.title, validName);
+  }
+
+  const namedInbound = event({
+    id: 'identity-useful-old',
+    external_conversation_id: 'identity-useful-chat',
+    contact_handle: phone,
+    contact_name: 'Márcio veja meus status',
+    direction: 'inbound',
+    sender_type: 'contact',
+    created_at: '2026-10-02T10:00:00.000Z',
+  });
+  const emojiInbound = event({
+    id: 'identity-emoji-new',
+    external_conversation_id: 'identity-useful-chat',
+    contact_handle: phone,
+    contact_name: '🌙',
+    direction: 'inbound',
+    sender_type: 'contact',
+    created_at: '2026-10-02T10:01:00.000Z',
+  });
+  const [conversation] = eventsToConversations([namedInbound, emojiInbound]);
+  const [card] = cardsFor(eventsToKanban([namedInbound, emojiInbound]), 'identity-useful-chat');
+  assert.equal(conversation.contact, 'Márcio veja meus status');
+  assert.equal(card.title, 'Márcio veja meus status');
+
+  const realtime = applyIncomingEventToConversations(
+    eventsToConversations([namedInbound]),
+    { ...emojiInbound, contact_name: '...' },
+  );
+  assert.equal(realtime[0].contact, 'Márcio veja meus status');
+});
+
+test('contact display fallback derives WhatsApp phone from external_conversation_id when handle is absent', () => {
+  const cases = [
+    { contact_name: '..', external_conversation_id: '5521959261839@s.whatsapp.net', expected: '5521959261839' },
+    { contact_name: '🌙', external_conversation_id: '5521985198468@s.whatsapp.net', expected: '5521985198468' },
+    { contact_name: '5521985198468', external_conversation_id: '5521985198468@s.whatsapp.net', expected: '5521985198468' },
+  ];
+
+  for (const item of cases) {
+    const inbound = event({
+      id: `identity-jid-${item.contact_name}`,
+      external_conversation_id: item.external_conversation_id,
+      contact_handle: null,
+      contact_name: item.contact_name,
+      direction: 'inbound',
+      sender_type: 'contact',
+    });
+    const [conversation] = eventsToConversations([inbound]);
+    const [card] = cardsFor(eventsToKanban([inbound]), item.external_conversation_id);
+    assert.equal(conversation.contact, item.expected);
+    assert.equal(card.title, item.expected);
+  }
+
+  const missingIdentifier = event({
+    id: 'identity-missing-identifier',
+    external_conversation_id: '',
+    contact_handle: null,
+    contact_name: '...',
+    direction: 'inbound',
+    sender_type: 'contact',
+  });
+  const [conversation] = eventsToConversations([missingIdentifier]);
+  const [card] = cardsFor(eventsToKanban([missingIdentifier]), '');
+  assert.equal(conversation.contact, 'Contato WhatsApp');
+  assert.equal(card.title, 'Contato WhatsApp');
 });

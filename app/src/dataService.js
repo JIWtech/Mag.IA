@@ -4,16 +4,39 @@ import { loadUserTenants, enabledChannels } from './tenantAccess.js';
 import { prepareConversationEvents } from './conversationEvents.js';
 import { applyConversationLifecycle } from './conversationLifecycle.js';
 import { isEligibleForExternalOutbound, isInternalOperationalEvent } from './eventClassification.js';
+import { TECHNICAL_MEDIA_LABELS, REAL_MEDIA_KINDS } from './audioUtils.js';
 
 const runtimeEnv = (typeof import.meta !== 'undefined' && import.meta.env) || {};
 const supabaseUrl = runtimeEnv.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = runtimeEnv.VITE_SUPABASE_ANON_KEY || '';
 const defaultTenantSlug = runtimeEnv.VITE_TENANT_SLUG || 'jiw';
 const tenantStorageKey = 'magia:selected-tenant-slug';
+export const SIGNED_URL_EXPIRES_IN = 86400;
 const mediaObjectUrlCache = new Map();
+
+export function clearMediaUrlCache() {
+  mediaObjectUrlCache.clear();
+}
+
+export function getMediaUrlFromCache(key) {
+  const cached = mediaObjectUrlCache.get(key);
+  if (!cached) return null;
+  return typeof cached === 'string' ? cached : cached.url;
+}
 
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
+    if (typeof FileReader === 'undefined') {
+      if (typeof blob?.arrayBuffer === 'function') {
+        blob.arrayBuffer().then((buf) => {
+          const base64 = Buffer.from(buf).toString('base64');
+          resolve(`data:${blob.type || 'image/jpeg'};base64,${base64}`);
+        }).catch(reject);
+        return;
+      }
+      resolve(`data:${blob?.type || 'image/jpeg'};base64,mockdata`);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
     reader.onerror = () => reject(reader.error || new Error('Não foi possível ler a imagem.'));
@@ -606,7 +629,7 @@ function asObject(value) {
   }
 }
 
-async function enrichMediaUrls(events, supabase) {
+export async function enrichMediaUrls(events, supabase) {
   const targets = new Map();
 
   for (const event of events) {
@@ -620,40 +643,71 @@ async function enrichMediaUrls(events, supabase) {
 
   const mediaUrls = new Map();
   await Promise.all([...targets.entries()].map(async ([key, media]) => {
-    const cachedUrl = mediaObjectUrlCache.get(key);
+    const cached = mediaObjectUrlCache.get(key);
+    const cachedUrl = typeof cached === 'string'
+      ? cached
+      : (cached && cached.expiresAt > Date.now() ? cached.url : null);
     if (cachedUrl) {
       mediaUrls.set(key, cachedUrl);
       return;
     }
-    const { data, error } = await supabase.storage
-      .from(media.bucket)
-      .download(media.storagePath);
-    if (error) {
-      console.warn('Media download fallback:', error.message);
-      return;
+
+    if (!supabase?.storage?.from) return;
+    const storageBucket = supabase.storage.from(media.bucket);
+
+    let resolvedUrl = '';
+
+    // 1. Preferir createSignedUrl diretamente do Storage (sem baixar Blob nem usar FileReader)
+    // Seguro para bucket privado e diretamente utilizável por <img>, <audio>, <video>
+    if (media.encoding !== 'base64' && typeof storageBucket?.createSignedUrl === 'function') {
+      try {
+        const { data: signedData, error: signedError } = await storageBucket.createSignedUrl(
+          media.storagePath,
+          SIGNED_URL_EXPIRES_IN
+        );
+        if (!signedError && signedData?.signedUrl) {
+          resolvedUrl = signedData.signedUrl;
+        }
+      } catch (err) {
+        console.warn('createSignedUrl error:', err?.message || err);
+      }
     }
-    if (data?.size) {
-      let url = '';
-      if (media.encoding === 'base64') {
-        const base64 = (await data.text()).trim();
-        if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
-          console.warn('Media download fallback: conteúdo Base64 inválido.');
+
+    // 2. Fallback de download se createSignedUrl não estiver disponível ou falhar
+    if (!resolvedUrl && typeof storageBucket?.download === 'function') {
+      try {
+        const { data, error } = await storageBucket.download(media.storagePath);
+        if (error) {
+          console.warn('Media download fallback:', error.message);
           return;
         }
-        url = `data:${media.mimeType || 'application/octet-stream'};base64,${base64}`;
-      } else {
-        if (media.kind === 'image' && !String(data.type || '').startsWith('image/')) {
-          console.warn('Media download fallback: arquivo não é uma imagem válida.', data.type || 'tipo ausente');
-          return;
+        if (data?.size) {
+          if (media.encoding === 'base64') {
+            const base64 = (await data.text()).trim();
+            if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+              console.warn('Media download fallback: conteúdo Base64 inválido.');
+              return;
+            }
+            resolvedUrl = `data:${media.mimeType || 'application/octet-stream'};base64,${base64}`;
+          } else {
+            if (media.kind === 'image' && data.type && !String(data.type).startsWith('image/')) {
+              console.warn('Media download fallback: arquivo não é uma imagem válida.', data.type || 'tipo ausente');
+              return;
+            }
+            resolvedUrl = media.kind === 'image'
+              ? await blobToDataUrl(data)
+              : (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(data) : '');
+          }
         }
-        url = media.kind === 'image'
-          ? await blobToDataUrl(data)
-          : URL.createObjectURL(data);
+      } catch (err) {
+        console.warn('Media download fallback error:', err?.message || err);
       }
-      if (url) {
-      mediaObjectUrlCache.set(key, url);
-      mediaUrls.set(key, url);
-      }
+    }
+
+    if (resolvedUrl) {
+      const expiresAt = Date.now() + (SIGNED_URL_EXPIRES_IN - 300) * 1000;
+      mediaObjectUrlCache.set(key, { url: resolvedUrl, expiresAt });
+      mediaUrls.set(key, resolvedUrl);
     }
   }));
 
@@ -662,16 +716,136 @@ async function enrichMediaUrls(events, supabase) {
     const media = asObject(payload.media);
     const url = mediaUrls.get(`${media.bucket}:${media.storagePath}`);
     if (!url) return event;
-    return { ...event, raw_payload: { ...payload, media: { ...media, url } } };
+    const updatedPayload = {
+      ...payload,
+      media: { ...media, url },
+      ...(payload.magia_operator ? {
+        magia_operator: {
+          ...payload.magia_operator,
+          media: {
+            ...asObject(payload.magia_operator.media),
+            url,
+          },
+        },
+      } : {}),
+    };
+    return { ...event, raw_payload: updatedPayload };
   });
 }
 
-function normalizeMedia(rawPayload) {
+export function hasStoredMediaNeedingUrl(event) {
+  if (!event) return false;
+  const payload = asObject(event.raw_payload);
+  const media = asObject(payload.media);
+  const kind = String(media.kind || media.category || '').toLowerCase();
+  if (kind === 'text' || kind === 'conversation') return false;
+  if (!REAL_MEDIA_KINDS.has(kind)) return false;
+  return media.status === 'stored' && Boolean(media.bucket) && Boolean(media.storagePath) && !media.url;
+}
+
+export async function enrichSingleMediaEvent(event, client) {
+  if (!event || !hasStoredMediaNeedingUrl(event)) return event;
+  const supabase = client || getClient();
+  if (!supabase) return event;
+  const [enriched] = await enrichMediaUrls([event], supabase);
+  return enriched || event;
+}
+
+const locationDetailsCache = new Map();
+
+export function normalizeLocation(rawPayload, event = null) {
   const payload = asObject(rawPayload);
+  const ev = asObject(event);
+
+  const loc = payload.locationMessage
+    || payload.data?.message?.locationMessage
+    || payload.message?.locationMessage
+    || payload.data?.locationMessage
+    || payload.location
+    || payload.magia_normalized?.location
+    || ev.location
+    || (payload.degreesLatitude !== undefined && payload.degreesLongitude !== undefined ? payload : null)
+    || (payload.latitude !== undefined && payload.longitude !== undefined ? payload : null)
+    || (ev.latitude !== undefined && ev.longitude !== undefined ? ev : null);
+
+  let lat = loc?.degreesLatitude ?? loc?.latitude ?? ev.latitude ?? null;
+  let lng = loc?.degreesLongitude ?? loc?.longitude ?? ev.longitude ?? null;
+  let name = String(loc?.name || ev.location_name || ev.name || '').trim();
+  let address = String(loc?.address || ev.location_address || ev.address || '').trim();
+
+  const validLat = lat != null && !Number.isNaN(Number(lat)) ? Number(lat) : null;
+  const validLng = lng != null && !Number.isNaN(Number(lng)) ? Number(lng) : null;
+
+  if (validLat != null && validLng != null) {
+    const cacheKey = `${validLat.toFixed(5)},${validLng.toFixed(5)}`;
+    if (name || address) {
+      locationDetailsCache.set(cacheKey, { name, address });
+    } else if (locationDetailsCache.has(cacheKey)) {
+      const cached = locationDetailsCache.get(cacheKey);
+      if (cached.name) name = cached.name;
+      if (cached.address) address = cached.address;
+    }
+  }
+
+  const trimmedText = String(ev.message_text || payload.message_text || '').trim().toLowerCase();
+  const isLocationText = trimmedText === '[location]'
+    || trimmedText === 'location'
+    || trimmedText === '[localização]'
+    || trimmedText === '[localizacao]';
+
+  const isLocationMsg = String(payload.messageType || payload.data?.messageType || ev.message_type || ev.service || '').toLowerCase().includes('location')
+    || isLocationText
+    || Boolean(loc);
+
+  if (!isLocationMsg && validLat == null && validLng == null && !name && !address) {
+    return null;
+  }
+
+  const mapsUrl = loc?.url || (validLat != null && validLng != null
+    ? `https://www.google.com/maps?q=${validLat},${validLng}`
+    : '');
+
+  return {
+    latitude: validLat,
+    longitude: validLng,
+    name,
+    address,
+    url: mapsUrl,
+    isResolving: Boolean(!name && !address && validLat == null && validLng == null),
+  };
+}
+
+export function normalizeMedia(rawPayload) {
+  const payload = asObject(rawPayload);
+
+  // 1. Rejeição explícita de mensagens de texto puro (evita falso-positivo de "Anexo recebido")
+  const messageType = String(payload.messageType || payload.data?.messageType || '').toLowerCase();
+  const operatorCategory = String(payload.magia_operator?.media?.category || '').toLowerCase();
+  const magiaNormalizedCategory = String(payload.magia_normalized?.media?.category || '').toLowerCase();
+  const directCategory = String(payload.media?.category || '').toLowerCase();
+  const directKind = String(payload.media?.kind || '').toLowerCase();
+
+  if (
+    operatorCategory === 'text'
+    || magiaNormalizedCategory === 'text'
+    || directCategory === 'text'
+    || directKind === 'text'
+    || messageType === 'conversation'
+    || messageType === 'extendedtextmessage'
+  ) {
+    const storedMedia = asObject(payload.media);
+    const storedKind = String(storedMedia.kind || storedMedia.category || '').toLowerCase();
+    if (storedMedia.status !== 'stored' || !storedMedia.storagePath || !REAL_MEDIA_KINDS.has(storedKind)) {
+      return null;
+    }
+  }
+
   const operatorMedia = asObject(payload.magia_operator?.media);
   const normalized = asObject(payload.media);
-  const message = asObject(payload.telegram_update).message || payload.message || {};
+  const evolutionMessage = asObject(payload.data?.message || payload.message);
+  const telegramMessage = asObject(payload.telegram_update).message || {};
 
+  // 2. Mídia de operador Mag.IA / NORIA
   if (operatorMedia.category && operatorMedia.category !== 'text') {
     const kindMap = {
       image: 'image',
@@ -681,46 +855,81 @@ function normalizeMedia(rawPayload) {
       video: 'video',
       document: 'document',
       product: 'product',
+      sticker: 'sticker',
     };
     const kind = kindMap[operatorMedia.category] || operatorMedia.category;
-    return {
-      kind,
-      category: operatorMedia.category,
-      caption: operatorMedia.caption || '',
-      url: operatorMedia.url || '',
-      fileName: operatorMedia.fileName || '',
-      mimeType: operatorMedia.mimetype || '',
-      duration: Number(operatorMedia.seconds || 0),
-    };
+    if (REAL_MEDIA_KINDS.has(kind)) {
+      return {
+        kind,
+        category: operatorMedia.category,
+        caption: operatorMedia.caption || '',
+        url: operatorMedia.url || '',
+        fileName: operatorMedia.fileName || '',
+        mimeType: operatorMedia.mimetype || '',
+        size: Number(operatorMedia.fileSize || operatorMedia.size || 0),
+        duration: Number(operatorMedia.seconds || 0),
+      };
+    }
   }
 
+  // 3. Mídia normalizada padrão (armazenada em Supabase Storage ou canais externos)
   if (normalized.kind || normalized.category) {
-    const kind = normalized.kind || normalized.category;
-    return {
-      kind,
-      category: normalized.category || kind,
-      caption: normalized.caption || '',
-      url: normalized.url || '',
-      thumbnailUrl: normalized.thumbnailUrl || normalized.thumbnail_url || '',
-      fileName: normalized.fileName || normalized.file_name || '',
-      mimeType: normalized.mimeType || normalized.mime_type || '',
-      encoding: normalized.encoding || '',
-      size: Number(normalized.size || normalized.file_size || 0),
-      duration: Number(normalized.duration || 0),
-    };
+    const rawKind = normalized.kind || normalized.category;
+    const kind = String(rawKind).toLowerCase();
+    if (REAL_MEDIA_KINDS.has(kind)) {
+      return {
+        kind,
+        category: normalized.category || kind,
+        status: normalized.status || '',
+        bucket: normalized.bucket || '',
+        storagePath: normalized.storagePath || '',
+        caption: normalized.caption || '',
+        url: normalized.url || '',
+        thumbnailUrl: normalized.thumbnailUrl || normalized.thumbnail_url || '',
+        fileName: normalized.fileName || normalized.file_name || '',
+        mimeType: normalized.mimeType || normalized.mime_type || '',
+        encoding: normalized.encoding || '',
+        size: Number(normalized.size || normalized.file_size || 0),
+        duration: Number(normalized.duration || 0),
+      };
+    }
   }
 
-  if (Array.isArray(message.photo) && message.photo.length) {
-    const photo = message.photo[message.photo.length - 1] || {};
-    return { kind: 'image', caption: message.caption || '', size: Number(photo.file_size || 0) };
+  // 4. Mídia Evolution API (WhatsApp)
+  if (evolutionMessage.imageMessage) {
+    const img = evolutionMessage.imageMessage;
+    return { kind: 'image', caption: img.caption || '', mimeType: img.mimetype || 'image/jpeg', url: img.url || '' };
   }
-  if (message.voice) return { kind: 'audio', caption: message.caption || '', duration: Number(message.voice.duration || 0), mimeType: message.voice.mime_type || '', size: Number(message.voice.file_size || 0) };
-  if (message.audio) return { kind: 'audio', caption: message.caption || '', duration: Number(message.audio.duration || 0), fileName: message.audio.file_name || '', mimeType: message.audio.mime_type || '', size: Number(message.audio.file_size || 0) };
-  if (message.video || message.video_note || message.animation) {
-    const video = message.video || message.video_note || message.animation;
-    return { kind: 'video', caption: message.caption || '', duration: Number(video.duration || 0), fileName: video.file_name || '', mimeType: video.mime_type || '', size: Number(video.file_size || 0) };
+  if (evolutionMessage.audioMessage) {
+    const aud = evolutionMessage.audioMessage;
+    return { kind: 'audio', duration: Number(aud.seconds || 0), mimeType: aud.mimetype || 'audio/ogg', url: aud.url || '' };
   }
-  if (message.document) return { kind: 'document', caption: message.caption || '', fileName: message.document.file_name || '', mimeType: message.document.mime_type || '', size: Number(message.document.file_size || 0) };
+  if (evolutionMessage.videoMessage) {
+    const vid = evolutionMessage.videoMessage;
+    return { kind: 'video', caption: vid.caption || '', duration: Number(vid.seconds || 0), mimeType: vid.mimetype || 'video/mp4', url: vid.url || '' };
+  }
+  if (evolutionMessage.documentMessage) {
+    const doc = evolutionMessage.documentMessage;
+    return { kind: 'document', fileName: doc.fileName || 'Documento', mimeType: doc.mimetype || 'application/octet-stream', size: Number(doc.fileLength || 0), url: doc.url || '' };
+  }
+  if (evolutionMessage.stickerMessage) {
+    const stk = evolutionMessage.stickerMessage;
+    return { kind: 'sticker', mimeType: stk.mimetype || 'image/webp', url: stk.url || '' };
+  }
+
+  // 5. Mídia Telegram
+  if (Array.isArray(telegramMessage.photo) && telegramMessage.photo.length) {
+    const photo = telegramMessage.photo[telegramMessage.photo.length - 1] || {};
+    return { kind: 'image', caption: telegramMessage.caption || '', size: Number(photo.file_size || 0) };
+  }
+  if (telegramMessage.voice) return { kind: 'audio', caption: telegramMessage.caption || '', duration: Number(telegramMessage.voice.duration || 0), mimeType: telegramMessage.voice.mime_type || '', size: Number(telegramMessage.voice.file_size || 0) };
+  if (telegramMessage.audio) return { kind: 'audio', caption: telegramMessage.caption || '', duration: Number(telegramMessage.audio.duration || 0), fileName: telegramMessage.audio.file_name || '', mimeType: telegramMessage.audio.mime_type || '', size: Number(telegramMessage.audio.file_size || 0) };
+  if (telegramMessage.video || telegramMessage.video_note || telegramMessage.animation) {
+    const video = telegramMessage.video || telegramMessage.video_note || telegramMessage.animation;
+    return { kind: 'video', caption: telegramMessage.caption || '', duration: Number(video.duration || 0), fileName: video.file_name || '', mimeType: video.mime_type || '', size: Number(video.file_size || 0) };
+  }
+  if (telegramMessage.document) return { kind: 'document', caption: telegramMessage.caption || '', fileName: telegramMessage.document.file_name || '', mimeType: telegramMessage.document.mime_type || '', size: Number(telegramMessage.document.file_size || 0) };
+
   return null;
 }
 
@@ -792,6 +1001,49 @@ export function canonicalConversationKey(channelType, externalConversationId, fa
   const slug = String(tenantSlug || '').trim().toLowerCase();
   const tenantPrefix = slug ? `${slug}:` : '';
   return `${tenantPrefix}${normalizedChannel}::${canonicalId || 'unknown'}`;
+}
+
+// A identidade do contato pertence ao remetente inbound. Eventos outbound podem
+// carregar o nome salvo no momento do envio, mas esse valor descreve o contexto
+// da mensagem e nunca deve substituir a identidade do cliente.
+export function getTrustedContactName(event = {}) {
+  if (String(event.direction || '').toLowerCase() !== 'inbound') return '';
+  if (String(event.sender_type || '').toLowerCase() !== 'contact') return '';
+  return String(event.contact_name || '').trim();
+}
+
+export function isUsefulContactName(value, phone = '') {
+  const name = String(value || '').trim();
+  if (!name || !/\p{L}/u.test(name)) return false;
+
+  const digits = name.replace(/\D/g, '');
+  const normalizedPhone = String(phone || '').replace(/\D/g, '');
+  return !normalizedPhone || digits !== normalizedPhone;
+}
+
+export function getUsefulTrustedContactName(event = {}) {
+  const name = getTrustedContactName(event);
+  const phone = event.contact_handle || event.external_conversation_id || '';
+  return isUsefulContactName(name, phone) ? name : '';
+}
+
+export function conversationPhoneFallback(event = {}) {
+  if (normalizeChannel(event.channel_type).type !== 'whatsapp') return '';
+  const raw = String(event.external_conversation_id || '').trim();
+  if (!raw) return '';
+  const normalized = normalizeExternalConversationId('whatsapp', raw, event.contact_handle);
+  const digits = String(normalized || raw)
+    .replace(/@(s\.whatsapp\.net|c\.us)$/i, '')
+    .split(':')[0]
+    .replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 15 ? digits : '';
+}
+
+export function resolveConversationDisplayName(event = {}, fallbackName = '') {
+  return getUsefulTrustedContactName(event)
+    || String(event.contact_handle || '').trim()
+    || conversationPhoneFallback(event)
+    || fallbackName;
 }
 
 export function conversationReadKey(tenantId, userId, channelType, externalConversationId) {
@@ -1164,8 +1416,8 @@ export function resolveConversationHeaderOwner(conversation, matchingCard = null
 export function resolveMessageSender(event = {}, fallbackOwner = '') {
   const direction = String(event.direction || '').toLowerCase();
   const senderType = String(event.sender_type || '').toLowerCase();
-  const service = String(event.service || '').toLowerCase();
   const aiProvider = String(event.ai_provider || '').toLowerCase();
+  const service = String(event.service || '').toLowerCase();
   const rawPayload = asObject(event.raw_payload);
 
   // 1. Inbound do cliente
@@ -1230,7 +1482,23 @@ export function resolveEventMessagePreview(event, fallbackOwner = '') {
     return null;
   }
 
+  const trimmedText = String(event.message_text || '').trim().toLowerCase();
+  if (trimmedText === '[secretencrypted]') {
+    return null;
+  }
+
   const service = String(event.service || '').toLowerCase();
+  const isReaction = service === 'reaction'
+    || String(payload?.messageType || '').toLowerCase() === 'reactionmessage'
+    || String(payload?.event || '').toLowerCase() === 'messages.reaction'
+    || Boolean(payload?.reaction)
+    || Boolean(payload?.magia_normalized?.reaction)
+    || trimmedText === 'reaction'
+    || trimmedText === '[reaction]';
+  if (isReaction) {
+    return null;
+  }
+
   const aiProvider = String(event.ai_provider || '').toLowerCase();
   const command = String(payload?.command || '').toLowerCase();
   const operationalIndicators = [
@@ -1259,10 +1527,32 @@ export function resolveEventMessagePreview(event, fallbackOwner = '') {
     };
   }
 
-  const media = normalizeMedia(event.raw_payload);
-  const rawText = event.message_text || media?.caption || '';
-  const text = media && isGeneratedMediaLabel(rawText) ? '' : rawText;
-  const preview = text || mediaPreview(media) || (event.direction === 'outbound' ? event.response_text : '') || '';
+  const location = normalizeLocation(event.raw_payload, event);
+  const isLocation = Boolean(location)
+    || trimmedText === '[location]'
+    || trimmedText === 'location'
+    || String(payload?.messageType || '').toLowerCase() === 'locationmessage';
+
+  let preview = '';
+  if (isLocation) {
+    const usefulName = location?.name || location?.address;
+    preview = usefulName || 'Localização';
+  } else {
+    const media = normalizeMedia(event.raw_payload);
+    const caption = String(media?.caption || '').trim();
+    const eventText = String(event.message_text || '').trim();
+    const hasRealCaption = caption && !isGeneratedMediaLabel(caption) && !Object.prototype.hasOwnProperty.call(TECHNICAL_MEDIA_LABELS, caption.toLowerCase());
+
+    let text = '';
+    if (hasRealCaption) {
+      text = caption;
+    } else if (eventText && !isGeneratedMediaLabel(eventText)) {
+      text = eventText;
+    }
+
+    preview = text || mediaPreview(media) || (event.direction === 'outbound' ? event.response_text : '') || '';
+  }
+
   if (!preview) return null;
 
   const senderInfo = resolveMessageSender(event, fallbackOwner);
@@ -1318,7 +1608,8 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
 
     if (!byChat.has(key)) {
       const fallbackName = `Contato ${channelType.label}`;
-      const contactName = String(event.contact_name || '').trim() || event.contact_handle || fallbackName;
+      const trustedContactName = getUsefulTrustedContactName(event);
+      const contactName = resolveConversationDisplayName(event, fallbackName);
       const initialAvatar = extractAvatarUrlFromEvent(event);
       const initialPreview = resolveEventMessagePreview(event, initialOwner);
       byChat.set(key, {
@@ -1328,6 +1619,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         normalizedExternalId: normalizedExtId,
         externalConversationId: event.external_conversation_id || normalizedExtId || key,
         contact: contactName,
+        contactNameIsTrusted: Boolean(trustedContactName),
         company: event.contact_handle ? `@${event.contact_handle}` : channelType.label,
         channel: channelType.label,
         channelType: channelType.type,
@@ -1357,9 +1649,13 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
     const conversation = byChat.get(key);
 
     // Se o contato começou com nome genérico/fallback ("Contato WhatsApp") e agora temos um contact_name real:
-    const cleanEventContact = String(event.contact_name || '').trim();
-    if (cleanEventContact && (!conversation.contact || conversation.contact.startsWith('Contato ') || conversation.contact === 'Contato')) {
-      conversation.contact = cleanEventContact;
+    const trustedContactName = getUsefulTrustedContactName(event);
+    const displayName = resolveConversationDisplayName(event, `Contato ${channelType.label}`);
+    if (trustedContactName && !conversation.contactNameIsTrusted) {
+      conversation.contact = trustedContactName;
+      conversation.contactNameIsTrusted = true;
+    } else if (displayName && (!conversation.contact || conversation.contact.startsWith('Contato ') || conversation.contact === 'Contato')) {
+      conversation.contact = displayName;
     }
 
     // Se o evento cronológico trouxer avatar válido no payload, atualiza;
@@ -1378,6 +1674,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
       conversation.lastMessageSenderType = previewInfo.senderType;
     }
     const media = normalizeMedia(event.raw_payload);
+    const location = normalizeLocation(event.raw_payload, event);
     const text = event.message_text || media?.caption || '';
     const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
     const eventTime = event.created_at ? Date.parse(event.created_at) : NaN;
@@ -1408,6 +1705,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         at: formatDate(event.created_at),
         status: event.delivery_status,
         media,
+        location,
         eventId: event.id,
         createdAt: event.created_at || null,
         sessionId: payload?.conversation_session_id || null,
@@ -1418,6 +1716,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         text: visibleText,
         at: formatDate(event.created_at),
         media,
+        location,
         eventId: event.id,
         createdAt: event.created_at || null,
         sessionId: payload?.conversation_session_id || null,
@@ -1531,6 +1830,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
   );
 
   const media = normalizeMedia(event.raw_payload);
+  const location = normalizeLocation(event.raw_payload, event);
   const text = event.message_text || media?.caption || '';
   const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
   const at = formatDate(event.created_at);
@@ -1550,6 +1850,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
         at,
         status: event.delivery_status,
         media,
+        location,
         eventId: event.id,
         createdAt: event.created_at || null,
         sessionId: payload?.conversation_session_id || null,
@@ -1562,6 +1863,11 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
           ...newMessages[existingMsgIndex],
           status: event.delivery_status || newMessages[existingMsgIndex].status,
           text: msg.text || newMessages[existingMsgIndex].text,
+          media: media || newMessages[existingMsgIndex].media,
+          location: (location || newMessages[existingMsgIndex].location) ? {
+            ...(newMessages[existingMsgIndex].location || {}),
+            ...(location || {}),
+          } : null,
         };
       } else {
         newMessages.push(msg);
@@ -1572,6 +1878,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
         text: visibleText,
         at,
         media,
+        location,
         eventId: event.id,
         createdAt: event.created_at || null,
         sessionId: payload?.conversation_session_id || null,
@@ -1584,6 +1891,11 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
           ...newMessages[existingMsgIndex],
           status: event.delivery_status || newMessages[existingMsgIndex].status,
           text: msg.text || newMessages[existingMsgIndex].text,
+          media: media || newMessages[existingMsgIndex].media,
+          location: (location || newMessages[existingMsgIndex].location) ? {
+            ...(newMessages[existingMsgIndex].location || {}),
+            ...(location || {}),
+          } : null,
         };
       } else {
         newMessages.push(msg);
@@ -1615,10 +1927,14 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
     const shouldUpdateLastMessage = Boolean(isNewer && incomingPreview);
 
     // Atualiza nome de contato caso o anterior seja fallback e o novo evento traga o nome real
-    const cleanEventContact = String(event.contact_name || '').trim();
-    const updatedContact = cleanEventContact && (!prevConv.contact || prevConv.contact.startsWith('Contato ') || prevConv.contact === 'Contato')
-      ? cleanEventContact
-      : prevConv.contact;
+    const trustedContactName = getUsefulTrustedContactName(event);
+    const displayName = resolveConversationDisplayName(event, `Contato ${channelType.label}`);
+    const previousNameIsTrusted = prevConv.contactNameIsTrusted ?? isUsefulContactName(prevConv.contact);
+    const updatedContact = trustedContactName && !previousNameIsTrusted
+      ? trustedContactName
+      : displayName && (!prevConv.contact || prevConv.contact.startsWith('Contato ') || prevConv.contact === 'Contato')
+        ? displayName
+        : prevConv.contact;
 
     // Atualiza avatar se o novo evento trouxer um avatar válido; caso contrário, preserva o avatar existente
     const incomingPayloadAvatar = extractPayloadAvatar(event);
@@ -1636,6 +1952,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
     const updated = {
       ...prevConv,
       contact: updatedContact,
+      contactNameIsTrusted: trustedContactName ? true : previousNameIsTrusted,
       avatarUrl: nextAvatarUrl,
       messages: newMessages,
       lastMessage: shouldUpdateLastMessage ? incomingPreview.text : prevConv.lastMessage,
@@ -1679,8 +1996,34 @@ export function applyIncomingEventToKanban(columns = [], event, tenantSlug = '',
     event.external_conversation_id,
     event.contact_handle,
   );
+  const trimmedText = String(event.message_text || '').trim().toLowerCase();
+  const service = String(event.service || '').toLowerCase();
+  const payload = asObject(event.raw_payload);
+  const isReaction = service === 'reaction'
+    || String(payload?.messageType || '').toLowerCase() === 'reactionmessage'
+    || String(payload?.event || '').toLowerCase() === 'messages.reaction'
+    || Boolean(payload?.reaction)
+    || Boolean(payload?.magia_normalized?.reaction)
+    || trimmedText === 'reaction'
+    || trimmedText === '[reaction]';
+  const isSecret = trimmedText === '[secretencrypted]';
+
+  const location = normalizeLocation(event.raw_payload, event);
   const media = normalizeMedia(event.raw_payload);
-  const text = event.message_text || media?.caption || '';
+  const isLocation = Boolean(location)
+    || trimmedText === '[location]'
+    || trimmedText === 'location'
+    || String(payload?.messageType || '').toLowerCase() === 'locationmessage';
+
+  let text = '';
+  if (isLocation) {
+    text = location?.name || location?.address || 'Localização';
+  } else {
+    const caption = String(media?.caption || '').trim();
+    const eventText = String(event.message_text || '').trim();
+    const hasRealCaption = caption && !isGeneratedMediaLabel(caption) && !Object.prototype.hasOwnProperty.call(TECHNICAL_MEDIA_LABELS, caption.toLowerCase());
+    text = hasRealCaption ? caption : (eventText || media?.caption || '');
+  }
   const lastAt = formatDate(event.created_at);
 
   let modified = false;
@@ -1744,7 +2087,7 @@ export function applyIncomingEventToKanban(columns = [], event, tenantSlug = '',
 
         return {
           ...card,
-          subtitle: text || mediaPreview(media) || card.subtitle,
+          subtitle: (isReaction || isSecret) ? card.subtitle : (text || mediaPreview(media) || card.subtitle),
           avatarUrl: incomingPayloadAvatar || card.avatarUrl || incomingEventAvatar || null,
           owner: nextOwner,
           ownerId: nextOwnerId,
@@ -1994,7 +2337,7 @@ export function eventsToKanban(
     if (!currentActivity || isMoreRecentRecord(event, currentActivity)) {
       latestConversationActivityByChat.set(key, event);
     }
-    if (String(event.contact_name || '').trim()) {
+    if (getUsefulTrustedContactName(event)) {
       const currentNamedContact = latestNamedContactByChat.get(key);
       if (!currentNamedContact || isMoreRecentRecord(event, currentNamedContact)) {
         latestNamedContactByChat.set(key, event);
@@ -2085,7 +2428,7 @@ export function eventsToKanban(
       canonicalKey: key,
       normalizedExternalId: normalizeExternalConversationId(channelType.type, event.external_conversation_id),
       externalConversationId: event.external_conversation_id,
-      title: identityEvent.contact_name || `Contato ${channelType.label}`,
+      title: resolveConversationDisplayName(identityEvent, `Contato ${channelType.label}`),
       subtitle: activityEvent.message_text || activityEvent.service || 'Mensagem recente',
       channel: channelType.label,
       channelType: channelType.type,

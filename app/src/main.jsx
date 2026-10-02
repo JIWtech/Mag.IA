@@ -22,6 +22,8 @@ import {
   ChevronDown,
   CircleDollarSign,
   Clock3,
+  Download,
+  Navigation,
   FileSpreadsheet,
   Flame,
   Copy,
@@ -121,9 +123,21 @@ import {
   shouldAdvanceConversationRead,
   subscribeToConversationReads,
   upsertConversationReadMarker,
+  hasStoredMediaNeedingUrl,
+  enrichSingleMediaEvent,
 } from './dataService';
 import noriaLogo from './assets/noria_logo.png';
 import { NoriaSelect } from './components/NoriaSelect';
+import { AudioMessagePlayer } from './components/AudioMessagePlayer';
+import {
+  isTechnicalMediaPlaceholder,
+  normalizeTechnicalMediaPlaceholder,
+  formatConversationPreview as formatConversationPreviewUtil,
+  formatCoordinates,
+  formatFileSize,
+  formatFriendlyMimeType,
+  REAL_MEDIA_KINDS,
+} from './audioUtils';
 import '@fontsource-variable/manrope';
 import './styles.css';
 
@@ -749,9 +763,13 @@ function App() {
       refreshData({ showLoading: false });
     });
 
-    const unsubscribe = subscribeToClientEvents((payload) => {
+    const unsubscribe = subscribeToClientEvents(async (payload) => {
       if (payload?.table === 'channel_events' && payload?.new) {
-        const incomingEvent = payload.new;
+        let incomingEvent = payload.new;
+
+        if (hasStoredMediaNeedingUrl(incomingEvent)) {
+          incomingEvent = await enrichSingleMediaEvent(incomingEvent);
+        }
         const incomingConversationKey = canonicalConversationKey(
           incomingEvent.channel_type,
           incomingEvent.external_conversation_id,
@@ -1065,13 +1083,8 @@ function App() {
   );
 }
 
-function formatConversationPreview(message) {
-  const text = String(message || '').trim();
-  const lower = text.toLowerCase();
-  if (lower === '/reset' || lower === 'reset') {
-    return 'Conversa reiniciada';
-  }
-  return text;
+function formatConversationPreview(message, media = null) {
+  return formatConversationPreviewUtil(message, media);
 }
 
 function getConversationLastMessageOrigin(item) {
@@ -1408,38 +1421,286 @@ function ContactAvatarBadge({ channel, presence = null }) {
 }
 
 function MediaAttachment({ media, onMediaLoad }) {
+  if (!media) return null;
+  const kind = String(media.kind || media.category || '').toLowerCase();
+  if (!kind || kind === 'text' || kind === 'conversation' || kind === 'none' || !REAL_MEDIA_KINDS.has(kind)) {
+    return null;
+  }
+
   const [expandedImage, setExpandedImage] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
   const config = {
-    image: { label: 'Imagem recebida', icon: ImageIcon },
-    audio: { label: 'Áudio recebido', icon: Music2 },
-    video: { label: 'Vídeo recebido', icon: Video },
-    document: { label: 'Documento recebido', icon: FileText },
-  }[media?.kind] || { label: 'Anexo recebido', icon: FileText };
+    image: { label: 'Imagem', icon: ImageIcon },
+    audio: { label: 'Áudio', icon: Music2 },
+    video: { label: 'Vídeo', icon: Video },
+    document: { label: 'Documento', icon: FileText },
+    sticker: { label: 'Figurinha', icon: Sparkles },
+    product: { label: 'Produto', icon: CircleDollarSign },
+  }[kind] || { label: 'Arquivo', icon: FileText };
   const Icon = config.icon;
 
-  if (media?.kind === 'image' && media.url) {
-    return <>
-      <button className="media-image-button" type="button" onClick={() => setExpandedImage(true)} aria-label="Ampliar imagem">
-        <img className="media-image" src={media.thumbnailUrl || media.url} alt={media.caption || config.label} loading="lazy" onLoad={onMediaLoad} />
-      </button>
-      {expandedImage && (
-        <div className="media-lightbox" role="dialog" aria-modal="true" aria-label="Imagem ampliada" onClick={() => setExpandedImage(false)}>
-          <button className="media-lightbox-close" type="button" aria-label="Fechar imagem" onClick={() => setExpandedImage(false)}><X size={20} /></button>
-          <img className="media-lightbox-image" src={media.url} alt={media.caption || config.label} onClick={(event) => event.stopPropagation()} />
+  if (kind === 'image' && media.url) {
+    if (imageError) {
+      return (
+        <div className="media-placeholder" title="Não foi possível carregar a imagem original">
+          <Icon size={20} />
+          <span>{media?.fileName || config.label}</span>
+          <small>Falha no carregamento</small>
         </div>
-      )}
-    </>;
+      );
+    }
+
+    const hasRealCaption = media.caption && !isTechnicalMediaPlaceholder(media.caption, media);
+    const accessibleAlt = hasRealCaption ? media.caption : '';
+
+    return (
+      <>
+        <button
+          className={`media-image-button ${!imageLoaded ? 'is-loading' : ''}`}
+          type="button"
+          onClick={() => imageLoaded && setExpandedImage(true)}
+          aria-label={hasRealCaption ? `Ampliar imagem: ${accessibleAlt}` : 'Ampliar imagem'}
+        >
+          <div className={`media-image-container ${imageLoaded ? 'is-loaded' : ''}`}>
+            {!imageLoaded && (
+              <div className="media-image-skeleton" aria-hidden="true">
+                <ImageIcon size={24} className="media-image-skeleton-icon" />
+              </div>
+            )}
+            <img
+              className={`media-image ${imageLoaded ? 'is-loaded' : 'is-loading'}`}
+              src={media.thumbnailUrl || media.url}
+              alt={accessibleAlt}
+              decoding="async"
+              onLoad={() => {
+                setImageLoaded(true);
+                if (typeof onMediaLoad === 'function') onMediaLoad();
+              }}
+              onError={() => {
+                setImageError(true);
+              }}
+            />
+          </div>
+        </button>
+        {expandedImage && (
+          <div className="media-lightbox" role="dialog" aria-modal="true" aria-label="Imagem ampliada" onClick={() => setExpandedImage(false)}>
+            <button className="media-lightbox-close" type="button" aria-label="Fechar imagem" onClick={() => setExpandedImage(false)}>
+              <X size={20} />
+            </button>
+            <img
+              className="media-lightbox-image"
+              src={media.url}
+              alt={accessibleAlt || config.label}
+              onClick={(event) => event.stopPropagation()}
+            />
+          </div>
+        )}
+      </>
+    );
   }
-  if (media?.kind === 'audio' && media.url) {
-    return <audio className="media-audio" controls preload="metadata" src={media.url}>Seu navegador não suporta áudio.</audio>;
+
+  if (kind === 'audio' && media.url) {
+    return <AudioMessagePlayer media={media} onLoad={onMediaLoad} />;
   }
-  if (media?.kind === 'video' && media.url) {
+
+  if (kind === 'video' && media.url) {
     return <video className="media-video" controls preload="metadata" poster={media.thumbnailUrl || undefined} src={media.url}>Seu navegador não suporta vídeo.</video>;
   }
-  if (media?.kind === 'document' && media.url) {
-    return <a className="media-placeholder media-download" href={media.url} target="_blank" rel="noreferrer"><Icon size={20} /><span>{media.fileName || config.label}</span><ExternalLink size={15} /></a>;
+
+  if (kind === 'document') {
+    const fileName = media.fileName || 'Documento';
+    const friendlyType = formatFriendlyMimeType(media.mimeType, fileName);
+    const friendlySize = formatFileSize(media.size);
+    const metaText = [friendlyType, friendlySize].filter(Boolean).join(' • ');
+
+    if (media.url) {
+      return (
+        <div className="document-attachment">
+          <div className="document-attachment-icon-wrapper">
+            <FileText size={22} className="document-attachment-icon" />
+          </div>
+          <div className="document-attachment-info">
+            <div className="document-attachment-filename" title={fileName}>{fileName}</div>
+            {metaText && <div className="document-attachment-meta">{metaText}</div>}
+          </div>
+          <a
+            className="document-attachment-action"
+            href={media.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            download={fileName}
+            aria-label={`Baixar documento ${fileName}`}
+          >
+            <Download size={16} />
+          </a>
+        </div>
+      );
+    }
+
+    return (
+      <div className="document-attachment is-pending" title="O documento ainda está sendo processado">
+        <div className="document-attachment-icon-wrapper">
+          <FileText size={22} className="document-attachment-icon" />
+        </div>
+        <div className="document-attachment-info">
+          <div className="document-attachment-filename" title={fileName}>{fileName}</div>
+          <div className="document-attachment-meta">
+            {metaText ? `${metaText} • ` : ''}Documento
+          </div>
+        </div>
+      </div>
+    );
   }
-  return <div className="media-placeholder" title="O arquivo original ainda não foi disponibilizado pelo canal"><Icon size={20} /><span>{media?.fileName || config.label}</span><small>Prévia indisponível</small></div>;
+
+  // Fallback somente para mídias reais desconhecidas com URL ou com status stored
+  if (media?.url) {
+    return (
+      <a className="media-placeholder media-download" href={media.url} target="_blank" rel="noopener noreferrer">
+        <Icon size={20} />
+        <span>{media.fileName || config.label}</span>
+        <ExternalLink size={15} />
+      </a>
+    );
+  }
+
+  return (
+    <div className="media-placeholder" title="O arquivo original ainda não foi disponibilizado pelo canal">
+      <Icon size={20} />
+      <span>{media?.fileName || config.label}</span>
+      <small>Prévia indisponível</small>
+    </div>
+  );
+}
+
+function LocationAttachment({ location }) {
+  if (!location) return null;
+  const { name, address, latitude, longitude, url, isResolving } = location;
+
+  const [copiedAddress, setCopiedAddress] = useState(false);
+  const [copiedCoords, setCopiedCoords] = useState(false);
+
+  const mapsUrl = url || (latitude != null && longitude != null
+    ? `https://www.google.com/maps?q=${latitude},${longitude}`
+    : '');
+
+  const hasCoords = latitude != null && longitude != null;
+  const coordsFormatted = hasCoords ? formatCoordinates(latitude, longitude) : '';
+  const coordsRaw = hasCoords ? `${latitude}, ${longitude}` : '';
+
+  const title = name || 'Localização compartilhada';
+
+  const handleCopyAddress = (e) => {
+    e.stopPropagation();
+    if (!address) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(address);
+      setCopiedAddress(true);
+      setTimeout(() => setCopiedAddress(false), 2000);
+    }
+  };
+
+  const handleCopyCoords = (e) => {
+    e.stopPropagation();
+    const toCopy = coordsRaw || coordsFormatted;
+    if (!toCopy) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(toCopy);
+      setCopiedCoords(true);
+      setTimeout(() => setCopiedCoords(false), 2000);
+    }
+  };
+
+  return (
+    <div className={`location-card ${isResolving ? 'is-resolving' : ''}`}>
+      {/* Mini Mapa Estilizado / Header Visual */}
+      <a
+        className="location-map-preview"
+        href={mapsUrl || '#'}
+        target={mapsUrl ? '_blank' : undefined}
+        rel="noopener noreferrer"
+        aria-label={`Abrir mapa de ${title}`}
+        onClick={!mapsUrl ? (e) => e.preventDefault() : undefined}
+      >
+        <div className="location-map-grid" aria-hidden="true">
+          <div className="location-map-road horizontal" />
+          <div className="location-map-road vertical" />
+          <div className="location-map-road diagonal" />
+        </div>
+        <div className="location-pin-wrapper">
+          <div className="location-pin-pulse" />
+          <div className="location-pin-icon-wrap">
+            <MapPin size={20} className="location-pin-icon" />
+          </div>
+        </div>
+        {hasCoords && (
+          <div className="location-map-tag">
+            <Navigation size={10} />
+            <span>{coordsFormatted}</span>
+          </div>
+        )}
+      </a>
+
+      {/* Conteúdo Informativo */}
+      <div className="location-content">
+        <div className="location-header-row">
+          <div className="location-badge-icon">
+            <MapPin size={17} />
+          </div>
+          <div className="location-text-info">
+            <div className="location-title" title={title}>{title}</div>
+            {address ? (
+              <div className="location-subtitle" title={address}>{address}</div>
+            ) : hasCoords ? (
+              <div className="location-subtitle">{coordsFormatted}</div>
+            ) : isResolving ? (
+              <div className="location-resolving-placeholder">
+                <span className="skeleton-line" style={{ width: '130px', height: '11px' }} />
+              </div>
+            ) : (
+              <div className="location-subtitle">Coordenadas indisponíveis</div>
+            )}
+          </div>
+        </div>
+
+        {/* Linha de Ações */}
+        <div className="location-actions-row">
+          <a
+            className={`location-btn primary ${!mapsUrl ? 'disabled' : ''}`}
+            href={mapsUrl || '#'}
+            target={mapsUrl ? '_blank' : undefined}
+            rel="noopener noreferrer"
+            onClick={!mapsUrl ? (e) => e.preventDefault() : undefined}
+          >
+            <ExternalLink size={13} />
+            <span>Abrir localização</span>
+          </a>
+          {address ? (
+            <button
+              className="location-btn secondary"
+              type="button"
+              onClick={handleCopyAddress}
+              title="Copiar endereço completo"
+            >
+              {copiedAddress ? <Check size={13} className="location-copied-icon" /> : <Copy size={13} />}
+              <span>{copiedAddress ? 'Copiado!' : 'Copiar endereço'}</span>
+            </button>
+          ) : hasCoords ? (
+            <button
+              className="location-btn secondary"
+              type="button"
+              onClick={handleCopyCoords}
+              title="Copiar coordenadas"
+            >
+              {copiedCoords ? <Check size={13} className="location-copied-icon" /> : <Copy size={13} />}
+              <span>{copiedCoords ? 'Copiado!' : 'Copiar coordenadas'}</span>
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SkeletonLine({ width, height, style, className }) {
@@ -2149,7 +2410,32 @@ function Conversations({
                 <div key={`${message.at}-${index}`} className={`bubble ${isAi ? 'ai' : isAgent || isSystem ? 'agent' : 'contact'}`}>
                   <div className="bubble-sender">{senderLabel}</div>
                   {message.media && <MediaAttachment media={message.media} onMediaLoad={scrollToLatest} />}
-                  {message.text && <p className="bubble-text">{message.text}</p>}
+                  {(() => {
+                    const loc = message.location || (
+                      (message.text && ['[location]', 'location', '[localização]', '[localizacao]'].includes(message.text.trim().toLowerCase()))
+                        ? { isResolving: true }
+                        : null
+                    );
+                    return loc ? <LocationAttachment location={loc} /> : null;
+                  })()}
+                  {(() => {
+                    if (!message.text) return null;
+                    if (message.media && isTechnicalMediaPlaceholder(message.text, message.media)) {
+                      return null;
+                    }
+                    const trimmed = message.text.trim().toLowerCase();
+                    if ((message.location || ['[location]', 'location', '[localização]', '[localizacao]'].includes(trimmed)) && (
+                      trimmed === '[location]' ||
+                      trimmed === 'location' ||
+                      trimmed === '[localização]' ||
+                      trimmed === '[localizacao]'
+                    )) {
+                      return null;
+                    }
+                    const displayText = normalizeTechnicalMediaPlaceholder(message.text);
+                    if (!displayText) return null;
+                    return <p className="bubble-text">{displayText}</p>;
+                  })()}
                   <div className="bubble-meta">
                     <span className="bubble-time">{message.at}</span>
                     {(isAi || isAgent || isSystem) && <CheckCheck size={13} className="bubble-check" />}
