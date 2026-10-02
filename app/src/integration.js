@@ -1,4 +1,5 @@
 import { getCurrentSession } from './authService';
+import { isEligibleForExternalOutbound } from './eventClassification.js';
 
 const env = {
   supabaseUrl: import.meta.env.VITE_SUPABASE_URL || '',
@@ -16,37 +17,79 @@ export function getIntegrationStatus(activeTenantSlug = env.tenantSlug) {
   };
 }
 
-export async function sendN8nCommand(command, payload, activeTenantSlug = env.tenantSlug) {
+async function sendCommand(command, payload, activeTenantSlug, { external = true } = {}) {
+  const outboundCandidate = {
+    ...payload,
+    event_type: payload?.event_type || command,
+    raw_payload: payload?.raw_payload || payload,
+  };
+  if (external && !isEligibleForExternalOutbound(outboundCandidate)) {
+    throw new Error('Eventos operacionais internos não podem ser enviados para canais externos.');
+  }
+
   const url = `${env.n8nBaseUrl.replace(/\/$/, '')}/webhook/magia-command`;
+  const isKanbanFlowCommand = command === 'suggest_kanban_flow_order' || command === 'apply_kanban_flow_order';
   const session = await getCurrentSession();
   if (!session?.access_token) {
     throw new Error('Sessao expirada. Entre novamente para enviar mensagens.');
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify({
-      tenant_slug: activeTenantSlug,
-      command,
-      payload,
-    }),
-  });
+  if (isKanbanFlowCommand) {
+    console.info('[Kanban flow] command request', { command, endpoint: url, tenantSlug: activeTenantSlug, payload });
+  }
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        tenant_slug: activeTenantSlug,
+        command,
+        payload,
+      }),
+    });
+  } catch (error) {
+    if (isKanbanFlowCommand) console.error('[Kanban flow] endpoint request failed', { command, endpoint: url, error });
+    throw error;
+  }
+
+  const text = await response.text().catch(() => '');
+  if (isKanbanFlowCommand) {
+    console.info('[Kanban flow] command response', { command, endpoint: url, status: response.status, response: text });
+  }
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
     throw new Error(`n8n command failed: ${response.status} ${text}`);
   }
 
-  const data = await response.json();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (error) {
+    if (isKanbanFlowCommand) console.error('[Kanban flow] invalid JSON response', { command, endpoint: url, status: response.status, response: text, error });
+    throw new Error('n8n command returned invalid JSON');
+  }
   if (data?.ok === false) {
     throw new Error(data.error || 'n8n command failed');
   }
 
   return data;
+}
+
+export async function sendN8nCommand(command, payload, activeTenantSlug = env.tenantSlug) {
+  return sendCommand(command, payload, activeTenantSlug, { external: true });
+}
+
+export async function requestKanbanFlowSuggestion(payload, activeTenantSlug = env.tenantSlug) {
+  return sendCommand('suggest_kanban_flow_order', payload, activeTenantSlug, { external: false });
+}
+
+export async function applyKanbanFlowOrder(payload, activeTenantSlug = env.tenantSlug) {
+  return sendCommand('apply_kanban_flow_order', payload, activeTenantSlug, { external: false });
 }
 
 export const integrationTargets = [

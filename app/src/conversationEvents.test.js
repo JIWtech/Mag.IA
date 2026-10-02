@@ -48,3 +48,17 @@ test('deduplicates repeated event IDs while retaining opposite directions', () =
 test('keeps a reply if matching text is from a different time', () => {
   assert.ok(prepareConversationEvents([outbound({ external_message_id: 'other', created_at: '2026-09-22T12:00:00Z' }), inbound()])[1].response_text);
 });
+test('preserves human operator outbound messages (fromMe) and never dedupes them as inline replies', () => {
+  const operatorEvent = outbound({
+    id: 'op1',
+    external_message_id: 'whatsapp_op_msg_123',
+    sender_type: 'agent',
+    message_text: 'Mensagem enviada pelo operador no celular WhatsApp',
+    raw_payload: { fromMe: true, isFromMe: true },
+  });
+  const result = prepareConversationEvents([inbound(), operatorEvent]);
+  assert.equal(result.length, 2);
+  const opInResult = result.find((e) => e.id === 'op1');
+  assert.ok(opInResult);
+  assert.equal(opInResult.message_text, 'Mensagem enviada pelo operador no celular WhatsApp');
+});

@@ -72,7 +72,7 @@ async function main(helpers) {
     const { supabaseUrl } = supabaseConfig();
     const rows = await httpJson(
       'GET',
-      supabaseUrl + '/rest/v1/tenants?select=id,slug,status&slug=eq.' + encodeURIComponent(tenantSlug) + '&limit=1',
+      supabaseUrl + '/rest/v1/tenants?select=id,slug,name,industry,status&slug=eq.' + encodeURIComponent(tenantSlug) + '&limit=1',
       serviceHeaders(),
     );
     const tenant = Array.isArray(rows) ? rows[0] : null;
@@ -83,7 +83,7 @@ async function main(helpers) {
     return tenant;
   }
 
-  async function assertTenantMember(userId, tenantId) {
+  async function assertTenantMember(userId, tenantId, allowedRoles = ['owner', 'admin', 'manager', 'agent', 'operator']) {
     const { supabaseUrl } = supabaseConfig();
     const rows = await httpJson(
       'GET',
@@ -95,7 +95,7 @@ async function main(helpers) {
     );
     const membership = Array.isArray(rows) ? rows[0] : null;
     if (!membership) throw new Error('Usuario sem permissao para este tenant');
-    if (!['owner', 'admin', 'manager', 'agent', 'operator'].includes(String(membership.role))) {
+    if (!allowedRoles.includes(String(membership.role))) {
       throw new Error('Role sem permissao para enviar mensagens');
     }
     return membership;
@@ -131,6 +131,61 @@ async function main(helpers) {
     );
     const row = Array.isArray(rows) ? rows[0] : null;
     return row?.settings || {};
+  }
+
+  async function loadKanbanColumns(tenantId, boardId) {
+    const { supabaseUrl } = supabaseConfig();
+    const rows = await httpJson(
+      'GET',
+      supabaseUrl + '/rest/v1/kanban_columns?select=id,name,automation_key,position&tenant_id=eq.' + encodeURIComponent(tenantId)
+        + '&board_id=eq.' + encodeURIComponent(boardId) + '&order=position.asc',
+      serviceHeaders(),
+    );
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  function validateKanbanOrder(existing, orderedAutomationKeys) {
+    const expected = existing.map((column) => String(column.automation_key || '')).filter(Boolean);
+    const suggested = Array.isArray(orderedAutomationKeys) ? orderedAutomationKeys.map((key) => String(key || '').trim()).filter(Boolean) : [];
+    return expected.length > 0 && suggested.length === expected.length
+      && new Set(suggested).size === suggested.length
+      && expected.every((key) => suggested.includes(key));
+  }
+
+  async function suggestKanbanFlowOrder(tenant, payload) {
+    const columns = await loadKanbanColumns(tenant.id, required(payload.boardId, 'payload.boardId'));
+    if (!columns.length) throw new Error('Kanban sem colunas configuradas');
+    const settings = await loadTenantSettings(tenant.id);
+    const contextColumns = columns.map((column) => ({
+      name: column.name,
+      automation_key: column.automation_key,
+      kind: ['verificar_sinal', 'agendamentos', 'conversas_abandonadas', 'follow_ups'].includes(column.automation_key) ? 'special_view' : 'stage',
+    }));
+    const prompt = `Organize somente a ordem visual das colunas do Kanban para o tenant. Nao crie, remova, renomeie nem altere automation_key. Etapas sao operacionais; special_view sao visoes derivadas e podem ficar depois do fluxo principal. Responda APENAS JSON valido: {"orderedAutomationKeys":[...],"reasoning":"..."}. Tenant: ${tenant.name || tenant.slug}. Segmento: ${tenant.industry || settings.business_context || settings.industry || ''}. Colunas: ${JSON.stringify(contextColumns)}`;
+    const model = env('GEMINI_MODEL', 'gemini-2.5-flash-lite');
+    const body = await httpJson('POST', `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': env('GEMINI_API_KEY'),
+    }, { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 500, responseMimeType: 'application/json' } });
+    const text = body?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim();
+    if (!text) throw new Error('Gemini sem proposta de fluxo');
+    let proposal;
+    try { proposal = JSON.parse(text); } catch (error) { throw new Error('Gemini retornou proposta invalida'); }
+    if (!validateKanbanOrder(columns, proposal?.orderedAutomationKeys)) throw new Error('Gemini retornou colunas invalidas');
+    return { proposal: { orderedAutomationKeys: proposal.orderedAutomationKeys, reasoning: String(proposal.reasoning || '').trim() } };
+  }
+
+  async function applyKanbanFlowOrder(tenant, payload) {
+    const boardId = required(payload.boardId, 'payload.boardId');
+    const columns = await loadKanbanColumns(tenant.id, boardId);
+    if (!validateKanbanOrder(columns, payload.orderedAutomationKeys)) throw new Error('Ordem de colunas invalida');
+    const { supabaseUrl } = supabaseConfig();
+    await httpJson('POST', supabaseUrl + '/rest/v1/rpc/reorder_kanban_columns', serviceHeaders(), {
+      p_tenant_id: tenant.id,
+      p_board_id: boardId,
+      p_positions: payload.orderedAutomationKeys.map((automation_key, position) => ({ automation_key, position })),
+    });
+    return { ok: true, board_id: boardId, orderedAutomation_keys: payload.orderedAutomationKeys };
   }
 
   function paymentSignalConfirmationMessage(settings = {}) {
@@ -200,11 +255,14 @@ async function main(helpers) {
   const command = required(input.command, 'command');
   const tenantSlug = required(input.tenant_slug, 'tenant_slug').toLowerCase();
   const payload = input.payload || {};
-  if (!['manual_reply', 'broadcast_send', 'broadcast_campaign', 'close_conversation', 'assign_conversation', 'confirm_payment_signal'].includes(command)) throw new Error('command nao suportado: ' + command);
+  if (!['manual_reply', 'broadcast_send', 'broadcast_campaign', 'close_conversation', 'assign_conversation', 'confirm_payment_signal', 'suggest_kanban_flow_order', 'apply_kanban_flow_order'].includes(command)) throw new Error('command nao suportado: ' + command);
 
   const user = await validateUserSession();
   const tenant = await loadTenant(tenantSlug);
-  await assertTenantMember(user.id, tenant.id);
+  await assertTenantMember(user.id, tenant.id, ['suggest_kanban_flow_order', 'apply_kanban_flow_order'].includes(command) ? ['owner', 'admin', 'manager'] : undefined);
+
+  if (command === 'suggest_kanban_flow_order') return await suggestKanbanFlowOrder(tenant, payload);
+  if (command === 'apply_kanban_flow_order') return await applyKanbanFlowOrder(tenant, payload);
 
   if (command === 'broadcast_campaign') {
     const campaignId = required(payload.campaign_id, 'payload.campaign_id');

@@ -3,7 +3,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const target = path.join(root, 'n8n/workflows/magia_whatsapp_evolution_mvp.json');
-const workflow = JSON.parse(fs.readFileSync(target, 'utf8'));
+const workflow = JSON.parse(fs.readFileSync(target, 'utf8').replace(/^\uFEFF/, ''));
 for (const node of [
   {
     id: 'magia-whatsapp-send-product-media', name: 'Enviar Fotos do Catalogo',
