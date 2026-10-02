@@ -30,6 +30,20 @@ export const REAL_MEDIA_KINDS = new Set([
   'product', 'produto',
 ]);
 
+export function mediaSourceChanged(previousSource, nextSource) {
+  return String(previousSource || '') !== String(nextSource || '');
+}
+
+export function unavailableMediaLabel(kind) {
+  const labels = {
+    audio: 'Áudio não disponível',
+    image: 'Imagem não disponível',
+    video: 'Vídeo não disponível',
+    document: 'Documento não disponível',
+  };
+  return labels[String(kind || '').toLowerCase()] || 'Mídia não disponível';
+}
+
 /**
  * Formata tamanho em bytes para representação legível (ex: 450 KB, 1.2 MB).
  * @param {number|string} bytes

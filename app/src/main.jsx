@@ -45,7 +45,9 @@ import {
   Menu,
   MessageCircle,
   MessageSquare,
+  Mic,
   Music2,
+  Paperclip,
   RefreshCcw,
   Radio,
   Search,
@@ -136,7 +138,9 @@ import {
   formatCoordinates,
   formatFileSize,
   formatFriendlyMimeType,
+  mediaSourceChanged,
   REAL_MEDIA_KINDS,
+  unavailableMediaLabel,
 } from './audioUtils';
 import '@fontsource-variable/manrope';
 import './styles.css';
@@ -1105,6 +1109,87 @@ function getConversationLastMessageOrigin(item) {
   return null;
 }
 
+function getConversationLastMessageMeta(item) {
+  if (!item) return { type: 'text', label: '', icon: <MessageSquare size={13} /> };
+
+  const lastMsg = Array.isArray(item.messages) && item.messages.length > 0
+    ? item.messages[item.messages.length - 1]
+    : null;
+
+  const rawText = String(item.lastMessage || lastMsg?.text || '').trim();
+  const lower = rawText.toLowerCase();
+
+  // 1. Áudio
+  if (
+    lastMsg?.media?.kind === 'audio' ||
+    lastMsg?.media?.category === 'audio' ||
+    ['[audio]', '[áudio]', 'áudio', 'audio', '[voice]', '[ptt]', '[áudio recebido]', '[audio recebido]'].includes(lower) ||
+    lower.startsWith('áudio') || lower.startsWith('audio')
+  ) {
+    return { type: 'audio', label: 'Áudio', icon: <Mic size={13} /> };
+  }
+
+  // 2. Vídeo
+  if (
+    lastMsg?.media?.kind === 'video' ||
+    lastMsg?.media?.category === 'video' ||
+    ['[video]', '[vídeo]', 'vídeo', 'video', '[vídeo recebido]', '[video recebido]'].includes(lower)
+  ) {
+    return { type: 'video', label: 'Vídeo', icon: <Video size={13} /> };
+  }
+
+  // 3. Imagem
+  if (
+    lastMsg?.media?.kind === 'image' ||
+    lastMsg?.media?.category === 'image' ||
+    ['[image]', '[imagem]', '[photo]', '[foto]', 'imagem', 'foto', '[imagem recebida]', '[foto recebida]'].includes(lower)
+  ) {
+    return { type: 'image', label: 'Imagem', icon: <ImageIcon size={13} /> };
+  }
+
+  // 4. Documento
+  if (
+    lastMsg?.media?.kind === 'document' ||
+    lastMsg?.media?.category === 'document' ||
+    ['[document]', '[documento]', '[arquivo]', 'documento', 'arquivo', '[documento recebido]', '[arquivo recebido]'].includes(lower) ||
+    lower.endsWith('.pdf') || lower.endsWith('.docx') || lower.endsWith('.xlsx')
+  ) {
+    return { type: 'document', label: 'Documento', icon: <FileText size={13} /> };
+  }
+
+  // 5. Localização
+  if (
+    Boolean(lastMsg?.location) ||
+    ['[location]', 'location', '[localização]', '[localizacao]', 'localização', 'localizacao', '[localização recebida]'].includes(lower)
+  ) {
+    return { type: 'location', label: 'Localização', icon: <MapPin size={13} /> };
+  }
+
+  // 6. Contato
+  if (
+    ['[contact]', '[contato]', 'contato'].includes(lower) ||
+    lastMsg?.media?.kind === 'contact'
+  ) {
+    return { type: 'contact', label: 'Contato', icon: <UserRound size={13} /> };
+  }
+
+  // 7. Sticker
+  if (
+    lastMsg?.media?.kind === 'sticker' ||
+    ['[sticker]', '[figurinha]', 'figurinha', 'sticker', '[figurinha recebida]'].includes(lower)
+  ) {
+    return { type: 'sticker', label: 'Sticker', icon: <Sparkles size={13} /> };
+  }
+
+  // 8. Anexo genérico
+  if (Boolean(lastMsg?.media)) {
+    return { type: 'attachment', label: 'Anexo', icon: <Paperclip size={13} /> };
+  }
+
+  // 9. Texto comum
+  return { type: 'text', label: '', icon: <MessageSquare size={13} /> };
+}
+
 function Dashboard({ conversations = [], dataSource, status, ready = true, onOpenConversation }) {
   const [isMobileRecentList, setIsMobileRecentList] = useState(() => (
     typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
@@ -1215,39 +1300,54 @@ function Dashboard({ conversations = [], dataSource, status, ready = true, onOpe
           />
           <div className="table scrollable-table dashboard-table">
             <div className="table-head">
-              <span>Contato</span>
-              <span>Canal</span>
-              <span>Status</span>
-              <span>Etapa</span>
-              <span>Responsável</span>
-              <span>Última mensagem</span>
-              <span className="th-time">Horário</span>
-              <span className="th-action">Ação</span>
+              <span className="th-cell th-contact">Contato</span>
+              <span className="th-cell th-channel">Canal</span>
+              <span className="th-cell th-status">Status</span>
+              <span className="th-cell th-stage">Etapa</span>
+              <span className="th-cell th-owner">Responsável</span>
+              <span className="th-cell th-message">Última mensagem</span>
+              <span className="th-cell th-time">Horário</span>
+              <span className="th-cell th-action">Ação</span>
             </div>
             <div className="table-body" ref={recentConversationsListRef} onScroll={isMobileRecentList ? undefined : handleTableScroll}>
               {!ready ? (
                 [1, 2, 3, 4, 5, 6, 7].map((i) => (
                   <div className="table-row table-row-skeleton" key={i}>
-                    <div className="table-contact-cell">
+                    <div className="table-cell table-contact-cell">
                       <SkeletonBlock width="32px" height="32px" style={{ borderRadius: '50%', flexShrink: 0 }} />
                       <div className="table-contact-info">
                         <SkeletonLine width="95px" />
                         <SkeletonLine width="60px" style={{ marginTop: '4px' }} />
                       </div>
                     </div>
-                    <SkeletonLine width="65px" />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <SkeletonBlock width="7px" height="7px" style={{ borderRadius: '50%' }} />
-                      <SkeletonLine width="75px" />
+                    <div className="table-cell table-channel-cell">
+                      <SkeletonLine width="65px" />
                     </div>
-                    <SkeletonLine width="80px" />
-                    <SkeletonLine width="90px" />
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <SkeletonLine width="60px" height="10px" />
-                      <SkeletonLine width="160px" />
+                    <div className="table-cell table-status-cell">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <SkeletonBlock width="7px" height="7px" style={{ borderRadius: '50%' }} />
+                        <SkeletonLine width="75px" />
+                      </div>
                     </div>
-                    <SkeletonLine width="55px" style={{ justifySelf: 'end' }} />
-                    <SkeletonBlock width="54px" height="26px" style={{ borderRadius: '6px', justifySelf: 'end' }} />
+                    <div className="table-cell table-stage-cell">
+                      <SkeletonLine width="80px" />
+                    </div>
+                    <div className="table-cell table-owner-cell">
+                      <SkeletonLine width="90px" />
+                    </div>
+                    <div className="table-cell table-message-cell dashboard-message-cell">
+                      <SkeletonLine width="50px" height="10px" style={{ marginBottom: '3px' }} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%' }}>
+                        <SkeletonBlock width="18px" height="18px" style={{ borderRadius: '4px', flexShrink: 0 }} />
+                        <SkeletonLine width="140px" />
+                      </div>
+                    </div>
+                    <div className="table-cell table-time-cell">
+                      <SkeletonLine width="55px" style={{ justifySelf: 'end' }} />
+                    </div>
+                    <div className="table-cell table-action-cell">
+                      <SkeletonBlock width="54px" height="26px" style={{ borderRadius: '6px' }} />
+                    </div>
                   </div>
                 ))
               ) : (
@@ -1255,46 +1355,89 @@ function Dashboard({ conversations = [], dataSource, status, ready = true, onOpe
                   {displayedConversations.map((item) => {
                     const messageOrigin = getConversationLastMessageOrigin(item);
                     const channel = item.channelType || item.channel;
+                    const meta = getConversationLastMessageMeta(item);
+                    const formattedText = formatConversationPreview(item.lastMessage);
+                    const previewText = formattedText || meta.label || 'Mensagem';
+                    const originKey = String(messageOrigin || '').toLowerCase().includes('ia')
+                      ? 'ia'
+                      : String(messageOrigin || '').toLowerCase().includes('cliente')
+                        ? 'cliente'
+                        : String(messageOrigin || '').toLowerCase().includes('sistema')
+                          ? 'sistema'
+                          : 'atendente';
+
                     return (
                       <div className="table-row" key={item.id}>
-                        <div className="table-contact-cell">
+                        {/* 1. Contato */}
+                        <div className="table-cell table-contact-cell">
                           <div className="conversation-avatar-wrapper compact">
                             <ContactAvatar name={item.contact} avatarUrl={item.avatarUrl} />
                           </div>
                           <div className="table-contact-info">
-                            <strong className="contact-name">{item.contact}</strong>
+                            <strong className="contact-name" title={item.contact}>{item.contact}</strong>
                             {item.company && item.company.startsWith('@') && (
-                              <small className="contact-handle">{item.company}</small>
+                              <small className="contact-handle" title={item.company}>{item.company}</small>
                             )}
                           </div>
                         </div>
 
-                        <div className="table-channel-cell">
+                        {/* 2. Canal */}
+                        <div className="table-cell table-channel-cell">
                           <div className={`channel-indicator ${getChannelClass(channel)}`}>
                             <ChannelIcon channel={channel} size={15} />
                             <span className="channel-name">{item.channel}</span>
                           </div>
                         </div>
 
-                        <div className={`dashboard-status-indicator status-${item.status}`}>
-                          <span className="status-dot" aria-hidden="true" />
-                          <span className="status-label">{statusLabels[item.status] || item.status}</span>
+                        {/* 3. Status */}
+                        <div className="table-cell table-status-cell">
+                          <div className={`dashboard-status-indicator status-${item.status}`}>
+                            <span className="status-dot" aria-hidden="true" />
+                            <span className="status-label">{statusLabels[item.status] || item.status}</span>
+                          </div>
                         </div>
 
-                        <span className="stage-pill-text">{item.stage}</span>
-
-                        <span className="owner-text">{item.owner}</span>
-
-                        <div className="dashboard-message-cell">
-                          {messageOrigin && <span className="message-origin-label">{messageOrigin}</span>}
-                          <span className="message-preview-text" title={item.lastMessage}>
-                            {formatConversationPreview(item.lastMessage)}
-                          </span>
+                        {/* 4. Etapa */}
+                        <div className="table-cell table-stage-cell">
+                          <span className="stage-pill-badge" title={item.stage}>{item.stage}</span>
                         </div>
 
-                        <small className="timestamp-text">{item.lastAt}</small>
+                        {/* 5. Responsável */}
+                        <div className="table-cell table-owner-cell">
+                          <div className="owner-badge" title={item.owner}>
+                            {item.owner === 'Assistente IA' ? (
+                              <Bot size={13} className="owner-icon ai" />
+                            ) : (
+                              <UserRound size={13} className="owner-icon human" />
+                            )}
+                            <span className="owner-name">{item.owner}</span>
+                          </div>
+                        </div>
 
-                        <div className="table-action-cell">
+                        {/* 6. Última mensagem (Alinhada à esquerda com ícone e origem) */}
+                        <div className="table-cell table-message-cell dashboard-message-cell">
+                          {messageOrigin && (
+                            <span className={`message-origin-badge origin-${originKey}`}>
+                              {messageOrigin}
+                            </span>
+                          )}
+                          <div className="message-preview-row">
+                            <span className={`message-type-icon-wrap icon-${meta.type}`} aria-hidden="true" title={meta.label}>
+                              {meta.icon}
+                            </span>
+                            <span className="message-preview-text" title={item.lastMessage || previewText}>
+                              {previewText}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 7. Horário */}
+                        <div className="table-cell table-time-cell">
+                          <small className="timestamp-text">{item.lastAt}</small>
+                        </div>
+
+                        {/* 8. Ação */}
+                        <div className="table-cell table-action-cell">
                           <button
                             type="button"
                             className="dashboard-action-btn"
@@ -1430,6 +1573,16 @@ function MediaAttachment({ media, onMediaLoad }) {
   const [expandedImage, setExpandedImage] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const imageSource = `${media.thumbnailUrl || media.url || ''}\u0000${media.url || ''}`;
+  const previousImageSourceRef = useRef(imageSource);
+
+  useEffect(() => {
+    if (!mediaSourceChanged(previousImageSourceRef.current, imageSource)) return;
+    previousImageSourceRef.current = imageSource;
+    setImageError(false);
+    setImageLoaded(false);
+    setExpandedImage(false);
+  }, [imageSource]);
 
   const config = {
     image: { label: 'Imagem', icon: ImageIcon },
@@ -1440,6 +1593,15 @@ function MediaAttachment({ media, onMediaLoad }) {
     product: { label: 'Produto', icon: CircleDollarSign },
   }[kind] || { label: 'Arquivo', icon: FileText };
   const Icon = config.icon;
+
+  if (media.status === 'store_failed') {
+    return (
+      <div className="media-placeholder" title={unavailableMediaLabel(kind)}>
+        <Icon size={20} />
+        <span>{unavailableMediaLabel(kind)}</span>
+      </div>
+    );
+  }
 
   if (kind === 'image' && media.url) {
     if (imageError) {

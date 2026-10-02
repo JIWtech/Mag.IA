@@ -1054,43 +1054,87 @@ textarea:focus-visible {
   flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  overflow: hidden;
+  overflow-x: auto;
   background: var(--surface);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.22);
 }
 
 .dashboard-table .table-head,
 .dashboard-table .table-row {
   display: grid;
-  grid-template-columns: minmax(170px, 1.4fr) minmax(85px, 0.7fr) minmax(130px, 0.95fr) minmax(105px, 0.8fr) minmax(110px, 0.8fr) minmax(180px, 2.1fr) minmax(70px, 0.55fr) minmax(70px, 0.5fr);
-  gap: 12px;
-  align-items: center;
-  padding: 0 16px;
+  grid-template-columns: minmax(195px, 1.3fr) minmax(110px, 0.75fr) minmax(145px, 0.95fr) minmax(150px, 0.95fr) minmax(120px, 0.8fr) minmax(220px, 1.35fr) minmax(105px, 0.7fr) minmax(80px, 0.5fr);
+  gap: 0;
+  align-items: stretch;
+  padding: 0;
+  min-width: 1125px;
+  box-sizing: border-box;
 }
 
+/* Header Cells with scroll gutter matching table-body */
 .dashboard-table .table-head {
   flex-shrink: 0;
-  min-height: 38px;
+  min-height: 40px;
   background: var(--surface-soft);
-  color: var(--text);
-  font-size: 11.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
+  overflow-y: scroll;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
 
-.dashboard-table .table-head .th-time,
-.dashboard-table .table-head .th-action {
+.dashboard-table .table-head::-webkit-scrollbar {
+  width: 6px;
+  height: 0;
+}
+
+.dashboard-table .table-head::-webkit-scrollbar-track,
+.dashboard-table .table-head::-webkit-scrollbar-thumb {
+  background: transparent !important;
+}
+
+.dashboard-table .table-head > * {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.dashboard-table .table-head > *:last-child {
+  border-right: none;
+}
+
+.dashboard-table .table-head .th-time {
+  justify-content: flex-end;
   text-align: right;
 }
 
+.dashboard-table .table-head .th-action {
+  justify-content: center;
+  text-align: center;
+}
+
+/* Table Body & Rows */
 .dashboard-table .table-body {
-  overflow-y: auto;
+  overflow-y: scroll;
+  overflow-x: hidden;
   max-height: 480px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 
 .dashboard-table .table-body::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 .dashboard-table .table-body::-webkit-scrollbar-track {
@@ -1107,8 +1151,7 @@ textarea:focus-visible {
 }
 
 .dashboard-table .table-row {
-  min-height: 52px;
-  padding: 8px 16px;
+  min-height: 58px;
   background: transparent;
   transition: background 120ms ease;
   border-bottom: 1px solid var(--line);
@@ -1119,7 +1162,35 @@ textarea:focus-visible {
 }
 
 .dashboard-table .table-row:hover {
-  background: var(--surface-soft);
+  background: rgba(242, 244, 247, 0.035);
+}
+
+/* Grid Cells with clean spreadsheet dividers */
+.dashboard-table .table-row > * {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-right: 1px solid var(--line);
+  min-width: 0;
+}
+
+.dashboard-table .table-row > *:last-child {
+  border-right: none;
+}
+
+/* 1. Contato */
+.dashboard-table .table-contact-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dashboard-table .table-contact-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
 }
 
 .dashboard-table .table-contact-info .contact-name {
@@ -1132,21 +1203,56 @@ textarea:focus-visible {
 }
 
 .dashboard-table .table-contact-info .contact-handle {
-  color: var(--text);
-  font-size: 11.5px;
-  font-weight: 450;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   margin-top: 1px;
 }
 
-/* Compact status indicator with dot + label */
+/* 2. Canal */
+.dashboard-table .table-channel-cell {
+  min-width: 0;
+}
+
+.dashboard-table .channel-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 500;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.dashboard-table .channel-indicator svg {
+  flex-shrink: 0;
+}
+
+.dashboard-table .channel-indicator.channel-whatsapp svg {
+  color: #25D366 !important;
+}
+
+.dashboard-table .channel-indicator.channel-instagram svg {
+  color: #E4405F !important;
+}
+
+.dashboard-table .channel-indicator.channel-telegram svg {
+  color: #24A1DE !important;
+}
+
+/* 3. Status */
+.dashboard-table .table-status-cell {
+  min-width: 0;
+}
+
 .dashboard-status-indicator {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
@@ -1184,98 +1290,307 @@ textarea:focus-visible {
   box-shadow: 0 0 6px rgba(248, 113, 113, 0.4);
 }
 
-.dashboard-table .channel-indicator {
-  color: var(--text);
-  font-weight: 500;
-  font-size: 13px;
-}
-
-.dashboard-table .stage-pill-text {
-  color: var(--text);
-  font-weight: 500;
-  font-size: 13px;
-}
-
-.dashboard-table .owner-text {
-  color: var(--text);
-  font-weight: 500;
-  font-size: 13px;
-}
-
-/* Message cell with sender origin + message preview */
-.dashboard-message-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+/* 4. Etapa */
+.dashboard-table .table-stage-cell {
   min-width: 0;
-  line-height: 1.25;
 }
 
-.dashboard-message-cell .message-origin-label {
-  font-size: 11px;
+.dashboard-table .stage-pill-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: rgba(242, 244, 247, 0.05);
+  border: 1px solid var(--line);
+  font-size: 11.5px;
   font-weight: 600;
-  color: color-mix(in srgb, var(--brand) 70%, var(--text));
-  letter-spacing: 0.2px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 5. Responsável */
+.dashboard-table .table-owner-cell {
+  min-width: 0;
+}
+
+.dashboard-table .owner-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.dashboard-table .owner-icon {
+  flex-shrink: 0;
+}
+
+.dashboard-table .owner-icon.ai {
+  color: #c084fc !important;
+}
+
+.dashboard-table .owner-icon.human {
+  color: #00d2ff !important;
+}
+
+.dashboard-table .owner-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* 6. Última Mensagem (Strictly Left-Aligned, Cell-Structured) */
+.dashboard-table .table-message-cell,
+.dashboard-table .dashboard-message-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-align: left;
+}
+
+.dashboard-table .message-origin-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 3px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dashboard-table .message-origin-badge.origin-ia {
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.14);
+  border: 1px solid rgba(192, 132, 252, 0.3);
+}
+
+.dashboard-table .message-origin-badge.origin-cliente {
+  color: #00d2ff;
+  background: rgba(0, 210, 255, 0.14);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+}
+
+.dashboard-table .message-origin-badge.origin-atendente {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.dashboard-table .message-origin-badge.origin-sistema {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.dashboard-table .message-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  justify-content: flex-start;
+}
+
+.dashboard-table .message-type-icon-wrap {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease;
+}
+
+.dashboard-table .message-type-icon-wrap svg {
+  stroke-width: 2.2px;
+}
+
+/* Ícones Coloridos Vivos (NUNCA brancos) */
+.dashboard-table .message-type-icon-wrap.icon-text {
+  color: #00d2ff !important;
+  background: rgba(0, 210, 255, 0.15) !important;
+  border: 1px solid rgba(0, 210, 255, 0.35) !important;
+  box-shadow: 0 0 8px rgba(0, 210, 255, 0.15);
+}
+.dashboard-table .message-type-icon-wrap.icon-text svg {
+  color: #00d2ff !important;
+  stroke: #00d2ff !important;
+}
+
+.dashboard-table .message-type-icon-wrap.icon-audio {
+  color: #10b981 !important;
+  background: rgba(16, 185, 129, 0.18) !important;
+  border: 1px solid rgba(16, 185, 129, 0.38) !important;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.18);
+}
+.dashboard-table .message-type-icon-wrap.icon-audio svg {
+  color: #10b981 !important;
+  stroke: #10b981 !important;
+}
+
+.dashboard-table .message-type-icon-wrap.icon-image {
+  color: #c084fc !important;
+  background: rgba(192, 132, 252, 0.18) !important;
+  border: 1px solid rgba(192, 132, 252, 0.38) !important;
+  box-shadow: 0 0 8px rgba(192, 132, 252, 0.18);
+}
+.dashboard-table .message-type-icon-wrap.icon-image svg {
+  color: #c084fc !important;
+  stroke: #c084fc !important;
+}
+
+.dashboard-table .message-type-icon-wrap.icon-video {
+  color: #38bdf8 !important;
+  background: rgba(56, 189, 248, 0.18) !important;
+  border: 1px solid rgba(56, 189, 248, 0.38) !important;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.18);
+}
+.dashboard-table .message-type-icon-wrap.icon-video svg {
+  color: #38bdf8 !important;
+  stroke: #38bdf8 !important;
+}
+
+.dashboard-table .message-type-icon-wrap.icon-document {
+  color: #fbbf24 !important;
+  background: rgba(251, 191, 36, 0.18) !important;
+  border: 1px solid rgba(251, 191, 36, 0.38) !important;
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.18);
+}
+.dashboard-table .message-type-icon-wrap.icon-document svg {
+  color: #fbbf24 !important;
+  stroke: #fbbf24 !important;
+}
+
+.dashboard-table .message-type-icon-wrap.icon-location {
+  color: #f87171 !important;
+  background: rgba(248, 113, 113, 0.18) !important;
+  border: 1px solid rgba(248, 113, 113, 0.38) !important;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.18);
+}
+.dashboard-table .message-type-icon-wrap.icon-location svg {
+  color: #f87171 !important;
+  stroke: #f87171 !important;
+}
+
+.dashboard-table .message-type-icon-wrap.icon-contact {
+  color: #2dd4bf !important;
+  background: rgba(45, 212, 191, 0.18) !important;
+  border: 1px solid rgba(45, 212, 191, 0.38) !important;
+}
+.dashboard-table .message-type-icon-wrap.icon-contact svg {
+  color: #2dd4bf !important;
+  stroke: #2dd4bf !important;
+}
+
+.dashboard-table .message-type-icon-wrap.icon-sticker {
+  color: #f472b6 !important;
+  background: rgba(244, 114, 182, 0.18) !important;
+  border: 1px solid rgba(244, 114, 182, 0.38) !important;
+}
+.dashboard-table .message-type-icon-wrap.icon-sticker svg {
+  color: #f472b6 !important;
+  stroke: #f472b6 !important;
+}
+
+.dashboard-table .message-type-icon-wrap.icon-attachment {
+  color: #fb923c !important;
+  background: rgba(251, 146, 60, 0.18) !important;
+  border: 1px solid rgba(251, 146, 60, 0.38) !important;
+}
+.dashboard-table .message-type-icon-wrap.icon-attachment svg {
+  color: #fb923c !important;
+  stroke: #fb923c !important;
+}
+
 .dashboard-table .message-preview-text {
+  flex: 1;
+  min-width: 0;
   color: var(--text);
-  font-weight: 450;
-  font-size: 13px;
+  font-weight: 500;
+  font-size: 12.5px;
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
   display: block;
 }
 
-.dashboard-table .timestamp-text {
-  color: var(--text);
-  font-weight: 500;
-  font-size: 12px;
+/* 7. Horário */
+.dashboard-table .table-time-cell {
+  justify-content: flex-end;
   text-align: right;
+  min-width: 0;
+}
+
+.dashboard-table .timestamp-text {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 11.5px;
+  font-family: var(--font-mono, monospace);
   white-space: nowrap;
 }
 
-/* Action button to open conversation */
-.table-action-cell {
-  display: flex;
+/* 8. Ação */
+.dashboard-table .table-action-cell {
+  justify-content: center;
   align-items: center;
-  justify-content: flex-end;
+  min-width: 0;
 }
 
-.dashboard-action-btn {
+.dashboard-table .dashboard-action-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   height: 28px;
-  padding: 0 10px;
-  background: var(--surface-soft);
+  padding: 0 11px;
+  background: rgba(242, 244, 247, 0.05);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   color: var(--text);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
   transition: all 120ms ease;
   white-space: nowrap;
 }
 
-.dashboard-action-btn:hover {
+.dashboard-table .dashboard-action-btn:hover {
   background: var(--brand-soft);
   border-color: rgba(0, 224, 255, 0.4);
   color: var(--brand);
+  box-shadow: 0 0 10px rgba(0, 224, 255, 0.2);
 }
 
-.dashboard-action-btn .action-icon {
-  color: var(--muted);
+.dashboard-table .dashboard-action-btn .action-icon {
+  color: #00d2ff;
   transition: transform 120ms ease, color 120ms ease;
 }
 
-.dashboard-action-btn:hover .action-icon {
+.dashboard-table .dashboard-action-btn:hover .action-icon {
   color: var(--brand);
   transform: translate(1px, -1px);
 }
@@ -1458,14 +1773,6 @@ textarea:focus-visible {
     font-size: 12px;
   }
 
-  .dashboard-table .table-head,
-  .dashboard-table .table-row {
-    grid-template-columns: minmax(145px, 1.3fr) minmax(80px, 0.7fr) minmax(120px, 0.85fr) minmax(95px, 0.75fr) minmax(100px, 0.75fr) minmax(140px, 1.8fr) minmax(65px, 0.55fr) minmax(65px, 0.5fr);
-    gap: 8px;
-    padding: 0 10px;
-    min-height: 44px;
-  }
-
   .channel-indicator {
     gap: 6px;
     font-size: 12px;
@@ -1474,10 +1781,6 @@ textarea:focus-visible {
   .channel-indicator svg {
     width: 14px;
     height: 14px;
-  }
-
-  .dashboard-table .table-row {
-    padding: 4px 8px;
   }
 
   .table-contact-cell {
@@ -10152,15 +10455,6 @@ button:disabled {
 /* ==========================================================================
    Dashboard Responsivo (Fase 2)
    ========================================================================== */
-@media (max-width: 1280px) {
-
-  .dashboard-table .table-head,
-  .dashboard-table .table-row {
-    grid-template-columns: minmax(130px, 1.2fr) minmax(75px, 0.65fr) minmax(115px, 0.8fr) minmax(85px, 0.7fr) minmax(90px, 0.7fr) minmax(130px, 1.4fr) minmax(60px, 0.5fr) minmax(60px, 0.5fr);
-    gap: 6px;
-    padding: 0 8px;
-  }
-}
 
 @media (max-width: 1024px) {
   .dashboard-page {
@@ -10481,6 +10775,11 @@ button:disabled {
     align-items: center;
   }
 
+  .dashboard-table .table-row > * {
+    border-right: none !important;
+    padding: 0 !important;
+  }
+
   .dashboard-table .table-row.table-row-skeleton {
     min-width: 0 !important;
     display: flex;
@@ -10493,13 +10792,17 @@ button:disabled {
     min-width: 0;
   }
 
-  .dashboard-table .timestamp-text {
+  .dashboard-table .table-time-cell {
     grid-area: time;
     justify-self: end;
+  }
+
+  .dashboard-table .timestamp-text {
     font-size: 11.5px;
     color: var(--text);
   }
 
+  .dashboard-table .table-message-cell,
   .dashboard-table .dashboard-message-cell {
     grid-area: message;
   }
@@ -10524,25 +10827,20 @@ button:disabled {
     grid-area: channel;
   }
 
+  .dashboard-table .table-status-cell,
   .dashboard-table .table-row>.dashboard-status-indicator,
   .dashboard-table .table-row>.badge {
     grid-area: status;
     justify-self: end;
   }
 
-  .dashboard-table .stage-pill-text {
+  .dashboard-table .table-stage-cell {
     grid-area: stage;
-    font-size: 12px;
-    color: var(--text);
-    font-weight: 500;
   }
 
-  .dashboard-table .owner-text {
+  .dashboard-table .table-owner-cell {
     grid-area: owner;
     justify-self: end;
-    font-size: 12px;
-    color: var(--text);
-    font-weight: 500;
   }
 
   .dashboard-table .table-action-cell {
