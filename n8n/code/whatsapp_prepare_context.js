@@ -105,6 +105,124 @@ const supabaseUrl = env('SUPABASE_URL').replace(/\/$/, '');
 const serviceKey = env('SUPABASE_SERVICE_ROLE_KEY');
 if (!supabaseUrl || !serviceKey) recordContextError('missing_supabase_env_in_code_node');
 const headers = { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey, 'Content-Type': 'application/json' };
+
+function tenantEnvSuffix(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '_');
+}
+
+function profilePictureFromPayload(payload) {
+  const source = objectValue(payload);
+  const candidates = [source.profilePictureUrl, source.profilePicUrl, source.avatarUrl, source.pictureUrl,
+    source?.contact?.profilePictureUrl, source?.contact?.profilePicUrl];
+  return candidates.find((value) => /^https:\/\//i.test(String(value || '').trim())) || null;
+}
+
+function shouldRefreshAvatar(value) {
+  if (!value) return true;
+  const age = Date.now() - Date.parse(value);
+  return !Number.isFinite(age) || age >= 14 * 24 * 60 * 60 * 1000;
+}
+
+let contactAvatar = { avatarUrl: null, source: 'unresolved' };
+async function cacheWhatsappContactAvatar() {
+  if (!supabaseUrl || !serviceKey || !tenantId || !$json.remoteJid) return;
+
+  const filter = '&tenant_id=eq.' + encodeURIComponent(tenantId)
+    + '&source_channel=eq.whatsapp&external_handle=eq.' + encodeURIComponent($json.remoteJid)
+    + '&deleted_at=is.null&order=created_at.asc&limit=1';
+  let contact = null;
+  try {
+    const rows = await this.helpers.httpRequest({
+      method: 'GET',
+      url: supabaseUrl + '/rest/v1/contacts?select=id,avatar_url,avatar_fetched_at' + filter,
+      headers, json: true, timeout: 3500,
+    });
+    contact = Array.isArray(rows) ? rows[0] || null : null;
+  } catch (error) {
+    contactAvatar = { avatarUrl: null, source: 'contact_lookup_error' };
+    return;
+  }
+
+  const contactData = {
+    tenant_id: tenantId,
+    name: String($json.contactName || '').trim() || null,
+    phone: String($json.phone || '').trim() || null,
+    external_handle: String($json.remoteJid),
+    source_channel: 'whatsapp',
+  };
+  if (!contact) {
+    try {
+      const created = await this.helpers.httpRequest({
+        method: 'POST', url: supabaseUrl + '/rest/v1/contacts',
+        headers: { ...headers, Prefer: 'return=representation' }, body: contactData, json: true, timeout: 3500,
+      });
+      contact = Array.isArray(created) ? created[0] || null : created || null;
+    } catch (error) {
+      contactAvatar = { avatarUrl: null, source: 'contact_create_error' };
+      return;
+    }
+  }
+
+  const webhookAvatar = profilePictureFromPayload($json.raw_payload);
+  const cachedAvatar = profilePictureFromPayload({ profilePictureUrl: contact?.avatar_url });
+  if (webhookAvatar || (cachedAvatar && !shouldRefreshAvatar(contact?.avatar_fetched_at))) {
+    const avatarUrl = webhookAvatar || cachedAvatar;
+    contactAvatar = { avatarUrl, source: webhookAvatar ? 'webhook' : 'cache' };
+    if (contact?.id && webhookAvatar && webhookAvatar !== cachedAvatar) {
+      await this.helpers.httpRequest({
+        method: 'PATCH', url: supabaseUrl + '/rest/v1/contacts?id=eq.' + encodeURIComponent(contact.id)
+          + '&tenant_id=eq.' + encodeURIComponent(tenantId),
+        headers, body: { avatar_url: avatarUrl, avatar_fetched_at: new Date().toISOString(), ...contactData }, json: true, timeout: 3500,
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  if (!shouldRefreshAvatar(contact?.avatar_fetched_at)) {
+    contactAvatar = { avatarUrl: null, source: 'cache_null' };
+    return;
+  }
+
+  // Reserva a tentativa no cache antes de chamar o provedor. Assim, dois webhooks
+  // quase simultâneos do mesmo contato não fazem duas consultas desnecessárias.
+  try {
+    await this.helpers.httpRequest({
+      method: 'PATCH', url: supabaseUrl + '/rest/v1/contacts?id=eq.' + encodeURIComponent(contact.id)
+        + '&tenant_id=eq.' + encodeURIComponent(tenantId),
+      headers, body: { avatar_fetched_at: new Date().toISOString(), ...contactData }, json: true, timeout: 3500,
+    });
+  } catch (error) {
+    contactAvatar = { avatarUrl: null, source: 'contact_reservation_error' };
+    return;
+  }
+
+  const suffix = tenantEnvSuffix($json.tenant_slug);
+  const baseUrl = String(env('EVOLUTION_API_URL_' + suffix) || '').replace(/\/$/, '');
+  const apiKey = env('EVOLUTION_API_KEY_' + suffix);
+  const instance = String($json.instance || env('EVOLUTION_INSTANCE_' + suffix) || '').trim();
+  if (!baseUrl || !apiKey || !instance || !contact?.id) {
+    contactAvatar = { avatarUrl: null, source: 'provider_not_configured' };
+    return;
+  }
+
+  try {
+    const response = await this.helpers.httpRequest({
+      method: 'POST', url: baseUrl + '/chat/fetchProfilePictureUrl/' + encodeURIComponent(instance),
+      headers: { apikey: apiKey, 'Content-Type': 'application/json' },
+      body: { number: String($json.remoteJid) }, json: true, timeout: 3500,
+    });
+    const avatarUrl = profilePictureFromPayload(response);
+    await this.helpers.httpRequest({
+      method: 'PATCH', url: supabaseUrl + '/rest/v1/contacts?id=eq.' + encodeURIComponent(contact.id)
+        + '&tenant_id=eq.' + encodeURIComponent(tenantId),
+      headers, body: { avatar_url: avatarUrl, avatar_fetched_at: new Date().toISOString(), ...contactData }, json: true, timeout: 3500,
+    });
+    contactAvatar = { avatarUrl, source: 'evolution' };
+  } catch (error) {
+    // Foto é enriquecimento: a conversa segue normalmente e uma tentativa futura pode ocorrer.
+    contactAvatar = { avatarUrl: null, source: 'evolution_error' };
+  }
+}
 let conversationBoundary = null;
 let conversationStateOk = false;
 const conversationFilter = '&tenant_slug=eq.' + encodeURIComponent($json.tenant_slug)
@@ -210,6 +328,7 @@ if (supabaseUrl && serviceKey && $json.tenant_slug) {
     activeSystemPrompt = String(tenantSettings.system_prompt || '').trim();
   }
 }
+await cacheWhatsappContactAvatar.call(this);
 // Opt-in rollout: existing tenants keep their current prompt/model/media behavior.
 const tenantCatalogMode = tenantSettings.whatsapp_context_mode === 'tenant_catalog_v1';
 let serviceCatalog = [];
@@ -380,7 +499,9 @@ return { json: {
   detected_product_category: productMediaMatches[0]?.category_label || '',
   catalog_diagnostics: catalogDiagnostics,
   raw_payload: { ...incomingPayload, catalog_diagnostics: catalogDiagnostics, product_media_matches: productMediaMatches,
-    conversation_session_id: conversationSessionId, conversation_closed_at: conversationBoundary?.created_at || null },
+    conversation_session_id: conversationSessionId, conversation_closed_at: conversationBoundary?.created_at || null,
+    contact_avatar: contactAvatar },
+  avatarUrl: contactAvatar.avatarUrl,
   payment_signal_detected: paymentSignalDetected,
   payment_signal_ack_message: tenantSettings.payment_signal_ack_message || paymentSettings.ack_message || 'Ta bom! Vou confirmar aqui, um momento.',
   ai_allowed: aiAllowed, ai_block_reason: aiBlockReason,

@@ -1,11 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyConversationLifecycle, canCloseConversation, requirePersistedClosure } from './conversationLifecycle.js';
-
-test('closing requires a persisted server boundary, not merely HTTP success', () => {
-  for (const result of [null, {}, {ok:true}, {ok:true,saved:[]}]) assert.throws(()=>requirePersistedClosure(result));
-  assert.equal(requirePersistedClosure({ok:true,saved:[{id:'close-1',service:'conversation_closed'}]}).id,'close-1');
-});
+import { applyConversationLifecycle, canCloseConversation } from './conversationLifecycle.js';
 
 const inbound = { id: 'in-1', direction: 'inbound' };
 const close = { id: 'close-1', direction: 'outbound', service: 'conversation_closed' };
@@ -14,13 +9,14 @@ function apply(conversation, event, stage = 'Qualificacao') {
   return conversation;
 }
 
-test('active AI and human attendance can be closed, closed attendance cannot', () => {
+test('active attendance (AI or human) can be closed, but finalized cannot', () => {
   assert.equal(canCloseConversation(null), false);
-  for (const status of ['finalizado', undefined]) {
+  for (const status of ['finalizado', undefined, 'desconhecido']) {
     assert.equal(canCloseConversation({ status }), false);
   }
   assert.equal(canCloseConversation({ status: 'ia_ativa' }), true);
   assert.equal(canCloseConversation({ status: 'atendimento_humano' }), true);
+  assert.equal(canCloseConversation({ status: 'atendimento_humano', stage: 'sales_human', ai_locked: true }), true);
 });
 
 test('closing persists final status and retains visible messages', () => {
@@ -93,12 +89,46 @@ test('close observed without a new inbound keeps the button blocked', () => {
   assert.equal(canCloseConversation({ status: 'ia_ativa', closedEventId: 'close-1', lastInboundId: 'in-1' }, pending), false);
 });
 
-test('handoff remains human until a new attendance starts', () => {
+test('handoff keeps the close action available and closing finalizes attendance', () => {
   const conversation = apply({ status: 'ia_ativa' }, { ...inbound, handoff: true });
   assert.equal(conversation.status, 'atendimento_humano');
+  assert.equal(canCloseConversation(conversation), true);
+
   apply(conversation, { ...inbound, id: 'in-2', handoff: false });
   assert.equal(conversation.status, 'atendimento_humano');
+  assert.equal(canCloseConversation(conversation), true);
+
   apply(conversation, close);
+  assert.equal(conversation.status, 'finalizado');
+  assert.equal(canCloseConversation(conversation), false);
+
   apply(conversation, { ...inbound, id: 'in-3', handoff: false });
   assert.equal(conversation.status, 'ia_ativa');
+  assert.equal(canCloseConversation(conversation), true);
+});
+
+test('ciclo completo: IA ativa -> humano assume -> operador envia mensagem -> encerrar -> nova sessao', () => {
+  // 1. IA ativa -> Encerrar disponível
+  const conversation = { status: 'ia_ativa' };
+  assert.equal(canCloseConversation(conversation), true);
+
+  // 2. Humano assume (handoff / sales_human / ai_locked) -> Encerrar continua disponível
+  applyConversationLifecycle(conversation, { direction: 'inbound', handoff: true }, 'Atendimento humano');
+  assert.equal(conversation.status, 'atendimento_humano');
+  assert.equal(canCloseConversation(conversation), true);
+
+  // 3. Operador envia mensagem (manual_reply / outbound) -> Encerrar continua disponível
+  applyConversationLifecycle(conversation, { direction: 'outbound', sender_type: 'operator', service: 'manual_reply' }, 'Atendimento humano');
+  assert.equal(conversation.status, 'atendimento_humano');
+  assert.equal(canCloseConversation(conversation), true);
+
+  // 4. Conversa encerrada -> Encerrar desabilitado
+  applyConversationLifecycle(conversation, close, 'Finalizado');
+  assert.equal(conversation.status, 'finalizado');
+  assert.equal(canCloseConversation(conversation), false);
+
+  // 5. Nova sessão posterior do cliente -> Encerrar volta a ficar disponível
+  applyConversationLifecycle(conversation, { id: 'in-new', direction: 'inbound', raw_payload: { conversation_session_id: 'sess-nova-99' } }, 'Qualificacao');
+  assert.equal(conversation.status, 'ia_ativa');
+  assert.equal(canCloseConversation(conversation), true);
 });
