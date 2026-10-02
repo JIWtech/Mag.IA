@@ -27,11 +27,18 @@ export function applyConversationLifecycle(conversation, event, stage) {
 }
 
 export function canCloseConversation(conversation, pendingClose) {
-  if (!conversation || conversation.status !== 'ia_ativa') return false;
+  if (!conversation || !['ia_ativa', 'atendimento_humano'].includes(conversation.status)) return false;
   if (!pendingClose) return true;
   // Wait for both the persisted boundary and a new inbound, not just a refresh.
   return Boolean(conversation.closedEventId
     && conversation.closedEventId !== pendingClose.closedEventId
     && conversation.lastInboundId
     && conversation.lastInboundId !== pendingClose.lastInboundId);
+}
+export function requirePersistedClosure(result) {
+  const closed = result?.saved?.find?.(event => event.id && event.service === 'conversation_closed');
+  if (result?.ok !== true || !closed) {
+    throw new Error('O encerramento nao foi confirmado pelo servidor. Atualize a conversa e tente novamente.');
+  }
+  return closed;
 }

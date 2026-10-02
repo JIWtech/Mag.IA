@@ -38,20 +38,21 @@ begin
 end $$;
 
 -- O painel recebe somente os jobs ativos do tenant oficial. Escrita continua exclusiva ao service_role/n8n.
-grant select on public.follow_up_jobs to anon, authenticated;
+revoke select on public.follow_up_jobs from anon;
+grant select on public.follow_up_jobs to authenticated;
 drop policy if exists follow_up_jobs_select_nubia_dashboard on public.follow_up_jobs;
 create policy follow_up_jobs_select_nubia_dashboard
 on public.follow_up_jobs
 for select
-to anon, authenticated
+to authenticated
 using (
   tenant_id = (
     select id from public.tenants
     where slug = 'clinica_nubia_oficial' and status = 'active' and deleted_at is null
   )
   and (
-    auth.uid() is null
-    or exists (
+    auth.uid() is not null
+    and exists (
       select 1 from public.tenant_members member
       where member.tenant_id = follow_up_jobs.tenant_id
         and member.user_id = auth.uid()

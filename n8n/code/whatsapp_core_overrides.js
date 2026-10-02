@@ -36,6 +36,8 @@ async function loadRecentHistory(context = {}) {
     + '&order=created_at.desc,id.desc&limit=' + (grounded ? 251 : 50));
   if (!Array.isArray(rows)) throw new Error('Conversation history unavailable');
   turn.boundary_created_at = boundary[0]?.created_at || null;
+  // The queue claim and the history lookup must describe the same attendance.
+  turn.history_boundary_changed = !!turn.boundary_id && turn.boundary_id !== (boundary[0]?.id || 'initial');
   turn.history_overflow = grounded && rows.length > 250;
   return rows.reverse();
 }
@@ -56,11 +58,20 @@ function conversationControl(history = []) {
   return { activeHistory, lockedByHuman: !!event, lockEvent: event || null, lockSource: event ? 'human_control' : null };
 }
 
-async function loadAppointments(tenantId) {
+async function loadAppointments(tenantId, includePrevious = false) {
   const rows = await supabaseGet('/rest/v1/appointments?select=*&tenant_id=eq.' + encodeFilter(tenantId)
     + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
-    + '&order=starts_at.desc&limit=30');
-  return { rows, error: '' };
+    + (!includePrevious ? '&status=not.in.(cancelled,canceled,completed,done,no_show)&starts_at=gt.' + encodeFilter(new Date().toISOString())
+      + (turn?.boundary_created_at ? '&created_at=gt.' + encodeFilter(turn.boundary_created_at) : '') : '')
+    + '&order=created_at.desc&limit=31');
+  if (!Array.isArray(rows)) throw new Error('Appointments unavailable');
+  const scoped = includePrevious ? rows : rows.filter(row => {
+    if (['cancelled','canceled','completed','done','no_show'].includes(row.status) || Date.parse(row.starts_at) <= Date.now()) return false;
+    const session = row.metadata?.conversation_session_id;
+    if (session) return session === (turn?.boundary_id || 'initial');
+    return !turn?.boundary_created_at || Date.parse(row.created_at) > Date.parse(turn.boundary_created_at);
+  });
+  return { rows: scoped, error: '', overflow: rows.length > 30 };
 }
 
 async function loadCatalogContext(context) {
@@ -77,6 +88,7 @@ async function markLatestAppointmentPaymentReported(context) {
   const rows = (await loadAppointments(context.tenant.id)).rows;
   const candidates = rows.filter(row => ['pending_payment','reserved','payment_requested'].includes(row.status))
     .sort((a,b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  if (candidates.length > 1) return { updated: false, reason: 'ambiguous_payment_appointment' };
   const target = candidates[0];
   if (!target) return { updated: false, reason: 'appointment_not_found' };
   const payload = { status: 'payment_reported', metadata: { ...target.metadata,
@@ -92,7 +104,7 @@ async function saveEvent(event) {
   const payload = { service: event.service, stage: event.stage, handoff: event.handoff,
     ai_provider: event.ai_provider, ai_model: event.ai_model || null, ai_error: event.ai_error || '',
     ai_usage: event.ai_usage || {}, response_text: null,
-    raw_payload: { ...event.raw_payload, core_revision: 'conversation_core_v1',
+    raw_payload: { ...event.raw_payload, ...(turn.audio_transcriptions ? {audio_transcriptions:turn.audio_transcriptions} : {}), core_revision: 'conversation_core_v1',
       grouped_message_ids: turn.messages.map(item => item.id), conversation_session_id: turn.boundary_id } };
   const ids = turn.messages.map(item => item.event_id);
   const saved = await supabasePatch('/rest/v1/channel_events?tenant_id=eq.' + encodeFilter($json.tenant_id)
@@ -102,6 +114,7 @@ async function saveEvent(event) {
 
 async function scheduleFollowUps(context, sentEvent, event) {
   const settings = settingsFor(context);
+  if (salesEnabled(context)) return 0;
   // The policy controls activation in the database. Never enqueue human handoffs,
   // payment flows, closed conversations, or a reply that failed to persist.
   if (!sentEvent?.id || event.handoff || ['agendamento', 'pagamento_sinal', 'conversation_closed'].includes(event.service)) return 0;
@@ -134,6 +147,7 @@ async function sendChannelMessage(context, text, event) {
     + '&created_at=gt.' + encodeFilter(new Date(workflowStartedAtMs).toISOString())
     + '&or=(service.eq.conversation_assigned,service.eq.appointment_payment_confirmed,sender_type.eq.human)&limit=1');
   if (humanChanges.length) return { cancelled: true };
+  if (salesEnabled(context) && !await salesCanSend(context,event)) return {cancelled:true};
   sendAttempted = true;
   const sent = await httpJson('POST', base + '/message/sendText/' + encodeFilter(instance),
     { apikey: key, 'Content-Type': 'application/json' }, { number: chatId, text });
@@ -150,6 +164,12 @@ async function sendChannelMessage(context, text, event) {
       conversation_session_id: turn.boundary_id, grouped_message_ids: turn.messages.map(item => item.id) },
   });
   const sentEvent = Array.isArray(saved) ? saved[0] : saved;
-  const followUpsScheduled = await scheduleFollowUps(context, sentEvent, event);
-  return { sent: true, id: String(id), follow_ups_scheduled: followUpsScheduled };
+  try {
+    const followUpsScheduled = await scheduleFollowUps(context, sentEvent, event);
+    return { sent: true, id: String(id), follow_ups_scheduled: followUpsScheduled };
+  } catch (error) {
+    // The primary reply is already sent and persisted. An optional job must not retry it.
+    return { sent: true, id: String(id), follow_ups_scheduled: 0,
+      follow_up_error: String(error.message || error).slice(0, 180) };
+  }
 }

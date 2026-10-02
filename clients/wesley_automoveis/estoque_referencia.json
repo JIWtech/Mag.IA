@@ -1,0 +1,18 @@
+{
+  "source_url": "https://docs.google.com/spreadsheets/d/1VgUrslSLNWmouutDww7iws2kVJUiiSiV9iAgwfyFWhE/edit?usp=sharing",
+  "source_title": "Estoque Wesley",
+  "read_date": "2026-09-29",
+  "scope": "Exportacao CSV da aba padrao; outras abas nao auditadas",
+  "purpose": "Referencia de onboarding. Nao comprova disponibilidade atual e nao e sincronizacao automatica.",
+  "price_interpretation": "BRL: ponto como separador de milhar, conforme formato da planilha; confirmar com Wesley antes de ativar.",
+  "columns_missing_for_activation": ["id_veiculo", "status", "atualizado_em"],
+  "columns_optional": ["foto_urls", "versao", "cambio", "ano_fabricacao", "ano_modelo"],
+  "vehicles": [
+    {"source_row": 2, "model": "TORNADO 300L", "brand": "HONDA", "price_raw": "28.980", "price_cents": 2898000, "color": "VERMELHO", "km_raw": "4500", "km": 4500, "year": 2015, "fuel": "FLEX", "review": "Confirmar modelo, ano e combustivel; nao corrigir por suposicao."},
+    {"source_row": 3, "model": "PCX", "brand": "HONDA", "price_raw": "18.980", "price_cents": 1898000, "color": "BRANCA", "km_raw": "12.500", "km": 12500, "year": 2023, "fuel": "FLEX"},
+    {"source_row": 4, "model": "CROSSER", "brand": "YAMAHA", "price_raw": "14.980", "price_cents": 1498000, "color": "PRETO", "km_raw": "70000", "km": 70000, "year": 2021, "fuel": "FLEX"},
+    {"source_row": 5, "model": "PCX", "brand": "HONDA", "price_raw": "13.980", "price_cents": 1398000, "color": "PRATA", "km_raw": "40000", "km": 40000, "year": 2018, "fuel": "FLEX"},
+    {"source_row": 6, "model": "SANDERO GT LINE", "brand": "RENAULT", "price_raw": "42.980", "price_cents": 4298000, "color": "BRANCO", "km_raw": "138600", "km": 138600, "year": 2016, "fuel": "FLEX GNV"},
+    {"source_row": 7, "model": "VERSA SL", "brand": "NISSAN", "price_raw": "32.980", "price_cents": 3298000, "color": "PRATA", "km_raw": "131300", "km": 131300, "year": 2013, "fuel": "FLEX GNV"}
+  ]
+}

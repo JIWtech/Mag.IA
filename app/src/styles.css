@@ -4279,6 +4279,64 @@ button:disabled {
   }
 }
 
+/* Kanban mobile: uma única navegação vertical, sem alterar o board desktop. */
+@media (max-width: 768px) {
+  .kanban-page {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    padding-bottom: 16px;
+  }
+
+  .kanban-board {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    overflow: visible;
+    gap: 10px;
+    padding-bottom: 0;
+  }
+
+  .kanban-column {
+    order: var(--kanban-mobile-order, 99);
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    overflow: visible;
+    padding: 10px;
+  }
+
+  .column-cards-container {
+    flex: none;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .column-empty {
+    min-height: 0;
+    padding: 12px 10px;
+  }
+
+  .kanban-card-quick-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .card-quick-btn {
+    min-height: 40px;
+    padding: 7px 8px;
+    font-size: 11px;
+  }
+
+  .card-quick-btn.finish:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -6253,9 +6311,27 @@ button:disabled {
 }
 
 @media (max-width: 768px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
   .app-shell {
     grid-template-columns: 1fr !important;
     grid-template-rows: 1fr !important;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .main {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
   }
 
   .sidebar {
@@ -6567,6 +6643,16 @@ button:disabled {
 
 /* Mobile & Tablet Portrait (<= 768px): Compact toolbar, smooth scrollable chips, maximized board height */
 @media (max-width: 768px) {
+  .kanban-page,
+  .kanban-board,
+  .kanban-column,
+  .column-cards-container {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+  }
+
   .kanban-toolbar {
     padding: 8px 12px;
     gap: 8px;
@@ -7435,3 +7521,8 @@ button:disabled {
 @media (max-width: 700px) {
   .home-product-preview > img { aspect-ratio: 1.55 / 1; object-position: 65% center; }.home-preview-caption { left: 10px; bottom: 10px; font-size: 9px; }.home-interface-gallery { padding-top: 10px; }.home-gallery-grid { grid-template-columns: 1fr; gap: 12px; margin-top: 26px; }.home-gallery-card { min-height: 270px; border-radius: 10px; }.home-gallery-card figcaption { left: 15px; right: 15px; bottom: 14px; }.home-gallery-card figcaption small { font-size: 11px; }
 }
+.sales-document-details { margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
+.sales-document-details summary { cursor: pointer; }
+.sales-document-details dl { margin: 8px 0; }
+.sales-document-details dt { font-weight: 600; }
+.sales-document-details dd { margin: 0 0 6px; }

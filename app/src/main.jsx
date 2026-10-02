@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { canCloseConversation } from './conversationLifecycle';
+import { canCloseConversation, requirePersistedClosure } from './conversationLifecycle';
 import { CHANNEL_OPTIONS, isTenantAuthorized } from './tenantAccess';
 import { createRoot } from 'react-dom/client';
 import readXlsxFile from 'read-excel-file/browser';
@@ -145,12 +145,33 @@ function appDataSignature(value) {
   ));
 }
 
+function sanitizeCachedAppData(cached, tenantSlug) {
+  if (!cached || !Array.isArray(cached.conversations)) return cached;
+  const isNubia = tenantSlug === 'clinica_nubia';
+  const sanitizedConversations = cached.conversations.map((conv) => {
+    let owner = conv.owner;
+    if (!isNubia && owner && /recep[cç][aã]o\s*\/\s*n[uú]bia/i.test(owner)) {
+      owner = null;
+    }
+    const sanitizedMessages = (conv.messages || []).map((msg) => {
+      let sent_by = msg.sent_by;
+      if (!isNubia && sent_by && /recep[cç][aã]o\s*\/\s*n[uú]bia/i.test(sent_by)) {
+        sent_by = 'Operador NORIA';
+      }
+      return { ...msg, sent_by };
+    });
+    return { ...conv, owner, messages: sanitizedMessages };
+  });
+  return { ...cached, conversations: sanitizedConversations };
+}
+
 function loadCachedAppData(tenantSlug) {
   if (isAuthRequired()) return null;
   try {
     const raw = localStorage.getItem(`${appDataCachePrefix}${tenantSlug}`);
     const cached = raw ? JSON.parse(raw) : null;
-    return cached?.conversations ? cached : null;
+    if (!cached?.conversations) return null;
+    return sanitizeCachedAppData(cached, tenantSlug);
   } catch {
     return null;
   }
@@ -160,7 +181,7 @@ function cacheAppData(tenantSlug, data) {
   if (isAuthRequired()) return;
   try {
     const serialized = JSON.stringify(data, (key, value) => (
-      key === 'url' || key === 'thumbnailUrl' ? undefined : value
+      key === 'url' || key === 'thumbnailUrl' || key === 'salesDocuments' ? undefined : value
     ));
     if (serialized.length <= 2_000_000) {
       localStorage.setItem(`${appDataCachePrefix}${tenantSlug}`, serialized);
@@ -328,7 +349,7 @@ function App() {
   };
 
   const handleFinishConversationFromKanban = (card) => {
-    handleMoveKanbanCard(card, 'finalizadas');
+    handleMoveKanbanCard(card, card.salesClosedStage || 'finalizadas');
   };
 
   useEffect(() => {
@@ -709,6 +730,7 @@ function App() {
         {active === 'dashboard' && <Dashboard conversations={appData.conversations} dataSource={appData.source} status={appData.status} ready={appDataReady} />}
         {active === 'conversas' && (
           <Conversations
+            key={activeTenantSlug}
             allowedChannels={allowedChannels}
             conversations={appData.conversations}
             tenantSlug={activeTenantSlug}
@@ -723,6 +745,7 @@ function App() {
         )}
         {active === 'kanban' && (
           <Kanban
+            key={activeTenantSlug}
             allowedChannels={allowedChannels}
             kanbanColumns={appData.kanbanColumns}
             tenantName={selectedTenant.name}
@@ -913,7 +936,7 @@ function Dashboard({ conversations, dataSource, status, ready = true }) {
 
                       <span className="stage-pill-text">{item.stage}</span>
 
-                      <span className="owner-text">{item.owner}</span>
+                      <span className="owner-text">{item.owner || (item.status === 'atendimento_humano' ? 'Atendimento humano' : 'Assistente IA')}</span>
 
                       <span className="message-preview-text" title={item.lastMessage}>
                         {formatConversationPreview(item.lastMessage)}
@@ -1205,12 +1228,37 @@ function Conversations({
     return filteredConversations.find((c) => c.id === selectedId) || filteredConversations[0];
   }, [filteredConversations, selectedId]);
 
+  const displayOwner = useMemo(() => {
+    if (!selected?.owner) return null;
+    const normalized = String(selected.owner).trim();
+    if (!normalized) return null;
+    if (normalized === selected.stage || normalized === 'Atendimento humano' || normalized === 'Assistente IA') return null;
+    if (tenantSlug !== 'clinica_nubia' && /recep[cç][aã]o\s*\/\s*n[uú]bia/i.test(normalized)) return null;
+    return normalized;
+  }, [selected?.owner, selected?.stage, tenantSlug]);
+
   const selectedCloseKey = JSON.stringify([tenantSlug, selected?.id]);
   const canEndSelected = canCloseConversation(selected, closedLocally[selectedCloseKey]);
 
   useEffect(() => {
     setShowCloseModal(false);
   }, [selectedCloseKey]);
+
+  useEffect(() => {
+    setSelectedId(conversations[0]?.id || null);
+    setDraft('');
+    setSendError('');
+    setShowCloseModal(false);
+    setShowAssignModal(false);
+    setMobileChatOpen(false);
+    setClosedLocally({});
+  }, [tenantSlug]);
+
+  useEffect(() => {
+    if (selectedId && !conversations.some((c) => c.id === selectedId)) {
+      setSelectedId(conversations[0]?.id || null);
+    }
+  }, [conversations, selectedId]);
 
   useEffect(() => {
     if (!initialConversationId) return;
@@ -1262,7 +1310,7 @@ function Conversations({
     setEnding(true);
     setSendError('');
     try {
-      await sendN8nCommand('close_conversation', {
+      const closeResult = await sendN8nCommand('close_conversation', {
         channel_type: selected.channelType || selected.channel.toLowerCase(),
         external_conversation_id: selected.externalConversationId || selected.id.replace(/^conv-/, ''),
         contact_name: selected.contact,
@@ -1270,6 +1318,7 @@ function Conversations({
         sent_by_user: 'Operador NORIA',
         reason: 'Atendimento finalizado pelo operador',
       }, tenantSlug);
+      requirePersistedClosure(closeResult);
       setClosedLocally((current) => ({
         ...current,
         [selectedCloseKey]: {
@@ -1574,14 +1623,14 @@ function Conversations({
                   </span>
                   <span className="chat-header-dot">·</span>
                   <span className="chat-header-stage">{selected.stage}</span>
-                  {selected.owner && (
-                    <>
-                      <span className="chat-header-dot chat-header-owner-dot">·</span>
-                      <span className="chat-header-owner" title={`Responsável: ${selected.owner}`}>
-                        {selected.owner}
-                      </span>
-                    </>
-                  )}
+                  {displayOwner && (
+  <>
+    <span className="chat-header-dot chat-header-owner-dot">·</span>
+    <span className="chat-header-owner" title={"Responsável: " + displayOwner}>
+      {displayOwner}
+    </span>
+  </>
+)}
                 </div>
               </div>
             </div>
@@ -1592,7 +1641,7 @@ function Conversations({
                 type="button"
                 onClick={handleOpenCloseModal}
                 disabled={ending || !canEndSelected}
-                title={canEndSelected ? 'Encerrar atendimento' : 'Disponível durante um atendimento da IA'}
+                title={canEndSelected ? 'Encerrar atendimento' : 'Atendimento encerrado ou encerramento em andamento'}
                 aria-label="Encerrar atendimento"
               >
                 <CheckCircle2 size={16} />
@@ -1618,9 +1667,17 @@ function Conversations({
               const isSystem = message.from === 'system' || message.sender_type === 'system';
 
               let senderLabel = selected.contact;
-              if (isAi) senderLabel = 'Assistente IA';
-              else if (isAgent) senderLabel = message.sent_by || selected.owner || 'Operador';
-              else if (isSystem) senderLabel = 'Sistema';
+              if (isAi) {
+                senderLabel = 'Assistente IA';
+              } else if (isAgent) {
+                let agentSender = message.sent_by ? String(message.sent_by).trim() : null;
+                if (tenantSlug !== 'clinica_nubia' && agentSender && /recep[cç][aã]o\s*\/\s*n[uú]bia/i.test(agentSender)) {
+                  agentSender = null;
+                }
+                senderLabel = agentSender || displayOwner || 'Operador NORIA';
+              } else if (isSystem) {
+                senderLabel = 'Sistema';
+              }
 
               return (
                 <div key={`${message.at}-${index}`} className={`bubble ${isAi ? 'ai' : isAgent || isSystem ? 'agent' : 'contact'}`}>
@@ -1989,6 +2046,23 @@ function Kanban({
     if (norm.includes('insta')) return 'channel-instagram';
     return 'channel-telegram';
   };
+  const mobileColumnOrder = (column = {}) => {
+    const key = [column.automationKey, column.id, column.title]
+      .filter(Boolean)
+      .join(' ')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
+    if (/conversas[_\s-]?ia|novas[_\s-]?conversas|conversas[_\s-]?andamento/.test(key)) return 1;
+    if (/aguardando[_\s-]?humano/.test(key)) return 2;
+    if (/com[_\s-]?humano|conversas[_\s-]?humanos/.test(key)) return 3;
+    if (/verificar[_\s-]?sinal/.test(key)) return 4;
+    if (/agendamento/.test(key)) return 5;
+    if (/finalizada/.test(key)) return 6;
+    if (/abandonada/.test(key)) return 7;
+    return 99;
+  };
 
   const filteredColumns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -2018,10 +2092,6 @@ function Kanban({
 
   // Drag & Drop Handlers
   const handleDragStart = (e, card, column) => {
-    if (card?.isFollowUp) {
-      e.preventDefault();
-      return;
-    }
     setDraggingCardId(card.id);
     e.dataTransfer.effectAllowed = 'move';
     // Usamos text/plain para compatibilidade maxima em todos os browsers
@@ -2061,7 +2131,6 @@ function Kanban({
       if (!raw) return;
       const data = JSON.parse(raw);
       if (!data?.card) return;
-      if (data.card.isFollowUp || targetColumn.automationKey === 'follow_ups' || targetColumn.id === 'follow_ups') return;
       if (data.sourceColumnId === targetColumn.id) return;
       if (onMoveCard) {
         onMoveCard(data.card, targetColumn.automationKey || targetColumn.id);
@@ -2151,7 +2220,7 @@ function Kanban({
       <div className="kanban-board">
         {filteredColumns.map((column) => {
           const isWaitingColumn = column.automationKey === 'aguardando_humano' || column.id === 'aguardando_humano';
-          const isFinishedColumn = column.automationKey === 'finalizadas' || column.id === 'finalizadas';
+          const isFinishedColumn = column.salesClosed || column.automationKey === 'finalizadas' || column.id === 'finalizadas';
           const isFollowUpColumn = column.automationKey === 'follow_ups' || column.id === 'follow_ups';
           const isDragOver = dragOverColumnId === column.id;
 
@@ -2159,9 +2228,10 @@ function Kanban({
             <div
               className={`kanban-column ${isDragOver ? 'is-dragover' : ''}`}
               key={column.id}
-              onDragOver={(e) => !isFollowUpColumn && handleDragOver(e, column)}
-              onDragLeave={(e) => !isFollowUpColumn && handleDragLeave(e, column)}
-              onDrop={(e) => !isFollowUpColumn && handleDrop(e, column)}
+              style={{ '--kanban-mobile-order': mobileColumnOrder(column) }}
+              onDragOver={(e) => handleDragOver(e, column)}
+              onDragLeave={(e) => handleDragLeave(e, column)}
+              onDrop={(e) => handleDrop(e, column)}
             >
               <div className="column-header">
                 <strong className="column-title">{column.title}</strong>
@@ -2170,8 +2240,8 @@ function Kanban({
 
               <div
                 className="column-cards-container"
-                onDragOver={(e) => !isFollowUpColumn && handleDragOver(e, column)}
-                onDrop={(e) => !isFollowUpColumn && handleDrop(e, column)}
+                onDragOver={(e) => handleDragOver(e, column)}
+                onDrop={(e) => handleDrop(e, column)}
               >
                 {!ready ? (
                   [1, 2].map((i) => (
@@ -2194,9 +2264,9 @@ function Kanban({
 
                       return (
                         <article
-                          className={`kanban-card ${channelClass} ${card.isFollowUp ? 'kanban-card-follow-up' : ''} ${isDragging ? 'is-dragging' : ''}`}
+                          className={`kanban-card ${channelClass} ${isDragging ? 'is-dragging' : ''}`}
                           key={card.id}
-                          draggable={!card.isFollowUp}
+                          draggable={true}
                           onDragStart={(e) => handleDragStart(e, card, column)}
                           onDragEnd={handleDragEnd}
                         >
@@ -2211,6 +2281,21 @@ function Kanban({
                           </div>
 
                           <p className="card-subtitle">{formatConversationPreview(card.subtitle)}</p>
+
+                          {card.salesDocuments?.length > 0 && (
+                            <details className="sales-document-details" onClick={e => e.stopPropagation()}>
+                              <summary>Documentos para conferir</summary>
+                              {card.salesDocuments.map((doc, index) => (
+                                <dl key={index}>
+                                  <dt>Nome</dt><dd>{doc.extracted?.name || 'Nao legivel'}</dd>
+                                  <dt>CPF</dt><dd>{doc.extracted?.cpf || 'Nao informado'}</dd>
+                                  <dt>CNH</dt><dd>{doc.extracted?.cnh || 'Nao informada'}</dd>
+                                  <dt>Nascimento</dt><dd>{doc.extracted?.birth_date || 'Nao informado'}</dd>
+                                  <dt>Status</dt><dd>Conferencia humana pendente</dd>
+                                </dl>
+                              ))}
+                            </details>
+                          )}
 
                           {isFollowUpColumn && card.followUpLabel && (
                             <div className={`follow-up-step-badge ${card.followUpStatus === 'processing' ? 'is-processing' : ''}`}>
@@ -2518,6 +2603,7 @@ function Broadcasts({ conversations = [], contacts = [], campaigns = [], tenantS
   return (
     <section className="broadcast-page">
       <section className="panel">
+        <PanelTitle icon={Megaphone} title="Disparo de mensagens" />
         <PanelTitle icon={Megaphone} title="Disparo de mensagens" />
         <div className="broadcast-grid">
           <div className="broadcast-import">
@@ -3699,7 +3785,7 @@ function LoginPage() {
             <div className="auth-card-top-pulse" />
           </div>
 
-          <h1 className="auth-title">Bem-vindo de volta</h1>
+          <h1 className="auth-title">Bem-vindo</h1>
 
           <form className="auth-form" onSubmit={handleSubmit} noValidate={false}>
             <label className="auth-label">

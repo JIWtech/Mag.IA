@@ -15,7 +15,7 @@ function schedulingDefaultUnitId(context) {
 function schedulingUnitsInText(context, text) {
   const value = ' ' + normalizeText(text).replace(/[^a-z0-9 ]/g, ' ') + ' ';
   return schedulingUnits(context)
-    .filter(([, unit]) => unit.aliases.some(alias => value.includes(' ' + normalizeText(alias) + ' ')))
+    .filter(([, unit]) => (Array.isArray(unit.aliases) ? unit.aliases : []).some(alias => value.includes(' ' + normalizeText(alias) + ' ')))
     .map(([id]) => id);
 }
 
@@ -45,7 +45,7 @@ async function schedulingCheck(context, state) {
 }
 
 async function schedulingValidateAction(context, generated, action) {
-  if (!schedulingEnabled(context) || generated.handoff || /HUMANO_SOLICITADO/.test(generated.text)) return generated;
+  if (!schedulingEnabled(context) || generated.handoff || generated.recallHandled || /HUMANO_SOLICITADO/.test(generated.text)) return generated;
   const state = generated.state || {};
   if (!state.unit_id) state.unit_id = schedulingDefaultUnitId(context);
   if (!state.unit_id) return { ...generated, text: schedulingRegionQuestion(context) };
@@ -61,7 +61,14 @@ async function schedulingValidateAction(context, generated, action) {
   try {
     const availability = await schedulingCheck(context, state);
     if (!Array.isArray(availability.available_starts)) throw new Error('Invalid availability result');
-    if (action === 'create_appointment' && availability.available_starts.includes(state.time)) return generated;
+    if (state.time && availability.available_starts.includes(state.time)) {
+      if (!state.customer_name) return {...generated, text:'Qual \u00e9 o seu nome completo, por favor?'};
+      if (action === 'create_appointment') return generated;
+      // A valid selection advances the flow; never replace it with the same slot menu.
+      return {...generated,
+        text:'Posso registrar seu pr\u00e9-agendamento para ' + state.date.split('-').reverse().join('/')
+          + ' \u00e0s ' + state.time + ', pendente do sinal?'};
+    }
     return { ...generated, text: availability.available_starts.length
       ? 'Para ' + state.date.split('-').reverse().join('/') + ', posso oferecer ' + availability.available_starts.join(', ')
         + '. Qual hor\u00e1rio voc\u00ea prefere?'
@@ -74,10 +81,12 @@ async function schedulingValidateAction(context, generated, action) {
 
 async function schedulingReserve(context, state) {
   if (!state?.unit_id || !state.service_id) throw new Error('SCHEDULE_NOT_CONFIGURED');
-  const appointment = await supabasePost('/rest/v1/rpc/magia_reserve_appointment', {
+  const sessionMode = settingsFor(context).attendance_lifecycle === 'session_v2';
+  const appointment = await supabasePost('/rest/v1/rpc/' + (sessionMode ? 'magia_reserve_session_appointment' : 'magia_reserve_appointment'), {
     p_tenant: context.tenant.id, p_unit: state.unit_id, p_service: state.service_id,
     p_date: state.date, p_time: state.time, p_name: state.customer_name, p_chat: String(chatId),
     p_request: 'whatsapp:' + turn.messages.at(-1).event_id, p_channel: 'whatsapp',
+    ...(sessionMode ? {p_session:turn.boundary_id || 'initial'} : {}),
   });
   return { created: true, appointment };
 }

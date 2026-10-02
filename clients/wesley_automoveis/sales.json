@@ -1,0 +1,16 @@
+{
+  "sheet_id": "1VgUrslSLNWmouutDww7iws2kVJUiiSiV9iAgwfyFWhE",
+  "document_ocr_enabled": true,
+  "collect_documents": true,
+  "stage_keys": {"initial":"sales_new","qualifying":"sales_qualifying","hot":"sales_hot","human":"sales_human","appraisal":"sales_appraisal","after_sales":"sales_after_sales","closed":"sales_closed"},
+  "stages": {
+    "sales_new":{"name":"Patio - Novos contatos","allow_ai":true},
+    "sales_qualifying":{"name":"IA - Qualificacao automotiva","allow_ai":true},
+    "sales_hot":{"name":"Leads quentes - Venda","allow_ai":false},
+    "sales_appraisal":{"name":"Avaliacao de retoma - Compra","allow_ai":false},
+    "sales_financing":{"name":"Fila de financiamento","allow_ai":false},
+    "sales_after_sales":{"name":"Pos-venda - Manutencao","allow_ai":false},
+    "sales_human":{"name":"Atendimento humano","allow_ai":false},
+    "sales_closed":{"name":"Negocio fechado","allow_ai":false,"closed":true}
+  }
+}
