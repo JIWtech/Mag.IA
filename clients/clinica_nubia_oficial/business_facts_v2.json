@@ -1,0 +1,67 @@
+{
+  "locations": [
+    {
+      "id": "angra",
+      "name": "Nova Angra",
+      "address": "Av. Itaguaí, 200 - Nova Angra, Angra dos Reis - RJ, 23933-115, Brasil",
+      "verified": true,
+      "verified_source": "Endereco confirmado pelo responsavel no chat em 2026-09-25"
+    }
+  ],
+  "fees": { "after_17h_sundays_holidays": 10 },
+  "policies": [
+    "Tolerancia de atraso de 5 minutos. Depois disso a vaga pode ser cancelada.",
+    "Pagamento em dinheiro deve ser levado trocado, por gentileza.",
+    "Agende um horario em que realmente possa comparecer.",
+    "Atendimentos apos 17h, domingos e feriados tem acrescimo de R$ 10,00.",
+    "Agendamento confirmado mediante pagamento antecipado de 50%, sujeito a verificacao humana do sinal.",
+    "Sinal nao reembolsavel em caso de cancelamento.",
+    "Remarcacoes com minimo de 24h de antecedencia ou, excepcionalmente, ate 8h antes.",
+    "Cancelamentos fora do prazo, faltas ou atraso acima de 5 minutos resultam em perda do sinal."
+  ],
+  "service_guidance": {
+    "machine": {
+      "services": ["bronze_classico", "bronze_comfort", "bronze_premium"],
+      "procedure_minutes": {"bronze_classico": 60, "bronze_comfort": 90, "bronze_premium": 90},
+      "booking_block_minutes": 90,
+      "before": [
+        "Chegue 15 minutos antes, de banho tomado e sem oleo, creme ou hidratante na pele.",
+        "Nao se depile no dia; depilacao com pelo menos 2 dias de antecedencia.",
+        "Cabelo preso. Se a fita descolar por preparo inadequado da pele, a responsabilidade e da cliente."
+      ],
+      "bring": ["Fone de ouvido sem fio", "Toalha preferencialmente escura", "Sabonete", "Protetor solar para o rosto", "Oculos de sol", "Roupa confortavel"],
+      "restrictions": ["Proibido levar criancas, acompanhantes ou bicicletas.", "Atraso acima de 5 minutos cancela a vaga para nao prejudicar os proximos atendimentos."]
+    },
+    "solar": {
+      "services": ["bronze_no_sol"],
+      "before": [
+        "Chegue 15 minutos antes; tolerancia de atraso de 5 minutos.",
+        "Venha de banho tomado, com a pele limpa e sem oleo, creme, hidratante ou outros produtos corporais.",
+        "De preferencia a sabonete neutro ou sabao de coco no banho antes do procedimento.",
+        "Nao se depile no dia; depilacao com pelo menos 2 dias de antecedencia. Venha com os cabelos presos."
+      ],
+      "bring": ["Canga grande ou lencol de solteiro para forrar a maca", "Toalha preferencialmente escura", "Sabonete para o banho apos o procedimento", "Protetor solar exclusivamente para o rosto", "Oculos de sol", "Roupa confortavel", "Fone sem fio, opcional", "Garrafa de agua congelada, opcional"],
+      "restrictions": ["Nao levar criancas, acompanhantes ou bicicletas.", "Apos a tolerancia de atraso, o atendimento podera ser cancelado."]
+    },
+    "spray": {
+      "services": ["bronze_jato_domicilio"],
+      "location": "A domicilio",
+      "before": [
+        "Nao use oleo, creme ou hidratante na pele no dia.",
+        "Tome banho antes com sabonete neutro, sem oleo, e bucha. Pele oleosa pode prejudicar a fixacao.",
+        "Use roupas leves e preferencialmente escuras. Segundo as orientacoes da clinica, o produto que encostar no tecido sai na lavagem normal."
+      ],
+      "after": [
+        "Nao molhe a pele, nao tome banho e evite suar durante 8 a 12 horas.",
+        "Apos o primeiro banho, evite banhos muito quentes e demorados, que podem reduzir a durabilidade.",
+        "Depois desse periodo, mantenha a pele hidratada com creme hidratante para ajudar na durabilidade e uniformidade."
+      ]
+    },
+    "moon_bath": {
+      "services": ["banho_lua"],
+      "procedure_minutes": 40,
+      "description": "Servico unico, sem variacoes Classico, Comfort ou Premium."
+    }
+  },
+  "policy_source": "Movvy_Agendamento_Servicos.docx e confirmacoes do responsavel em 2026-09-25"
+}

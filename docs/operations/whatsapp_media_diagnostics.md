@@ -84,10 +84,77 @@ Interpretacao:
 - `sent[].status = failed`: houve tentativa; conferir HTTP e erro na execucao/Evolution.
 - `unconfirmed`: resposta da Evolution sem ID de mensagem; nao tratar como entrega.
 
-Para entrega estavel, os arquivos reais da loja devem ficar em armazenamento
-controlado (por exemplo Supabase Storage), com URLs acessiveis pela Evolution.
-O catalogo atual continua usando imagens externas de exemplo; nao foi migrado
-automaticamente para Storage nem apresentado como estoque real da loja.
+Atualizacao em 22/09/2026: as 12 imagens de exemplo da Universo Prata foram
+copiadas para Supabase Storage, bucket publico `product-catalog`, em caminhos
+prefixados pelo UUID do tenant. O catalogo em tenant_settings foi atualizado.
+As URLs originais continuam em `source_url`. Continuam sendo imagens de exemplo,
+nao estoque real da loja. Antes do uso comercial, substituir por fotos proprias
+e revisar direitos/atribuicao dos arquivos de referencia.
+
+## Falha de download confirmada em 22/09/2026
+
+O teste real encontrou 4 categorias e selecionou 3 fotos de pulseiras. Todas
+falhavam no envio. A Evolution devolvia HTTP 500 com erro interno de download
+HTTP 403 do Wikimedia. O Code node antigo descartava o detalhe e persistia
+apenas evolution_request_failed, sem status HTTP. Nao era falta de token.
+
+Diagnosticos isolados no n8n hospedado, sem chamar Gemini:
+
+- Execucao 1093: credenciais e instância verificadas; connectionState = open.
+- Execucao 1097: Evolution 500, response.message indicando download 403.
+- Execucao 1098: uma foto do Storage enviada ao contato de teste autorizado;
+  Evolution HTTP 201, com ID de mensagem. O usuario confirmou o recebimento
+  da foto no WhatsApp. Nos demais envios, aceite nao substitui confirmacao
+  de entrega ao aparelho.
+- Workflows temporarios de diagnostico foram arquivados e removidos.
+
+Validacao local: 38 testes aprovados (conversas, encerramento e midia).
+Os nodes publicados foram comparados com o JSON local testado e coincidem.
+
+O workflow ativo `Y318foGE6xQlpP3h` foi atualizado pontualmente, preservando
+credenciais, rota, configuracoes e demais nodes. Versao publicada:
+`29c88323-d730-4589-b46f-c9bf970ae119`.
+Backup local anterior em `.local/backups/whatsapp-before-media-20260922.json`
+(ignorado pelo Git; nao compartilhar publicamente).
+
+### Ordem de envio e falhas
+
+`Sessao ainda ativa?` -> `Enviar Fotos do Catalogo` ->
+`Validar Sessao Apos Fotos` -> `Sessao ativa apos fotos?` ->
+`Enviar Resposta pela Evolution` -> `Preparar Evento Enviado`.
+
+As fotos sao tentadas antes do texto de confirmacao. O resultado determina
+uma resposta curta: sucesso, falha parcial ou indisponibilidade. Sem aceite,
+nao afirmar que as fotos foram enviadas nem marcar Produtos apresentados.
+O node de persistencia nao envia midia novamente. O payload outbound preserva
+conversation_session_id e registra product_media_delivery.revision =
+`media-before-text-v1`, status HTTP e detalhe de erro com segredos removidos.
+Nao ha retry automatico de envio: repetir POST apos timeout pode duplicar fotos.
+Aceite da API nao significa comprovacao de entrega ao aparelho.
+
+Depois das fotos, a sessao e conferida novamente antes do texto para nao
+retomar uma conversa que foi encerrada durante o envio. O envio externo nao
+e atomico com o encerramento; uma foto ja aceita nao pode ser desfeita.
+
+### Armazenamento do catalogo
+
+O bucket publico contem SOMENTE imagens de produtos, nunca anexos privados de
+conversas. Nao foram alteradas as policies nem a visibilidade de channel-media.
+Foram copiados 12 arquivos, total 32.924.937 bytes (aproximadamente 31,4 MiB).
+Storage/egress consomem as franquias do Supabase; nao envolvem tokens Gemini.
+
+Script reutilizavel para catalogos de exemplo existentes no Wikimedia:
+
+```powershell
+node --env-file=.env scripts/cache_catalog_media.cjs --tenant=universo_prata
+node --env-file=.env scripts/cache_catalog_media.cjs --tenant=universo_prata --apply
+```
+
+Sem --apply, apenas valida/download; nao grava. Valida HTTPS/hosts, tipo e
+assinatura da imagem, limita a 10 MiB/arquivo e respeita espera em erro 429.
+Nao substitui o catalogo se qualquer download falhar. Antes do PATCH usa
+updated_at para nao sobrescrever uma edicao concorrente do cliente. Reexecucao
+ignora URLs ja migradas. Prompts, credenciais e outros tenants nao sao alterados.
 
 ## Limite conhecido
 

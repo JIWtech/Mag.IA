@@ -72,7 +72,7 @@ async function main(helpers) {
     const { supabaseUrl } = supabaseConfig();
     const rows = await httpJson(
       'GET',
-      supabaseUrl + '/rest/v1/tenants?select=id,slug,status&slug=eq.' + encodeURIComponent(tenantSlug) + '&limit=1',
+      supabaseUrl + '/rest/v1/tenants?select=id,slug,name,industry,status&slug=eq.' + encodeURIComponent(tenantSlug) + '&limit=1',
       serviceHeaders(),
     );
     const tenant = Array.isArray(rows) ? rows[0] : null;
@@ -83,7 +83,7 @@ async function main(helpers) {
     return tenant;
   }
 
-  async function assertTenantMember(userId, tenantId) {
+  async function assertTenantMember(userId, tenantId, allowedRoles = ['owner', 'admin', 'manager', 'agent', 'operator']) {
     const { supabaseUrl } = supabaseConfig();
     const rows = await httpJson(
       'GET',
@@ -95,7 +95,7 @@ async function main(helpers) {
     );
     const membership = Array.isArray(rows) ? rows[0] : null;
     if (!membership) throw new Error('Usuario sem permissao para este tenant');
-    if (!['owner', 'admin', 'manager', 'agent', 'operator'].includes(String(membership.role))) {
+    if (!allowedRoles.includes(String(membership.role))) {
       throw new Error('Role sem permissao para enviar mensagens');
     }
     return membership;
@@ -120,6 +120,106 @@ async function main(helpers) {
   async function insertEvent(event) {
     const { supabaseUrl } = supabaseConfig();
     return await httpJson('POST', supabaseUrl + '/rest/v1/channel_events', serviceHeaders('return=representation'), event);
+  }
+
+  async function loadTenantSettings(tenantId) {
+    const { supabaseUrl } = supabaseConfig();
+    const rows = await httpJson(
+      'GET',
+      supabaseUrl + '/rest/v1/tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(tenantId) + '&limit=1',
+      serviceHeaders(),
+    );
+    const row = Array.isArray(rows) ? rows[0] : null;
+    return row?.settings || {};
+  }
+
+  async function loadKanbanColumns(tenantId, boardId) {
+    const { supabaseUrl } = supabaseConfig();
+    const rows = await httpJson(
+      'GET',
+      supabaseUrl + '/rest/v1/kanban_columns?select=id,name,automation_key,position&tenant_id=eq.' + encodeURIComponent(tenantId)
+        + '&board_id=eq.' + encodeURIComponent(boardId) + '&order=position.asc',
+      serviceHeaders(),
+    );
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  function validateKanbanOrder(existing, orderedAutomationKeys) {
+    const expected = existing.map((column) => String(column.automation_key || '')).filter(Boolean);
+    const suggested = Array.isArray(orderedAutomationKeys) ? orderedAutomationKeys.map((key) => String(key || '').trim()).filter(Boolean) : [];
+    return expected.length > 0 && suggested.length === expected.length
+      && new Set(suggested).size === suggested.length
+      && expected.every((key) => suggested.includes(key));
+  }
+
+  async function suggestKanbanFlowOrder(tenant, payload) {
+    const columns = await loadKanbanColumns(tenant.id, required(payload.boardId, 'payload.boardId'));
+    if (!columns.length) throw new Error('Kanban sem colunas configuradas');
+    const settings = await loadTenantSettings(tenant.id);
+    const contextColumns = columns.map((column) => ({
+      name: column.name,
+      automation_key: column.automation_key,
+      kind: ['verificar_sinal', 'agendamentos', 'conversas_abandonadas', 'follow_ups'].includes(column.automation_key) ? 'special_view' : 'stage',
+    }));
+    const prompt = `Organize somente a ordem visual das colunas do Kanban para o tenant. Nao crie, remova, renomeie nem altere automation_key. Etapas sao operacionais; special_view sao visoes derivadas e podem ficar depois do fluxo principal. Responda APENAS JSON valido: {"orderedAutomationKeys":[...],"reasoning":"..."}. Tenant: ${tenant.name || tenant.slug}. Segmento: ${tenant.industry || settings.business_context || settings.industry || ''}. Colunas: ${JSON.stringify(contextColumns)}`;
+    const model = env('GEMINI_MODEL', 'gemini-2.5-flash-lite');
+    const body = await httpJson('POST', `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': env('GEMINI_API_KEY'),
+    }, { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 500, responseMimeType: 'application/json' } });
+    const text = body?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim();
+    if (!text) throw new Error('Gemini sem proposta de fluxo');
+    let proposal;
+    try { proposal = JSON.parse(text); } catch (error) { throw new Error('Gemini retornou proposta invalida'); }
+    if (!validateKanbanOrder(columns, proposal?.orderedAutomationKeys)) throw new Error('Gemini retornou colunas invalidas');
+    return { proposal: { orderedAutomationKeys: proposal.orderedAutomationKeys, reasoning: String(proposal.reasoning || '').trim() } };
+  }
+
+  async function applyKanbanFlowOrder(tenant, payload) {
+    const boardId = required(payload.boardId, 'payload.boardId');
+    const columns = await loadKanbanColumns(tenant.id, boardId);
+    if (!validateKanbanOrder(columns, payload.orderedAutomationKeys)) throw new Error('Ordem de colunas invalida');
+    const { supabaseUrl } = supabaseConfig();
+    await httpJson('POST', supabaseUrl + '/rest/v1/rpc/reorder_kanban_columns', serviceHeaders(), {
+      p_tenant_id: tenant.id,
+      p_board_id: boardId,
+      p_positions: payload.orderedAutomationKeys.map((automation_key, position) => ({ automation_key, position })),
+    });
+    return { ok: true, board_id: boardId, orderedAutomation_keys: payload.orderedAutomationKeys };
+  }
+
+  function paymentSignalConfirmationMessage(settings = {}) {
+    const payment = settings.payment && typeof settings.payment === 'object' ? settings.payment : {};
+    const configured = String(settings.payment_signal_confirmation_message || payment.confirmation_message || '').trim();
+    if (configured) return configured;
+    return 'Reserva confirmada! Recebemos a confirmacao do sinal. A equipe vai seguir com a confirmacao final por aqui.';
+  }
+
+  async function confirmAppointment(tenantId, appointmentId) {
+    const { supabaseUrl } = supabaseConfig();
+    const rows = await httpJson(
+      'GET',
+      supabaseUrl + '/rest/v1/appointments?select=id,metadata,status&tenant_id=eq.' + encodeURIComponent(tenantId) + '&id=eq.' + encodeURIComponent(appointmentId) + '&limit=1',
+      serviceHeaders(),
+    );
+    const appointment = Array.isArray(rows) ? rows[0] : null;
+    if (!appointment) throw new Error('Agendamento nao encontrado: ' + appointmentId);
+    const metadata = {
+      ...(appointment.metadata || {}),
+      payment_status: 'confirmed_by_operator',
+      payment_confirmed_at: new Date().toISOString(),
+    };
+    const updated = await httpJson(
+      'PATCH',
+      supabaseUrl + '/rest/v1/appointments?tenant_id=eq.' + encodeURIComponent(tenantId) + '&id=eq.' + encodeURIComponent(appointmentId),
+      serviceHeaders('return=representation'),
+      {
+        status: 'confirmed',
+        metadata,
+        updated_at: new Date().toISOString(),
+      },
+    );
+    return Array.isArray(updated) ? updated[0] : updated;
   }
 
   async function sendTelegram(token, chatId, text) {
@@ -155,11 +255,14 @@ async function main(helpers) {
   const command = required(input.command, 'command');
   const tenantSlug = required(input.tenant_slug, 'tenant_slug').toLowerCase();
   const payload = input.payload || {};
-  if (!['manual_reply', 'broadcast_send', 'close_conversation', 'assign_conversation'].includes(command)) throw new Error('command nao suportado: ' + command);
+  if (!['manual_reply', 'broadcast_send', 'close_conversation', 'assign_conversation', 'confirm_payment_signal', 'suggest_kanban_flow_order', 'apply_kanban_flow_order'].includes(command)) throw new Error('command nao suportado: ' + command);
 
   const user = await validateUserSession();
   const tenant = await loadTenant(tenantSlug);
-  await assertTenantMember(user.id, tenant.id);
+  await assertTenantMember(user.id, tenant.id, ['suggest_kanban_flow_order', 'apply_kanban_flow_order'].includes(command) ? ['owner', 'admin', 'manager'] : undefined);
+
+  if (command === 'suggest_kanban_flow_order') return await suggestKanbanFlowOrder(tenant, payload);
+  if (command === 'apply_kanban_flow_order') return await applyKanbanFlowOrder(tenant, payload);
 
   const channelType = required(payload.channel_type, 'payload.channel_type').toLowerCase();
   const externalConversationId = required(payload.external_conversation_id, 'payload.external_conversation_id');
@@ -167,6 +270,8 @@ async function main(helpers) {
     ? String(payload.message_text || 'Atendimento encerrado').trim()
     : command === 'assign_conversation'
       ? String(payload.message_text || 'Conversa atribuida').trim()
+      : command === 'confirm_payment_signal'
+        ? String(payload.message_text || '').trim()
     : required(payload.message_text, 'payload.message_text');
   const token = tokenFor(tenantSlug, channelType);
   const evolution = channelType === 'whatsapp' ? evolutionFor(tenantSlug) : null;
@@ -210,6 +315,96 @@ async function main(helpers) {
     };
     const saved = await insertEvent(event);
     return { ok: true, command, tenant_slug: tenantSlug, channel_type: normalizedChannel, command_id: commandId, external_message_id: event.external_message_id, saved };
+  }
+
+  if (command === 'confirm_payment_signal') {
+    const appointmentId = required(payload.appointment_id, 'payload.appointment_id');
+    const settings = await loadTenantSettings(tenant.id);
+    // Opt-in only. Preserve the existing confirmation path for every other client.
+    if (settings.whatsapp_processing_mode === 'conversation_core_v1') {
+      if (normalizedChannel !== 'whatsapp') throw new Error('Canal incorreto para este agendamento');
+      const { supabaseUrl } = supabaseConfig();
+      const appointmentPath = supabaseUrl + '/rest/v1/appointments?tenant_id=eq.' + encodeURIComponent(tenant.id)
+        + '&id=eq.' + encodeURIComponent(appointmentId);
+      const rows = await httpJson('GET', appointmentPath + '&select=*', serviceHeaders());
+      const row = rows[0];
+      if (!row || row.channel_type !== normalizedChannel || row.external_conversation_id !== externalConversationId) {
+        throw new Error('Agendamento nao pertence a esta conversa/canal');
+      }
+      if (row.status === 'confirmed') return { ok: true, command, already_confirmed: true, appointment: row };
+      if (row.status !== 'payment_reported') throw new Error('Aguardando cliente informar o sinal');
+      if (row.metadata?.signal_confirmation_state) throw new Error('Confirmacao em andamento ou entrega incerta. Verifique antes de reenviar.');
+      const claimedMetadata = { ...row.metadata, signal_confirmation_state: 'sending',
+        signal_confirmation_command: commandId, payment_confirmed_by: user.id };
+      const claimed = await httpJson('PATCH', appointmentPath + '&status=eq.payment_reported&updated_at=eq.'
+        + encodeURIComponent(row.updated_at), serviceHeaders('return=representation'),
+      { metadata: claimedMetadata, updated_at: new Date().toISOString() });
+      if (claimed.length !== 1) throw new Error('Agendamento alterado por outro operador. Atualize o quadro.');
+      let sent;
+      try {
+        sent = await sendWhatsApp(evolution, externalConversationId, paymentSignalConfirmationMessage(settings));
+        if (!sent.messageId) throw new Error('Evolution nao retornou identificador da mensagem');
+      } catch (error) {
+        await httpJson('PATCH', appointmentPath, serviceHeaders(), { metadata: {
+          ...claimedMetadata, signal_confirmation_state: 'uncertain' }, updated_at: new Date().toISOString() });
+        throw new Error('Entrega da confirmacao nao comprovada. Verifique no WhatsApp antes de tentar novamente.');
+      }
+      const updated = await httpJson('PATCH', appointmentPath + '&status=eq.payment_reported', serviceHeaders('return=representation'), {
+        status: 'confirmed', updated_at: new Date().toISOString(), metadata: { ...claimedMetadata,
+          signal_confirmation_state: 'sent', confirmation_message_id: sent.messageId,
+          payment_status: 'confirmed_by_operator', payment_confirmed_at: new Date().toISOString() },
+      });
+      if (updated.length !== 1) throw new Error('Mensagem enviada, mas registro alterado simultaneamente. Verifique o agendamento antes de repetir.');
+      const event = { tenant_id: tenant.id, tenant_slug: tenantSlug, channel_type: normalizedChannel,
+        external_conversation_id: externalConversationId, external_message_id: sent.messageId,
+        direction: 'outbound', sender_type: 'system', contact_name: row.contact_name || 'Contato',
+        message_text: paymentSignalConfirmationMessage(settings), service: 'appointment_payment_confirmed',
+        stage: 'Agendamento confirmado', handoff: true, response_text: null, ai_provider: 'operator_confirmation',
+        sent_by_user: user.email || user.id, delivery_status: 'sent', command_id: commandId,
+        raw_payload: { command, appointment_id: appointmentId, confirmed_by: user.id, appointment: updated[0] } };
+      const saved = await insertEvent(event);
+      return { ok:true, command, appointment: updated[0], saved };
+    }
+    const confirmationText = messageText || paymentSignalConfirmationMessage(settings);
+
+    const sent = normalizedChannel === 'telegram'
+      ? await sendTelegram(token, externalConversationId, confirmationText)
+      : normalizedChannel === 'whatsapp'
+        ? await sendWhatsApp(evolution, externalConversationId, confirmationText)
+        : await sendInstagram(token, externalConversationId, confirmationText);
+
+    const appointment = await confirmAppointment(tenant.id, appointmentId);
+    const event = {
+      tenant_id: tenant.id,
+      tenant_slug: tenantSlug,
+      channel_type: normalizedChannel,
+      external_conversation_id: externalConversationId,
+      external_message_id: sent.messageId || commandId,
+      direction: 'outbound',
+      sender_type: 'system',
+      contact_name: payload.contact_name || 'Contato',
+      message_text: confirmationText,
+      service: 'appointment_payment_confirmed',
+      stage: 'Agendamento confirmado',
+      handoff: true,
+      response_text: null,
+      ai_provider: 'operator_confirmation',
+      ai_model: null,
+      ai_error: '',
+      ai_usage: {},
+      sent_by_user: payload.sent_by_user || user.email || 'Operador Mag.IA',
+      delivery_status: 'sent',
+      command_id: commandId,
+      raw_payload: {
+        command,
+        appointment_id: appointmentId,
+        confirmed_by: payload.sent_by_user || user.email || 'Operador Mag.IA',
+        appointment,
+        sent,
+      },
+    };
+    const saved = await insertEvent(event);
+    return { ok: true, command, tenant_slug: tenantSlug, channel_type: normalizedChannel, command_id: commandId, external_message_id: event.external_message_id, appointment, saved };
   }
 
   if (command === 'assign_conversation') {

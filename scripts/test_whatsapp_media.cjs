@@ -6,14 +6,15 @@ const root = path.resolve(__dirname, '..');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const contextCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_prepare_context.js'), 'utf8');
 const sentCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_prepare_sent.js'), 'utf8');
+const mediaCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_send_product_media.js'), 'utf8');
 const catalog = [{ category_key: 'pulseiras', label: 'Pulseiras', aliases: ['pulseira', 'pulseiras'], items: [1, 2, 3].map((n) => ({ url: `https://media.example/${n}.jpg` })) }];
 const env = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'test-key' };
 
-async function context(message, { history = [], boundary = null, environment = env, failSettings = false, failPrompt = false, failBoundary = false, tenant = 'loja', chat = 'chat' } = {}) {
+async function context(message, { history = [], boundary = null, environment = env, failSettings = false, failPrompt = false, failBoundary = false, tenant = 'loja', chat = 'chat', settings = {}, prompts = [], services = [], failCatalog = false, avatar = {} } = {}) {
   const fn = new AsyncFunction('$json', '$env', '$getWorkflowStaticData', contextCode);
   const json = { tenant_slug: tenant, remoteJid: chat, messageText: message, raw_payload: { apikey: 'do-not-persist' } };
   const httpRequest = async ({ url }) => {
-    assert.ok(url.includes(tenant) || url.includes('tenant-test'));
+    assert.ok(url.includes(tenant) || url.includes('tenant-test') || url.includes('evolution.example'));
     if (url.includes('/channel_events?') && url.includes('&or=')) {
       assert.ok(url.includes('&channel_type=eq.whatsapp'));
       assert.ok(url.includes('&external_conversation_id=eq.' + encodeURIComponent(chat)));
@@ -22,25 +23,90 @@ async function context(message, { history = [], boundary = null, environment = e
     }
     if (url.includes('/channel_events?')) return history;
     if (url.includes('/tenants?')) return [{ id: 'tenant-test' }];
+    if (url.includes('/contacts?select=')) return avatar.contacts || [{ id: 'contact-test', avatar_url: null, avatar_fetched_at: new Date().toISOString() }];
+    if (url.endsWith('/rest/v1/contacts')) return [{ id: 'contact-test' }];
+    if (url.includes('/rest/v1/contacts?id=')) return [];
+    if (url.includes('/chat/fetchProfilePictureUrl/')) {
+      if (avatar.fail) throw new Error('provider unavailable');
+      return avatar.response || { profilePictureUrl: null };
+    }
     if (url.includes('/tenant_settings?')) {
       if (failSettings) throw Object.assign(new Error('permission denied'), { statusCode: 403 });
-      return [{ settings: { product_media_catalog: catalog, system_prompt: 'Prompt do cliente', commerce_mode: true } }];
+      return [{ settings: { product_media_catalog: catalog, system_prompt: 'Prompt do cliente', commerce_mode: true, ...settings } }];
     }
     if (url.includes('/ai_agents?')) return [];
     if (url.includes('/ai_prompt_versions?')) {
       if (failPrompt) throw Object.assign(new Error('missing table'), { statusCode: 404 });
-      return [];
+      return prompts;
+    }
+    if (url.includes('/tenant_service_catalog?')) {
+      assert.ok(url.includes('&tenant_id=eq.tenant-test&active=eq.true'));
+      if (failCatalog) throw Object.assign(new Error('Timeout'), { statusCode: 504 });
+      return services;
     }
     throw Error('Unexpected request');
   };
   return (await fn.call({ helpers: { httpRequest } }, json, environment, () => ({}))).json;
 }
 
+const catalogSettings = { whatsapp_context_mode: 'tenant_catalog_v1', ai_model: 'gemini-2.5-flash-lite', commerce_mode: false, conversation_style_instructions: 'Tom da cliente' };
+test('opt-in uses settings prompt plus real multi-tenant catalog, not old version', async () => {
+  const result = await context('Qual o valor?', { settings: catalogSettings,
+    prompts: [{ prompt: 'Versao anterior' }], services: [{ name: 'Servico A', price: 99.99 }, { name: 'Servico B', price: 149.99 }] });
+  assert.ok(result.systemMessage.startsWith('Prompt do cliente'));
+  assert.ok(!result.systemMessage.includes('Versao anterior'));
+  assert.ok(result.systemMessage.includes('Tom da cliente'));
+  assert.ok(result.systemMessage.includes('99.99'));
+  assert.equal(result.catalog_diagnostics.service_catalog_count, 2);
+  assert.equal(result.handoff, false);
+  assert.equal(result.whatsapp_ai_model, 'models/gemini-2.5-flash-lite');
+  assert.equal(result.whatsapp_ai_options.maxOutputTokens, 500);
+});
+test('legacy clients retain old prompt precedence and model options', async () => {
+  const result = await context('oi', { prompts: [{ prompt: 'Versao anterior' }] });
+  assert.equal(result.systemMessage, 'Versao anterior');
+  assert.equal(result.whatsapp_ai_model, undefined);
+  assert.equal(result.whatsapp_ai_options, undefined);
+});
+test('failed catalog read blocks generation with diagnostics, never silently invents a price', async () => {
+  const result = await context('valor', { settings: catalogSettings, failCatalog: true });
+  assert.equal(result.ai_allowed, false);
+  assert.equal(result.ai_block_reason, 'service_catalog_unavailable');
+  assert.equal(result.catalog_diagnostics.context_load_errors.at(-1).step, 'service_catalog');
+});
+test('partial catalog is not falsely marked complete and null price is not zero', async () => {
+  const result = await context('todos os servicos', { settings: catalogSettings,
+    services: Array.from({ length: 101 }, (_, i) => ({ name: 'Servico ' + i, price: null })) });
+  assert.equal(result.catalog_diagnostics.service_catalog_complete, false);
+  assert.equal(result.catalog_diagnostics.service_catalog_count, 100);
+  assert.ok(result.systemMessage.includes('"preco_brl":null'));
+  assert.equal(result.whatsapp_ai_options.maxOutputTokens, 2500);
+});
+
 test('explicit category selects three media items and strips incoming API key', async () => {
   const result = await context('quero ver pulseiras');
   assert.equal(result.product_media_matches.length, 3);
   assert.equal(result.catalog_diagnostics.selection_source, 'current_message');
   assert.equal(result.raw_payload.apikey, undefined);
+});
+
+test('profile picture enrichment is non-critical when Evolution fails', async () => {
+  const result = await context('oi', {
+    environment: { ...env, EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'test', EVOLUTION_INSTANCE_LOJA: 'loja' },
+    avatar: { contacts: [{ id: 'contact-test', avatar_url: null, avatar_fetched_at: null }], fail: true },
+  });
+  assert.equal(result.raw_payload.contact_avatar.source, 'evolution_error');
+  assert.equal(result.avatarUrl, null);
+  assert.equal(result.promptText.includes('Mensagem: oi'), true);
+});
+
+test('profile picture URL is cached against the current tenant contact only', async () => {
+  const result = await context('oi', {
+    environment: { ...env, EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'test', EVOLUTION_INSTANCE_LOJA: 'loja' },
+    avatar: { contacts: [{ id: 'contact-test', avatar_url: null, avatar_fetched_at: null }], response: { profilePictureUrl: 'https://pps.example/avatar.jpg' } },
+  });
+  assert.equal(result.raw_payload.contact_avatar.avatarUrl, 'https://pps.example/avatar.jpg');
+  assert.equal(result.raw_payload.contact_avatar.source, 'evolution');
 });
 test('resend recovers category from inbound history even when previous send selected nothing', async () => {
   const result = await context('manda de novo', { history: [{ direction: 'inbound', message_text: 'pulseiras', raw_payload: {} }] });
@@ -78,25 +144,29 @@ test('media sender uses tenant credentials and records partial failures without 
   const base = await context('pulseiras');
   base.responseText = 'Aqui estao as opcoes';
   base.phone = '5500000000000';
+  base.remoteJid = '5500000000000@s.whatsapp.net';
   base.instance = 'loja';
+  base.should_send_response = true;
   let calls = 0;
-  const fn = new AsyncFunction('$json', '$env', '$', sentCode);
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
   const result = await fn.call({ helpers: { httpRequest: async (request) => {
     assert.equal(request.headers.apikey, 'tenant-key');
     assert.equal(request.url, 'https://evolution.example/message/sendMedia/loja');
+    assert.equal(request.body.number, base.remoteJid);
     if (++calls === 2) throw Object.assign(new Error('private failure detail'), { statusCode: 429 });
     return { key: { id: `media-${calls}` } };
-  } } }, { key: { id: 'text-1' } }, {
+  } } }, base, {
     EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'tenant-key',
-  }, () => ({ item: { json: base } }));
+  });
   assert.equal(calls, 3);
-  assert.equal(result.json.messageText, base.responseText);
-  assert.deepEqual(result.json.raw_payload.product_media_delivery.sent.map((x) => x.status), ['accepted', 'failed', 'accepted']);
+  assert.match(result.json.responseText, /parte das fotos/);
+  assert.deepEqual(result.json.product_media_delivery.sent.map((x) => x.status), ['accepted', 'failed', 'accepted']);
 });
 test('generated workflow embeds exactly the tested source', () => {
   const w = JSON.parse(fs.readFileSync(path.join(root, 'n8n/workflows/magia_whatsapp_evolution_mvp.json'), 'utf8'));
   assert.equal(w.nodes.find((n) => n.name === 'Preparar Contexto JIW').parameters.jsCode, contextCode.trimEnd());
   assert.equal(w.nodes.find((n) => n.name === 'Preparar Evento Enviado').parameters.jsCode, sentCode.trimEnd());
+  assert.equal(w.nodes.find((n) => n.name === 'Enviar Fotos do Catalogo').parameters.jsCode, mediaCode.trimEnd());
   for (const node of w.nodes.filter((n) => n.type === 'n8n-nodes-base.code')) new AsyncFunction(node.parameters.jsCode);
 });
 
@@ -150,5 +220,65 @@ test('workflow uses the computed Redis key and all sends pass through the sessio
   assert.equal(w.connections['Restaurar Contexto para Envio'].main[0][0].node, 'Validar Sessao Antes do Envio');
   assert.equal(w.connections['Sessao ainda ativa?'].main[1][0].node, 'Responder Resposta Cancelada');
   const sendParents = Object.entries(w.connections).filter(([, connections]) => connections.main?.flat().some((edge) => edge.node === 'Enviar Resposta pela Evolution')).map(([name]) => name);
-  assert.deepEqual(sendParents, ['Sessao ainda ativa?']);
+  assert.deepEqual(sendParents, ['Sessao ativa apos fotos?']);
+  assert.equal(w.connections['Sessao ainda ativa?'].main[0][0].node, 'Enviar Fotos do Catalogo');
+  assert.equal(w.connections['Enviar Fotos do Catalogo'].main[0][0].node, 'Validar Sessao Apos Fotos');
+  assert.equal(w.nodes.find(n => n.name === 'Validar Sessao Apos Fotos').parameters.jsCode,
+    w.nodes.find(n => n.name === 'Validar Sessao Antes do Envio').parameters.jsCode);
+});
+
+test('HTTP failures include sanitized provider detail and never claim photos were sent', async () => {
+  const base = await context('pulseiras');
+  base.should_send_response = true;
+  base.responseText = 'Estou enviando tudo!';
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
+  const result = (await fn.call({ helpers: { httpRequest: async () => ({ statusCode: 500, body: {
+    response: { message: ['AxiosError: Request failed with status code 403 key=secret-test'] },
+  } }) } }, base, { EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'secret-test', EVOLUTION_INSTANCE_LOJA: 'loja' })).json;
+  assert.equal(result.stage, 'Qualificacao');
+  assert.match(result.responseText, /consegui enviar/);
+  assert.equal(result.product_media_delivery.sent[0].http_status, 500);
+  assert.match(result.product_media_delivery.sent[0].error_detail, /403/);
+  assert.ok(!JSON.stringify(result.product_media_delivery).includes('secret-test'));
+});
+
+test('no catalog, handoff and invalid session never send photos', async () => {
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
+  for (const override of [{ product_media_matches: [] }, { handoff: true }, { should_send_response: false }]) {
+    const base = { ...await context('pulseiras'), should_send_response: true, responseText: 'original', ...override };
+    const result = (await fn.call({ helpers: { httpRequest: async () => { assert.fail('must not send'); } } }, base, {})).json;
+    assert.equal(result.responseText, 'original');
+    assert.equal(result.product_media_delivery.sent.length, 0);
+  }
+});
+
+test('persisting outbound does not send photos a second time and preserves session', async () => {
+  const base = { responseText: 'resposta real', conversation_session_id: 'close-1', product_media_delivery: { sent: [] } };
+  const fn = new AsyncFunction('$json', '$', sentCode);
+  const result = (await fn({ key: { id: 'text-1' } }, name => {
+    assert.equal(name, 'Enviar Fotos do Catalogo');
+    return { item: { json: base } };
+  })).json;
+  assert.equal(result.messageText, base.responseText);
+  assert.equal(result.raw_payload.conversation_session_id, 'close-1');
+});
+
+test('full HTTP response requires message IDs before confirming catalog presentation', async () => {
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
+  const base = { ...await context('pulseiras'), should_send_response: true };
+  const environment = { EVOLUTION_API_URL_LOJA: 'https://evolution.example', EVOLUTION_API_KEY_LOJA: 'key', EVOLUTION_INSTANCE_LOJA: 'loja' };
+  for (const accepted of [true, false]) {
+    const result = (await fn.call({ helpers: { httpRequest: async () => ({ statusCode: 201, body: accepted ? { key: { id: 'image-id' } } : {} }) } }, base, environment)).json;
+    assert.equal(result.stage, accepted ? 'Produtos apresentados' : 'Qualificacao');
+    assert.equal(result.product_media_delivery.sent[0].status, accepted ? 'accepted' : 'unconfirmed');
+  }
+});
+
+test('missing media credentials does not promise delivery', async () => {
+  const fn = new AsyncFunction('$json', '$env', mediaCode);
+  const base = { ...await context('pulseiras'), should_send_response: true, responseText: 'Enviei tudo' };
+  const result = (await fn.call({ helpers: { httpRequest: async () => assert.fail('must not send') } }, base, {})).json;
+  assert.equal(result.product_media_delivery.skipped, 'missing_or_placeholder_evolution_media_env');
+  assert.match(result.responseText, /consegui enviar/);
+  assert.equal(result.stage, 'Qualificacao');
 });

@@ -8,3 +8,4 @@ tmp-*.sql
 *-test-payload.json
 localtunnel-*.log
 tools/*.exe
+.local/
