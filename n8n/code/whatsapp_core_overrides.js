@@ -23,6 +23,22 @@ async function loadTenantContext() {
   return { tenant, settings: settingRows[0], agent: agentRows[0] || {}, channel: channelRows[0] };
 }
 
+async function loadContact(context) {
+  try {
+    const rows = await supabaseGet('/rest/v1/contacts?select=id,name,phone,external_handle,metadata&tenant_id=eq.'
+      + encodeFilter(context.tenant.id) + '&external_handle=eq.' + encodeFilter(chatId) + '&limit=1');
+    return rows?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function shouldIgnoreBecauseOwnerSavedContact(contact, turn = null) {
+  if (contact?.metadata?.whatsapp_owner_saved === true) return true;
+  if (turn?.messages?.some(m => m.raw?.is_owner_saved || m.raw?.ai_suppressed)) return true;
+  return false;
+}
+
 async function loadRecentHistory(context = {}) {
   const base = '/rest/v1/channel_events?select=*'
     + '&tenant_slug=eq.' + encodeFilter(tenantSlug) + '&channel_type=eq.whatsapp'
@@ -99,22 +115,188 @@ async function markLatestAppointmentPaymentReported(context) {
   return { updated: true, appointment: saved[0], previous_status: target.status };
 }
 
+async function patchSalesMedia(context, eventId, entry) {
+  const tenantId = context?.tenant?.id || $json.tenant_id;
+  const mediaPath = '/rest/v1/channel_events?tenant_id=eq.' + encodeFilter(tenantId)
+    + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
+    + '&id=eq.' + encodeFilter(eventId);
+  let rows;
+  try {
+    rows = await supabaseGet(mediaPath + '&select=id,raw_payload&limit=1');
+  } catch {
+    throw new Error('SALES_MEDIA_PERSISTENCE_FAILED');
+  }
+  const row = rows?.[0];
+  if (!row) throw new Error('SALES_MEDIA_PERSISTENCE_FAILED');
+  const existing = row.raw_payload && typeof row.raw_payload === 'object' && !Array.isArray(row.raw_payload)
+    ? row.raw_payload : {};
+  let patched;
+  try {
+    patched = await supabasePatch(mediaPath, {
+      raw_payload: {
+        ...existing,
+        sales_media: [entry],
+      },
+    });
+  } catch {
+    throw new Error('SALES_MEDIA_PERSISTENCE_FAILED');
+  }
+  if (!Array.isArray(patched) || !patched.length) {
+    throw new Error('SALES_MEDIA_PERSISTENCE_FAILED');
+  }
+  return patched;
+}
+
 async function saveEvent(event) {
-  // Keep every original inbound message; attach processing results without a second inbound copy.
-  const payload = { service: event.service, stage: event.stage, handoff: event.handoff,
-    ai_provider: event.ai_provider, ai_model: event.ai_model || null, ai_error: event.ai_error || '',
-    ai_usage: event.ai_usage || {}, response_text: null,
-    raw_payload: { ...event.raw_payload, ...(turn.audio_transcriptions ? {audio_transcriptions:turn.audio_transcriptions} : {}), core_revision: 'conversation_core_v1',
-      grouped_message_ids: turn.messages.map(item => item.id), conversation_session_id: turn.boundary_id } };
-  const ids = turn.messages.map(item => item.event_id);
-  const saved = await supabasePatch('/rest/v1/channel_events?tenant_id=eq.' + encodeFilter($json.tenant_id)
-    + '&id=in.(' + ids.map(encodeFilter).join(',') + ')', payload);
+  if (!turn?.messages?.length) return [];
+  const ids = turn.messages.map(item => item.event_id).filter(Boolean);
+  if (!ids.length) return [];
+
+  // 1. Atualização dos campos top-level legítimos do turno nas mensagens inbound.
+  // CRÍTICO: NUNCA incluir raw_payload aqui, preservando o envelope e a identidade original de cada mensagem.
+  // CRÍTICO: NUNCA incluir ai_error top-level em mensagens inbound!
+  // O ai_error canônico top-level pertence exclusivamente ao evento OUTBOUND (ou technical_error).
+  // 1 falha lógica = exatamente 1 registro no banco com ai_error top-level preenchido.
+  const batchPayload = {
+    service: event.service || 'geral',
+    stage: event.stage || 'Conversas IA',
+    handoff: Boolean(event.handoff),
+    ai_provider: event.ai_provider || 'rules',
+    ai_model: event.ai_model || null,
+    response_text: null,
+  };
+
+  const saved = await supabasePatch(
+    '/rest/v1/channel_events?tenant_id=eq.' + encodeFilter($json.tenant_id)
+      + '&id=in.(' + ids.map(encodeFilter).join(',') + ')',
+    batchPayload
+  );
+
+  // 2. Persistência individual de sales_media: cada mídia classificada fica
+  // estritamente no evento daquela mídia (foto ou documento), sem poluir mensagens de texto vizinhas.
+  // CRÍTICO: sales_media NÃO PODE FALHAR SILENCIOSAMENTE.
+  // Se a persistência falhar, lança SALES_MEDIA_PERSISTENCE_FAILED antes de responder ao cliente,
+  // impedindo falsas confirmações, impedindo avanço indevido de avaliação e acionando o fallback seguro.
+  const salesMedia = Array.isArray(event.raw_payload?.sales_media) ? event.raw_payload.sales_media : [];
+  for (const item of salesMedia) {
+    if (!item?.event_id) continue;
+    const entry = {
+      event_id: item.event_id,
+      kind: item.kind,
+      readable: Boolean(item.readable),
+      ...(item.extracted && typeof item.extracted === 'object' && Object.keys(item.extracted).length ? { extracted: item.extracted } : {}),
+    };
+    await patchSalesMedia(null, item.event_id, entry);
+  }
+
   return saved;
+}
+
+function textReplyAuditPayload(rawPayload = {}) {
+  // A text reply must never inherit the inbound channel envelope. In particular,
+  // copying `media` or the Evolution message body turns a customer photo into an
+  // attachment on the assistant event when the frontend materializes history.
+  const payload = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+    ? rawPayload
+    : {};
+  const {
+    media,
+    magia_normalized,
+    magia_operator,
+    data,
+    message,
+    messageType,
+    message_type,
+    imageMessage,
+    audioMessage,
+    videoMessage,
+    documentMessage,
+    stickerMessage,
+    media_processing,
+    sales_media,
+    audio_transcriptions,
+    audio_processing,
+    ...audit
+  } = payload;
+  return {
+    ...audit,
+    message_origin: 'assistant_text_reply',
+  };
+}
+
+async function contactExclusionStatus(context) {
+  const settings = settingsFor(context);
+  if (settings.contact_exclusion_enabled !== true && settings.contact_exclusion_enabled !== 'true') {
+    return { blocked: false, reason: 'disabled' };
+  }
+  try {
+    const result = await supabasePost('/rest/v1/rpc/magia_contact_exclusion_status', {
+      p_tenant: context.tenant.id,
+      p_chat: chatId,
+    });
+    if (typeof result?.blocked !== 'boolean') throw new Error('Invalid exclusion response');
+    if (result.resolved_phone && turn) turn.exclusion_phone = result.resolved_phone;
+    return result;
+  } catch (_) {
+    // A failed guard is not permission to contact a protected number.
+    return { blocked: true, reason: 'contact_exclusion_unavailable' };
+  }
+}
+
+async function recordContactExclusion(context, decision) {
+  await saveEvent({
+    service: 'contact_excluded',
+    stage: 'Atendimento humano',
+    handoff: true,
+    ai_provider: 'contact_exclusion',
+    ai_error: decision.reason === 'contact_excluded' ? '' : decision.reason,
+    raw_payload: { contact_exclusion: { blocked: true, reason: decision.reason } },
+  });
+  if (turn?.messages?.length) {
+    for (const item of turn.messages) {
+      if (!item?.event_id) continue;
+      const mediaPath = '/rest/v1/channel_events?tenant_id=eq.' + encodeFilter(context?.tenant?.id || $json.tenant_id)
+        + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
+        + '&id=eq.' + encodeFilter(item.event_id);
+      try {
+        const rows = await supabaseGet(mediaPath + '&select=id,raw_payload&limit=1');
+        const existing = rows?.[0]?.raw_payload || {};
+        await supabasePatch(mediaPath, {
+          raw_payload: {
+            ...existing,
+            ...(turn.exclusion_phone ? { exclusion_phone: turn.exclusion_phone } : {}),
+            contact_exclusion: { blocked: true, reason: decision.reason },
+          },
+        });
+      } catch {}
+    }
+  }
+}
+
+async function cancelPendingFollowUps(context, reason = 'customer_disposition_not_awaiting') {
+  try {
+    await supabasePatch('/rest/v1/follow_up_jobs?tenant_id=eq.' + encodeFilter(context.tenant.id)
+      + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
+      + '&status=eq.pending', {
+        status: 'cancelled',
+        updated_at: new Date().toISOString(),
+        error: reason,
+      });
+  } catch {}
 }
 
 async function scheduleFollowUps(context, sentEvent, event) {
   const settings = settingsFor(context);
-  if (salesEnabled(context)) return 0;
+  if (salesEnabled(context)) {
+    const disposition = event.raw_payload?.follow_up_disposition;
+    if (['closed_by_customer', 'declined', 'resolved', 'deferred_by_customer'].includes(disposition)) {
+      await cancelPendingFollowUps(context, disposition);
+      return 0;
+    }
+    if (settings.follow_up_enabled !== true || !settings.sales_follow_up?.enabled
+      || event.service !== 'sales_qualification' || event.raw_payload?.interest_registered
+      || disposition !== 'awaiting_customer') return 0;
+  }
   // The policy controls activation in the database. Never enqueue human handoffs,
   // payment flows, closed conversations, or a reply that failed to persist.
   if (!sentEvent?.id || event.handoff || ['agendamento', 'pagamento_sinal', 'conversation_closed'].includes(event.service)) return 0;
@@ -148,6 +330,11 @@ async function sendChannelMessage(context, text, event) {
     + '&or=(service.eq.conversation_assigned,service.eq.appointment_payment_confirmed,sender_type.eq.human)&limit=1');
   if (humanChanges.length) return { cancelled: true };
   if (salesEnabled(context) && !await salesCanSend(context,event)) return {cancelled:true};
+  const exclusion = await contactExclusionStatus(context);
+  if (exclusion.blocked) {
+    await recordContactExclusion(context, exclusion);
+    return { cancelled: true, reason: exclusion.reason };
+  }
   sendAttempted = true;
   const sent = await httpJson('POST', base + '/message/sendText/' + encodeFilter(instance),
     { apikey: key, 'Content-Type': 'application/json' }, { number: chatId, text });
@@ -160,7 +347,10 @@ async function sendChannelMessage(context, text, event) {
     sender_type: 'assistant', message_text: text, contact_name: turn.messages.at(-1)?.name || firstName,
     service: event.service, stage: event.stage, handoff: event.handoff, ai_provider: event.ai_provider,
     ai_model: event.ai_model || null, delivery_status: 'sent', response_text: null,
-    raw_payload: { ...event.raw_payload, core_revision: 'conversation_core_v1',
+    ai_error: event.ai_error ? String(event.ai_error).slice(0, 300) : '',
+    ai_usage: event.ai_usage || {},
+    ...(event.sent_by_user ? { sent_by_user: event.sent_by_user } : {}),
+    raw_payload: { ...textReplyAuditPayload(event.raw_payload), core_revision: 'conversation_core_v1',
       conversation_session_id: turn.boundary_id, grouped_message_ids: turn.messages.map(item => item.id) },
   });
   const sentEvent = Array.isArray(saved) ? saved[0] : saved;

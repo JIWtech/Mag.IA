@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, Mic, AlertCircle, Loader2 } from 'lucide-react';
+import { Play, Pause, Mic, AlertCircle, Loader2, Volume2, VolumeX } from 'lucide-react';
 import { formatAudioTime, calculateAudioProgress, mediaSourceChanged } from '../audioUtils.js';
 
 export { formatAudioTime, calculateAudioProgress };
@@ -15,6 +15,7 @@ export { formatAudioTime, calculateAudioProgress };
 export function AudioMessagePlayer({
   media,
   onLoad,
+  onRetry,
   className = '',
 }) {
   const audioRef = useRef(null);
@@ -27,8 +28,10 @@ export function AudioMessagePlayer({
     return Number.isFinite(raw) && raw > 0 ? raw : 0;
   });
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [volume, setVolume] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekTime, setSeekTime] = useState(0);
 
@@ -56,8 +59,19 @@ export function AudioMessagePlayer({
     if (!mediaSourceChanged(previousSrcRef.current, src)) return;
     previousSrcRef.current = src;
     setHasError(false);
+    setIsRetrying(false);
     setIsLoading(false);
   }, [src]);
+
+  const retryAudio = useCallback(async () => {
+    if (!onRetry || isRetrying) return;
+    setIsRetrying(true);
+    try {
+      await onRetry();
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [isRetrying, onRetry]);
 
   // Sincroniza elemento de áudio real e eventos do ciclo de vida
   useEffect(() => {
@@ -144,6 +158,10 @@ export function AudioMessagePlayer({
     };
   }, [src, isSeeking, onLoad]);
 
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
+
   // Alterna play / pause
   const togglePlay = useCallback(async () => {
     const audio = audioRef.current;
@@ -176,6 +194,11 @@ export function AudioMessagePlayer({
       audioRef.current.playbackRate = nextRate;
     }
   }, [playbackRate]);
+
+  const changeVolume = useCallback((event) => {
+    const next = Math.max(0, Math.min(1, Number(event.target.value)));
+    setVolume(Number.isFinite(next) ? next : 1);
+  }, []);
 
   // Cálculo de tempo proporcional na timeline
   const calculateSeekTime = useCallback((clientX) => {
@@ -253,9 +276,14 @@ export function AudioMessagePlayer({
   // Se houver erro ou ausência de URL, exibe estado de erro discreto
   if (hasError || !src) {
     return (
-      <div className={`audio-player-error ${className}`} role="status">
+      <div className={`audio-player-error ${className}`} role="alert">
         <AlertCircle size={16} className="audio-error-icon" aria-hidden="true" />
-        <span className="audio-error-text">Áudio indisponível</span>
+        <span className="audio-error-text">Não foi possível carregar este áudio agora.</span>
+        {onRetry && (
+          <button type="button" className="audio-retry-button" onClick={retryAudio} disabled={isRetrying}>
+            {isRetrying ? 'Tentando...' : 'Tentar novamente'}
+          </button>
+        )}
       </div>
     );
   }
@@ -329,6 +357,18 @@ export function AudioMessagePlayer({
           </div>
 
           <div className="audio-controls-right">
+            <label className="audio-volume-control" title="Volume do áudio">
+              {volume === 0 ? <VolumeX size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={volume}
+                onChange={changeVolume}
+                aria-label="Volume do áudio"
+              />
+            </label>
             {isPtt && (
               <span className="audio-ptt-badge" title="Mensagem de voz" aria-label="Mensagem de voz">
                 <Mic size={12} className="audio-ptt-icon" />

@@ -1,0 +1,108 @@
+Created At: 2026-10-05T12:14:51-03:00
+Completed At: 2026-10-05T12:14:51-03:00
+File Path: `file:///c:/MagIA-Projeto-Oficial/scripts/test_whatsapp_media.cjs`
+Total Lines: 365
+Total Bytes: 23965
+Showing lines 1 to 100
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: const test = require('node:test');
+2: const assert = require('node:assert/strict');
+3: const fs = require('node:fs');
+4: const path = require('node:path');
+5: const root = path.resolve(__dirname, '..');
+6: const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+7: const contextCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_prepare_context.js'), 'utf8');
+8: const syncContactCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_sync_contact.js'), 'utf8');
+9: const sentCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_prepare_sent.js'), 'utf8');
+10: const mediaCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_send_product_media.js'), 'utf8');
+11: const catalog = [{ category_key: 'pulseiras', label: 'Pulseiras', aliases: ['pulseira', 'pulseiras'], items: [1, 2, 3].map((n) => ({ url: `https://media.example/${n}.jpg` })) }];
+12: const env = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'test-key' };
+13: 
+14: async function syncContact(input = {}, { environment = env, contacts = [], evolution = null, failEvolution = false } = {}) {
+15:   const fn = new AsyncFunction('$json', '$env', syncContactCode);
+16:   const calls = [];
+17:   const httpRequest = async (request) => {
+18:     calls.push(request);
+19:     const url = request.url;
+20:     if (url.includes('/tenants?')) return [{ id: 'tenant-test' }];
+21:     if (url.includes('/contacts?select=')) return contacts;
+22:     if (url.endsWith('/rest/v1/contacts') && request.method === 'POST') {
+23:       const created = { id: `contact-${contacts.length + 1}`, ...request.body, metadata: {} };
+24:       contacts.push(created);
+25:       return [created];
+26:     }
+27:     if (url.includes('/rest/v1/contacts?id=') && request.method === 'PATCH') return [];
+28:     if (url.includes('/chat/fetchProfilePictureUrl/')) {
+29:       if (failEvolution) throw new Error('timeout');
+30:       return evolution || { profilePictureUrl: null };
+31:     }
+32:     throw Error(`Unexpected request ${request.method} ${url}`);
+33:   };
+34:   const result = await fn.call({ helpers: { httpRequest } }, {
+35:     tenant_slug: 'loja', instance: 'loja', remoteJid: '5521992988071@s.whatsapp.net', phone: '5521992988071',
+36:     contactName: 'Guilherme Santos', raw_payload: {}, ...input,
+37:   }, environment);
+38:   return { json: result.json, calls, contacts };
+39: }
+40: 
+41: async function context(message, { history = [], boundary = null, environment = env, failSettings = false, failPrompt = false, failBoundary = false, tenant = 'loja', chat = 'chat', settings = {}, prompts = [], services = [], failCatalog = false, avatar = {} } = {}) {
+42:   const fn = new AsyncFunction('$json', '$env', '$getWorkflowStaticData', contextCode);
+43:   const json = { tenant_slug: tenant, remoteJid: chat, messageText: message, raw_payload: { apikey: 'do-not-persist' } };
+44:   const httpRequest = async ({ url }) => {
+45:     assert.ok(url.includes(tenant) || url.includes('tenant-test') || url.includes('evolution.example'));
+46:     if (url.includes('/channel_events?') && url.includes('&or=')) {
+47:       assert.ok(url.includes('&channel_type=eq.whatsapp'));
+48:       assert.ok(url.includes('&external_conversation_id=eq.' + encodeURIComponent(chat)));
+49:       if (failBoundary) throw new Error('Timeout');
+50:       return boundary ? [boundary] : [];
+51:     }
+52:     if (url.includes('/channel_events?')) return history;
+53:     if (url.includes('/tenants?')) return [{ id: 'tenant-test' }];
+54:     if (url.includes('/contacts?select=')) return avatar.contacts || [{ id: 'contact-test', avatar_url: null, avatar_fetched_at: new Date().toISOString() }];
+55:     if (url.endsWith('/rest/v1/contacts')) return [{ id: 'contact-test' }];
+56:     if (url.includes('/rest/v1/contacts?id=')) return [];
+57:     if (url.includes('/chat/fetchProfilePictureUrl/')) {
+58:       if (avatar.fail) throw new Error('provider unavailable');
+59:       return avatar.response || { profilePictureUrl: null };
+60:     }
+61:     if (url.includes('/tenant_settings?')) {
+62:       if (failSettings) throw Object.assign(new Error('permission denied'), { statusCode: 403 });
+63:       return [{ settings: { product_media_catalog: catalog, system_prompt: 'Prompt do cliente', commerce_mode: true, ...settings } }];
+64:     }
+65:     if (url.includes('/ai_agents?')) return [];
+66:     if (url.includes('/ai_prompt_versions?')) {
+67:       if (failPrompt) throw Object.assign(new Error('missing table'), { statusCode: 404 });
+68:       return prompts;
+69:     }
+70:     if (url.includes('/tenant_service_catalog?')) {
+71:       assert.ok(url.includes('&tenant_id=eq.tenant-test&active=eq.true'));
+72:       if (failCatalog) throw Object.assign(new Error('Timeout'), { statusCode: 504 });
+73:       return services;
+74:     }
+75:     throw Error('Unexpected request');
+76:   };
+77:   return (await fn.call({ helpers: { httpRequest } }, json, environment, () => ({}))).json;
+78: }
+79: 
+80: const catalogSettings = { whatsapp_context_mode: 'tenant_catalog_v1', ai_model: 'gemini-2.5-flash-lite', commerce_mode: false, conversation_style_instructions: 'Tom da cliente' };
+81: test('opt-in uses settings prompt plus real multi-tenant catalog, not old version', async () => {
+82:   const result = await context('Qual o valor?', { settings: catalogSettings,
+83:     prompts: [{ prompt: 'Versao anterior' }], services: [{ name: 'Servico A', price: 99.99 }, { name: 'Servico B', price: 149.99 }] });
+84:   assert.ok(result.systemMessage.startsWith('Prompt do cliente'));
+85:   assert.ok(!result.systemMessage.includes('Versao anterior'));
+86:   assert.ok(result.systemMessage.includes('Tom da cliente'));
+87:   assert.ok(result.systemMessage.includes('99.99'));
+88:   assert.equal(result.catalog_diagnostics.service_catalog_count, 2);
+89:   assert.equal(result.handoff, false);
+90:   assert.equal(result.whatsapp_ai_model, 'models/gemini-2.5-flash-lite');
+91:   assert.equal(result.whatsapp_ai_options.maxOutputTokens, 500);
+92: });
+93: test('legacy clients retain old prompt precedence and model options', async () => {
+94:   const result = await context('oi', { prompts: [{ prompt: 'Versao anterior' }] });
+95:   assert.equal(result.systemMessage, 'Versao anterior');
+96:   assert.equal(result.whatsapp_ai_model, undefined);
+97:   assert.equal(result.whatsapp_ai_options, undefined);
+98: });
+99: test('failed catalog read blocks generation with diagnostics, never silently invents a price', async () => {
+100:   const result = await context('valor', { settings: catalogSettings, failCatalog: true });
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

@@ -21,6 +21,15 @@ const rows = await this.helpers.httpRequest({ method: 'GET',
   headers, json: true, timeout: 5000 });
 const settings = rows[0]?.settings || {};
 const useCore = settings.whatsapp_processing_mode === 'conversation_core_v1';
+if (
+  (settings.contact_exclusion_enabled === true ||
+   settings.contact_exclusion_enabled === 'true') &&
+  !useCore
+) {
+  throw new Error(
+    'Contact exclusions require the guarded conversation core; legacy fallback blocked'
+  );
+}
 if (useCore && (tenant.status !== 'active' || input.tenant_resolution?.source === 'env_fallback')) {
   throw new Error('Core requires active tenant resolved by channel instance');
 }

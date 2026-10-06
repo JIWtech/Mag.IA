@@ -123,7 +123,12 @@ function shouldRefreshAvatar(value) {
   return !Number.isFinite(age) || age >= 14 * 24 * 60 * 60 * 1000;
 }
 
-let contactAvatar = { avatarUrl: null, source: 'unresolved' };
+// Contact identity/avatar synchronization runs in the dedicated node before both
+// legacy and conversation-core routing. This context node only carries its result.
+let contactAvatar = objectValue($json.contact_sync || $json.raw_payload?.contact_sync);
+if (!Object.prototype.hasOwnProperty.call(contactAvatar, 'avatarUrl')) {
+  contactAvatar = { avatarUrl: $json.avatarUrl || null, source: 'unresolved' };
+}
 async function cacheWhatsappContactAvatar() {
   if (!supabaseUrl || !serviceKey || !tenantId || !$json.remoteJid) return;
 
@@ -328,7 +333,8 @@ if (supabaseUrl && serviceKey && $json.tenant_slug) {
     activeSystemPrompt = String(tenantSettings.system_prompt || '').trim();
   }
 }
-await cacheWhatsappContactAvatar.call(this);
+// Do not call cacheWhatsappContactAvatar here: all inbound paths were already
+// synchronized by `Sincronizar Contato WhatsApp` before routing.
 // Opt-in rollout: existing tenants keep their current prompt/model/media behavior.
 const tenantCatalogMode = tenantSettings.whatsapp_context_mode === 'tenant_catalog_v1';
 let serviceCatalog = [];

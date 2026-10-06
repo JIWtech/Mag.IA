@@ -4,6 +4,7 @@ import {
   formatAudioTime,
   calculateAudioProgress,
   isTechnicalMediaPlaceholder,
+  isMediaPlaceholderForKind,
   normalizeTechnicalMediaPlaceholder,
   formatConversationPreview,
   formatCoordinates,
@@ -22,6 +23,8 @@ import {
   clearMediaUrlCache,
   normalizeLocation,
   eventsToConversations,
+  normalizeAudioTranscription,
+  normalizeMedia,
 } from './dataService.js';
 
 // ============================================================================
@@ -184,6 +187,13 @@ test('TEST 4: Placeholder [audio] vira Áudio', () => {
   assert.equal(normalizeTechnicalMediaPlaceholder('[ptt]'), 'Áudio');
   assert.equal(normalizeTechnicalMediaPlaceholder('[audio recebido]'), 'Áudio');
   assert.equal(formatConversationPreview('[audio]'), 'Áudio');
+});
+
+test('placeholder de áudio sem media continua identificável para o aviso amigável', () => {
+  assert.equal(isMediaPlaceholderForKind('[audio]', 'audio'), true);
+  assert.equal(isMediaPlaceholderForKind('[PTT]', 'audio'), true);
+  assert.equal(isMediaPlaceholderForKind('[audio]', 'image'), false);
+  assert.equal(isMediaPlaceholderForKind('mensagem sobre [audio]', 'audio'), false);
 });
 
 test('TEST 5: Placeholder [image] vira Imagem', () => {
@@ -504,6 +514,34 @@ test('media recovery TEST 3: signed URL bem-sucedida não faz retry', async () =
   assert.equal(result.raw_payload.media.url, 'https://signed.example/first.ogg');
 });
 
+test('media recovery: tentativa manual força nova URL assinada após falha do player', async () => {
+  clearMediaUrlCache();
+  let calls = 0;
+  const event = {
+    raw_payload: {
+      media: {
+        status: 'stored',
+        kind: 'audio',
+        bucket: 'channel-media',
+        storagePath: 'retry/manual.ogg',
+        url: 'https://signed.example/expired.ogg',
+      },
+    },
+  };
+  const client = {
+    storage: { from: () => ({
+      createSignedUrl: async () => {
+        calls += 1;
+        return { data: { signedUrl: 'https://signed.example/renewed.ogg' }, error: null };
+      },
+    }) },
+  };
+
+  const result = await enrichSingleMediaEvent(event, client, { force: true });
+  assert.equal(calls, 1);
+  assert.equal(result.raw_payload.media.url, 'https://signed.example/renewed.ogg');
+});
+
 test('media recovery TEST 4: falha transitória faz exatamente um retry de signed URL', async () => {
   clearMediaUrlCache();
   let calls = 0;
@@ -668,6 +706,102 @@ test('TEST B: message_text="Tem manual e chave reserva" -> somente texto', () =>
   assert.equal(conv2.messages[0].text, 'Ele só tá com uns amassados...');
 });
 
+test('evento outbound não renderiza a imagem inbound que ficou no envelope bruto do workflow', () => {
+  const outboundReplyWithInheritedEnvelope = {
+    id: 'evt-outbound-inherited-image',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999@s.whatsapp.net',
+    direction: 'outbound',
+    sender_type: 'assistant',
+    message_text: 'Qual modelo você procura?',
+    created_at: '2026-10-03T15:40:00.000Z',
+    raw_payload: {
+      media: {
+        kind: 'image',
+        status: 'stored',
+        bucket: 'channel-media',
+        storagePath: 'tenant/inbound/copied-to-outbound.jpg',
+        url: '',
+      },
+      data: {
+        message: {
+          imageMessage: {
+            url: 'https://example.test/client-photo.jpg',
+            caption: 'Quero vender esse carro',
+          },
+        },
+      },
+    },
+  };
+
+  const [conversation] = eventsToConversations([outboundReplyWithInheritedEnvelope], 'tenant');
+  assert.equal(conversation.messages[0].from, 'ai');
+  assert.equal(conversation.messages[0].media, null);
+  assert.equal(conversation.messages[0].text, 'Qual modelo você procura?');
+  assert.equal(hasStoredMediaNeedingUrl(outboundReplyWithInheritedEnvelope), false);
+});
+
+test('mídia outbound declarada no bloco normalizado continua renderizável', () => {
+  const outboundImage = {
+    id: 'evt-outbound-own-image',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999@s.whatsapp.net',
+    direction: 'outbound',
+    sender_type: 'assistant',
+    message_text: '[image]',
+    created_at: '2026-10-03T15:41:00.000Z',
+    raw_payload: {
+      media: {
+        kind: 'image',
+        status: 'stored',
+        origin: 'outbound',
+        bucket: 'channel-media',
+        storagePath: 'tenant/outbound/image.jpg',
+        url: 'https://example.test/outbound-image.jpg',
+      },
+      data: {
+        message: {
+          imageMessage: {
+            url: 'https://example.test/inherited-input.jpg',
+          },
+        },
+      },
+    },
+  };
+
+  const [conversation] = eventsToConversations([outboundImage], 'tenant');
+  assert.equal(conversation.messages[0].media?.url, 'https://example.test/outbound-image.jpg');
+});
+
+test('duas imagens inbound com o mesmo minuto não se fundem no Realtime', () => {
+  const firstImage = {
+    id: 'evt-first-image-same-minute',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999@s.whatsapp.net',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[image]',
+    created_at: '2026-10-03T15:42:01.000Z',
+    raw_payload: { media: { kind: 'image', url: 'https://example.test/first.jpg' } },
+  };
+  const secondImage = {
+    ...firstImage,
+    id: 'evt-second-image-same-minute',
+    created_at: '2026-10-03T15:42:45.000Z',
+    raw_payload: { media: { kind: 'image', url: 'https://example.test/second.jpg' } },
+  };
+
+  const conversations = eventsToConversations([firstImage], 'tenant');
+  const updated = applyIncomingEventToConversations(conversations, secondImage, 'tenant');
+  const messages = updated[0].messages;
+  assert.equal(messages.length, 2);
+  assert.deepEqual(messages.map((message) => message.eventId), [firstImage.id, secondImage.id]);
+  assert.deepEqual(messages.map((message) => message.media?.url), [
+    'https://example.test/first.jpg',
+    'https://example.test/second.jpg',
+  ]);
+});
+
 test('TEST C: locationMessage + [location] -> preview "Localização"', () => {
   const locationEvent = {
     id: 'evt-loc-1',
@@ -769,6 +903,25 @@ test('TEST F: document stored + URL -> card de documento real com metadados', as
   assert.equal(docMsg.media.fileName, 'manual_do_proprietario.pdf');
   assert.equal(formatFriendlyMimeType(docMsg.media.mimeType, docMsg.media.fileName), 'PDF');
   assert.equal(formatFileSize(docMsg.media.size), '1.0 MB');
+});
+
+test('sticker stored uses a signed URL and remains a sticker in the conversation', async () => {
+  clearMediaUrlCache();
+  const stickerEvent = {
+    id: 'evt-sticker-1', channel_type: 'whatsapp', external_conversation_id: '5511666666666',
+    direction: 'inbound', sender_type: 'contact', message_text: '[sticker]',
+    raw_payload: { media: { status: 'stored', kind: 'sticker', category: 'sticker', bucket: 'channel-media',
+      storagePath: 'tenant/stickers/adesivo.webp', mimeType: 'image/webp', size: 3192 } },
+  };
+  const client = { storage: { from: (bucket) => ({ createSignedUrl: async (path) => {
+    assert.equal(bucket, 'channel-media'); assert.equal(path, 'tenant/stickers/adesivo.webp');
+    return { data: { signedUrl: 'https://project.supabase.co/storage/v1/object/sign/sticker.webp?token=xyz' }, error: null };
+  } }) } };
+  const enriched = await enrichSingleMediaEvent(stickerEvent, client);
+  assert.equal(enriched.raw_payload.media.url, 'https://project.supabase.co/storage/v1/object/sign/sticker.webp?token=xyz');
+  const [conversation] = eventsToConversations([enriched], 'tenant');
+  assert.equal(conversation.messages[0].media.kind, 'sticker');
+  assert.equal(conversation.messages[0].media.mimeType, 'image/webp');
 });
 
 test('TEST G: document sem URL -> fallback amigável Documento, sem card fantasma de imagem', () => {
@@ -937,4 +1090,351 @@ test('applyIncomingEventToConversations: atualiza location atomicamente quando m
   assert.equal(updatedMsg.location.name, 'Sé');
   assert.equal(updatedMsg.location.address, 'Praça da Sé, São Paulo - SP');
   assert.equal(updatedMsg.location.latitude, -23.55);
+});
+
+// ============================================================================
+// HISTORICAL AUDIO TRANSCRIPTION & RECOVERY RENDERING (FRONTEND FIX)
+// ============================================================================
+
+test('Cenário 1: media de áudio válida -> player normal', () => {
+  const validAudioEvent = {
+    id: 'evt-audio-valid-1',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[audio]',
+    created_at: '2026-10-02T14:00:00.000Z',
+    raw_payload: {
+      media: {
+        kind: 'audio',
+        status: 'stored',
+        url: 'https://example.test/real-audio.ogg',
+        mimeType: 'audio/ogg',
+        duration: 12,
+      },
+    },
+  };
+
+  const [conversation] = eventsToConversations([validAudioEvent], 'tenant');
+  const message = conversation.messages[0];
+
+  assert.ok(message.media);
+  assert.equal(message.media.kind, 'audio');
+  assert.equal(message.media.url, 'https://example.test/real-audio.ogg');
+  // Deve renderizar player normal (media com url presente)
+  const isPlayableAudio = Boolean(message.media && message.media.url);
+  assert.equal(isPlayableAudio, true);
+});
+
+test('Cenário 2: sem media + audio_transcriptions[event.id].status = transcribed + texto válido -> exibe transcrição e NÃO exibe "arquivo não chegou"', () => {
+  const historicalTranscribedAudioEvent = {
+    id: 'evt-audio-hist-123',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[audio]',
+    created_at: '2026-10-02T14:05:00.000Z',
+    raw_payload: {
+      // O raw_payload antigo perdeu data.message.audioMessage, logo media é null
+      audio_transcriptions: {
+        'evt-audio-hist-123': {
+          status: 'transcribed',
+          version: 'whatsapp_audio_v1',
+          text: 'Boa tarde, gostaria de avaliar um Honda Civic 2020 para troca.',
+          model: 'whisper-1',
+          transcribed_at: '2026-10-02T14:05:05.000Z',
+        },
+      },
+    },
+  };
+
+  // Normalização do audioTranscription
+  const transcription = normalizeAudioTranscription(historicalTranscribedAudioEvent.raw_payload, historicalTranscribedAudioEvent);
+  assert.ok(transcription);
+  assert.equal(transcription.status, 'transcribed');
+  assert.equal(transcription.version, 'whatsapp_audio_v1');
+  assert.equal(transcription.text, 'Boa tarde, gostaria de avaliar um Honda Civic 2020 para troca.');
+  assert.equal(transcription.model, 'whisper-1');
+
+  // Integração em conversa
+  const [conversation] = eventsToConversations([historicalTranscribedAudioEvent], 'tenant');
+  const message = conversation.messages[0];
+
+  // Não tem mídia binária/reproduzível
+  assert.equal(message.media, null);
+  // Possui a transcrição normalizada
+  assert.ok(message.audioTranscription);
+  assert.equal(message.audioTranscription.text, 'Boa tarde, gostaria de avaliar um Honda Civic 2020 para troca.');
+
+  // Preview da conversa reflete a transcrição em vez de [audio]
+  const preview = resolveEventMessagePreview(historicalTranscribedAudioEvent);
+  assert.equal(preview.text, 'Boa tarde, gostaria de avaliar um Honda Civic 2020 para troca.');
+
+  // Regra de renderização do frontend:
+  // 1. Não renderiza player de áudio pois não há media.url
+  const rendersPlayer = Boolean(message.media && message.media.url);
+  assert.equal(rendersPlayer, false);
+
+  // 2. Renderiza o card de transcrição
+  const rendersTranscribedCard = !message.media && Boolean(message.audioTranscription?.text);
+  assert.equal(rendersTranscribedCard, true);
+
+  // 3. NÃO exibe notice de missing_source ("arquivo não chegou")
+  const rendersMissingSourceNotice = !message.media && !message.audioTranscription && isMediaPlaceholderForKind(message.text, 'audio');
+  assert.equal(rendersMissingSourceNotice, false);
+});
+
+test('Cenário 3: sem media + sem transcrição + text = [audio] -> exibe estado realmente indisponível', () => {
+  const missingAudioEvent = {
+    id: 'evt-audio-missing-456',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[audio]',
+    created_at: '2026-10-02T14:10:00.000Z',
+    raw_payload: {}, // Sem media e sem transcrição
+  };
+
+  const transcription = normalizeAudioTranscription(missingAudioEvent.raw_payload, missingAudioEvent);
+  assert.equal(transcription, null);
+
+  const [conversation] = eventsToConversations([missingAudioEvent], 'tenant');
+  const message = conversation.messages[0];
+
+  assert.equal(message.media, null);
+  assert.equal(message.audioTranscription, null);
+  assert.equal(isMediaPlaceholderForKind(message.text, 'audio'), true);
+
+  // Regra de renderização do frontend:
+  const rendersPlayer = Boolean(message.media && message.media.url);
+  const rendersTranscribedCard = !message.media && Boolean(message.audioTranscription?.text);
+  const rendersMissingSourceNotice = !message.media && !message.audioTranscription && isMediaPlaceholderForKind(message.text, 'audio');
+
+  assert.equal(rendersPlayer, false);
+  assert.equal(rendersTranscribedCard, false);
+  assert.equal(rendersMissingSourceNotice, true, 'Deve exibir aviso de áudio ausente/indisponível');
+});
+
+test('Cenário 4: transcrição pertencente a OUTRO event_id presente no mesmo raw_payload -> NÃO usar no evento atual', () => {
+  // Simula agrupamento de mensagens no mesmo turno de debounce onde o raw_payload copiou audio_transcriptions
+  const sharedRawPayload = {
+    audio_transcriptions: {
+      'evt-audio-original-999': {
+        status: 'transcribed',
+        version: 'whatsapp_audio_v1',
+        text: 'Olá, segue o comprovante do sinal.',
+      },
+    },
+  };
+
+  // Evento de texto da mesma janela de debounce (não é o áudio!)
+  const textEvent = {
+    id: 'evt-text-other-888',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '25/12/1994',
+    created_at: '2026-10-02T14:15:00.000Z',
+    raw_payload: sharedRawPayload,
+  };
+
+  // Evento de áudio original que realmente corresponde ao ID
+  const audioEvent = {
+    id: 'evt-audio-original-999',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[audio]',
+    created_at: '2026-10-02T14:15:02.000Z',
+    raw_payload: sharedRawPayload,
+  };
+
+  // 1. Para o evento de texto: NÃO deve adotar a transcrição do áudio vizinho!
+  const textTranscription = normalizeAudioTranscription(textEvent.raw_payload, textEvent);
+  assert.equal(textTranscription, null, 'Evento com ID diferente não pode herdar audio_transcriptions');
+
+  // 2. Para o evento de áudio original: deve associar corretamente
+  const audioTranscription = normalizeAudioTranscription(audioEvent.raw_payload, audioEvent);
+  assert.ok(audioTranscription);
+  assert.equal(audioTranscription.text, 'Olá, segue o comprovante do sinal.');
+
+  // 3. Ao montar a conversa:
+  const [conversation] = eventsToConversations([textEvent, audioEvent], 'tenant');
+  assert.equal(conversation.messages.length, 2);
+
+  const textMsg = conversation.messages.find((m) => m.eventId === 'evt-text-other-888');
+  const audioMsg = conversation.messages.find((m) => m.eventId === 'evt-audio-original-999');
+
+  assert.equal(textMsg.text, '25/12/1994');
+  assert.equal(textMsg.audioTranscription, null);
+
+  assert.equal(audioMsg.audioTranscription?.text, 'Olá, segue o comprovante do sinal.');
+});
+
+// ============================================================================
+// SECTION: FRONTEND MEDIA CONTRACT TESTS (video, storage_error, audio+transcription)
+// ============================================================================
+
+test('contract: video stored uses signed URL and produces MediaAttachment kind video', async () => {
+  clearMediaUrlCache();
+  const videoEvent = {
+    id: 'evt-video-contract',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511777777777',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[video]',
+    raw_payload: {
+      media: {
+        status: 'stored',
+        kind: 'video',
+        category: 'video',
+        bucket: 'channel-media',
+        storagePath: 'tenant/video/video-walkaround.mp4',
+        mimeType: 'video/mp4',
+        size: 5242880,
+      },
+    },
+  };
+  const mockSupabase = {
+    storage: {
+      from: (bucket) => ({
+        createSignedUrl: async (storagePath) => {
+          assert.equal(bucket, 'channel-media');
+          assert.equal(storagePath, 'tenant/video/video-walkaround.mp4');
+          return { data: { signedUrl: 'https://project.supabase.co/storage/v1/object/sign/video.mp4?token=abc' }, error: null };
+        },
+      }),
+    },
+  };
+  const enriched = await enrichSingleMediaEvent(videoEvent, mockSupabase);
+  assert.equal(enriched.raw_payload.media.url, 'https://project.supabase.co/storage/v1/object/sign/video.mp4?token=abc');
+  const [conv] = eventsToConversations([enriched], 'tenant');
+  const msg = conv.messages[0];
+  assert.equal(msg.media.kind, 'video');
+  assert.equal(msg.media.url, 'https://project.supabase.co/storage/v1/object/sign/video.mp4?token=abc');
+  assert.equal(msg.media.mimeType, 'video/mp4');
+});
+
+test('contract: storage_error does NOT attempt to generate signed URL', async () => {
+  clearMediaUrlCache();
+  let calledSignedUrl = false;
+  const errorEvent = {
+    id: 'evt-storage-error-contract',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511777777777',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[image]',
+    raw_payload: {
+      media: {
+        status: 'storage_error',
+        kind: 'image',
+        bucket: 'channel-media',
+        storagePath: null,
+        error: 'media_too_large',
+      },
+    },
+  };
+  const mockSupabase = {
+    storage: {
+      from: () => ({
+        createSignedUrl: async () => {
+          calledSignedUrl = true;
+          return { data: null, error: new Error('should not be called') };
+        },
+      }),
+    },
+  };
+  const enriched = await enrichSingleMediaEvent(errorEvent, mockSupabase);
+  assert.equal(calledSignedUrl, false, 'createSignedUrl must NOT be called for storage_error');
+  assert.equal(enriched.raw_payload.media.url, undefined);
+});
+
+test('contract: audio stored + audio_processing renders player and transcription together', async () => {
+  clearMediaUrlCache();
+  const audioEvent = {
+    id: 'evt-audio-full-contract',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511777777777',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[audio]',
+    raw_payload: {
+      media: {
+        status: 'stored',
+        kind: 'audio',
+        category: 'audio',
+        bucket: 'channel-media',
+        storagePath: 'tenant/audio/audio-contract.ogg',
+        mimeType: 'audio/ogg',
+        size: 32000,
+      },
+      audio_processing: {
+        version: 'whatsapp_audio_v1',
+        status: 'transcribed',
+        text: 'Boa tarde, gostaria de agendar uma visita.',
+      },
+    },
+  };
+  const mockSupabase = {
+    storage: {
+      from: () => ({
+        createSignedUrl: async () => ({
+          data: { signedUrl: 'https://project.supabase.co/storage/v1/object/sign/audio.ogg?token=xyz' },
+          error: null,
+        }),
+      }),
+    },
+  };
+  const enriched = await enrichSingleMediaEvent(audioEvent, mockSupabase);
+  const [conv] = eventsToConversations([enriched], 'tenant');
+  const msg = conv.messages[0];
+  assert.equal(msg.media.kind, 'audio');
+  assert.equal(msg.media.url, 'https://project.supabase.co/storage/v1/object/sign/audio.ogg?token=xyz');
+  assert.equal(msg.audioTranscription?.text, 'Boa tarde, gostaria de agendar uma visita.');
+});
+
+test('contract: pending audio keeps its descriptor and never requests a signed URL prematurely', async () => {
+  clearMediaUrlCache();
+  let signed = false;
+  const event = {
+    id: 'evt-pending-audio', direction: 'inbound', channel_type: 'whatsapp', external_conversation_id: '5511000000000', message_text: '[audio]',
+    raw_payload: { media: { status: 'pending', kind: 'audio', bucket: 'channel-media', storagePath: 'loja/whatsapp/chat/voice.ogg', mimeType: 'audio/ogg' }, audio_processing: { status: 'transcribed', text: 'Teste de áudio.' } },
+  };
+  const client = { storage: { from: () => ({ createSignedUrl: async () => { signed = true; return { data: null, error: null }; } }) } };
+  assert.equal(hasStoredMediaNeedingUrl(event), false);
+  const enriched = await enrichSingleMediaEvent(event, client);
+  assert.equal(signed, false);
+  const [conversation] = eventsToConversations([enriched], 'tenant');
+  assert.equal(conversation.messages[0].media.status, 'pending');
+  assert.equal(conversation.messages[0].audioTranscription?.text, 'Teste de áudio.');
+});
+
+test('contract: pending image stays pending rather than becoming unavailable in the data model', async () => {
+  const event = {
+    id: 'evt-pending-image', direction: 'inbound', channel_type: 'whatsapp', external_conversation_id: '5511000000001', message_text: '[image]',
+    raw_payload: { media: { status: 'pending', kind: 'image', bucket: 'channel-media', storagePath: 'loja/whatsapp/chat/photo.jpg', mimeType: 'image/jpeg' } },
+  };
+  const media = normalizeMedia(event.raw_payload, event);
+  assert.equal(media.status, 'pending');
+  assert.equal(media.url, '');
+  assert.equal(media.storagePath, 'loja/whatsapp/chat/photo.jpg');
+});
+
+test('contract: unavailable historical audio retains transcription without pretending it has a URL', () => {
+  const event = {
+    id: 'evt-historical-audio', direction: 'inbound', channel_type: 'whatsapp', external_conversation_id: '5511000000002', message_text: '[audio]',
+    raw_payload: { media: { status: 'unavailable', kind: 'audio', error: 'media_download_failed' }, audio_processing: { status: 'transcribed', text: 'Áudio antigo transcrito.' } },
+  };
+  const [conversation] = eventsToConversations([event], 'tenant');
+  const message = conversation.messages[0];
+  assert.equal(message.media.status, 'unavailable');
+  assert.equal(message.media.url, '');
+  assert.equal(message.audioTranscription?.text, 'Áudio antigo transcrito.');
 });

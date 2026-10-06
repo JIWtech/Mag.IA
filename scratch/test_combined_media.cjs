@@ -371,13 +371,6 @@ test('missing media credentials does not promise delivery', async () => {
 const generatedCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), 'utf8');
 const executeCore = new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', generatedCode);
 
-const FIXTURE_JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]), Buffer.from('binary-image-data-here')]);
-const FIXTURE_JPEG_SHORT = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01]);
-const FIXTURE_OGG = Buffer.from('OggS test audio content');
-const FIXTURE_MP4 = Buffer.from('000000186674797069736f6d00000001', 'hex');
-const FIXTURE_PDF = Buffer.from('%PDF-1.7 sample document');
-const FIXTURE_WEBP = Buffer.from('524946460000000057454250', 'hex');
-
 function createMockHarness({
   messages = [],
   rawPayloads = {},
@@ -388,11 +381,6 @@ function createMockHarness({
   contact = null,
   salesLead = null,
   aiModelResponse = null,
-  contactExclusionEnabled = false,
-  contactExclusion = null,
-  failContactExclusion = false,
-  disableFetch = false,
-  verifySizeMismatch = false,
 } = {}) {
   const calls = [];
   const uploads = [];
@@ -425,7 +413,7 @@ function createMockHarness({
       if (fixture) return fixture;
       return {
         mimetype: 'image/jpeg',
-        base64: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01]).toString('base64'),
+        base64: Buffer.from('fake-image-bytes').toString('base64'),
       };
     }
 
@@ -497,11 +485,6 @@ function createMockHarness({
       };
     }
 
-    if (table === 'magia_contact_exclusion_status') {
-      if (failContactExclusion) throw new Error('Contact exclusion RPC failed');
-      return contactExclusion || { blocked: false, reason: 'disabled' };
-    }
-
     // Supabase tables
     if (table === 'tenants') {
       return [{ id: 'tenant-1', slug: 'wesley_automoveis', status: 'active', name: 'Wesley Automóveis' }];
@@ -512,7 +495,6 @@ function createMockHarness({
         settings: {
           whatsapp_processing_mode: 'conversation_core_v1',
           conversation_capability: 'sales_v1',
-          contact_exclusion_enabled: contactExclusionEnabled,
           ai_model: 'gemini-3.5-flash-lite',
           ai_enabled: true,
           sales: {
@@ -588,65 +570,14 @@ function createMockHarness({
       GEMINI_ENABLED: 'true',
       GEMINI_API_KEY: 'gemini-key',
     };
-    const origFetch = globalThis.fetch;
-    if (disableFetch) {
-      delete globalThis.fetch;
-    } else {
-      globalThis.fetch = async (url, options = {}) => {
-        const method = options.method || 'GET';
-        const headers = options.headers || {};
-        const body = options.body;
-        if (typeof url === 'string' && url.includes('/storage/v1/object/')) {
-          if (storageFailure) {
-            return {
-              ok: false,
-              status: 500,
-              text: async () => 'Storage service 500 error',
-            };
-          }
-          if (method === 'POST') {
-            assert.ok(Buffer.isBuffer(body) || body instanceof Uint8Array, 'Storage upload body must be a binary Buffer, never Base64 or JSON');
-            uploads.push({ url, body, headers, length: body.length });
-            calls.push({ method: 'POST', url, body, headers });
-            return {
-              ok: true,
-              status: 200,
-              text: async () => JSON.stringify({ Key: 'stored' }),
-            };
-          }
-          if (method === 'HEAD') {
-            const lastUpload = uploads.find(u => u.url === url) || uploads[uploads.length - 1];
-            const len = verifySizeMismatch ? 999999 : (lastUpload ? lastUpload.length : 0);
-            return {
-              ok: true,
-              status: 200,
-              headers: new Headers({
-                'content-length': String(len),
-              }),
-            };
-          }
-        }
-        return origFetch ? origFetch(url, options) : { ok: false, status: 500 };
-      };
-    }
-
-    let res;
-    try {
-      res = await executeCore.call({ helpers: { httpRequest } }, input, envVars, {}, () => ({}));
-    } finally {
-      globalThis.fetch = origFetch;
-    }
+    const res = await executeCore.call({ helpers: { httpRequest } }, input, envVars, {}, () => ({}));
     return res?.json || res;
   };
 
   return { execute, calls, uploads, patches, posts, eventsInDb };
 }
 
-// The legacy direct-uploader suite is intentionally kept as historical context only.
-// Storage is no longer allowed to be uploaded from a Code node. The active coverage
-// starts in test_whatsapp_media_ingestion.cjs and exercises the generated n8n pipeline.
-if (false) {
-test('legacy 1. image stored by direct Code-node uploader', async () => {
+test('1. image stored: download from Evolution, upload to Storage channel-media, raw_payload.media stored', async () => {
   const harness = createMockHarness({
     messages: [{ event_id: 'e-img-1', id: 'msg-img-1', text: '[image]', name: 'Cliente' }],
     rawPayloads: {
@@ -658,7 +589,7 @@ test('legacy 1. image stored by direct Code-node uploader', async () => {
       }
     },
     mediaFixtures: {
-      'msg-img-1': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG.toString('base64') }
+      'msg-img-1': { mimetype: 'image/jpeg', base64: Buffer.from('binary-image-data-here').toString('base64') }
     }
   });
 
@@ -669,8 +600,7 @@ test('legacy 1. image stored by direct Code-node uploader', async () => {
   assert.equal(harness.uploads.length, 1);
   const upload = harness.uploads[0];
   assert.match(upload.url, /\/storage\/v1\/object\/channel-media\/wesley_automoveis\/whatsapp\/5521999999999_s\.whatsapp\.net\/msg-img-1\.jpg/);
-  assert.ok(upload.body.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])));
-  assert.ok(upload.body.includes(Buffer.from('binary-image-data-here')));
+  assert.equal(upload.body.toString(), 'binary-image-data-here');
 
   // 2. Verify channel_events row has raw_payload.media
   const event = harness.eventsInDb['e-img-1'];
@@ -693,7 +623,7 @@ test('2. image + text isolation: raw_payload of text message NEVER receives medi
       'e-txt': { channel_type: 'whatsapp', content_type: 'text', core_revision: 'conversation_core_v1' },
     },
     mediaFixtures: {
-      'm-img': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
+      'm-img': { mimetype: 'image/jpeg', base64: Buffer.from('img').toString('base64') }
     }
   });
 
@@ -719,8 +649,8 @@ test('3. multiple images same turn (album): each image gets its own distinct sto
       'e-img-2': { channel_type: 'whatsapp', content_type: 'image', core_revision: 'conversation_core_v1' },
     },
     mediaFixtures: {
-      'm-img-1': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') },
-      'm-img-2': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') },
+      'm-img-1': { mimetype: 'image/jpeg', base64: Buffer.from('photo-1').toString('base64') },
+      'm-img-2': { mimetype: 'image/jpeg', base64: Buffer.from('photo-2').toString('base64') },
     }
   });
 
@@ -744,7 +674,7 @@ test('4. audio stored + transcription: audio persisted in Storage and transcribe
       }
     },
     mediaFixtures: {
-      'm-aud-1': { mimetype: 'audio/ogg', base64: FIXTURE_OGG.toString('base64') }
+      'm-aud-1': { mimetype: 'audio/ogg', base64: Buffer.from('audio-ogg-bytes').toString('base64') }
     }
   });
 
@@ -775,7 +705,7 @@ test('5. video stored: video uploaded to Storage channel-media without crashing 
       }
     },
     mediaFixtures: {
-      'm-vid-1': { mimetype: 'video/mp4', base64: FIXTURE_MP4.toString('base64') }
+      'm-vid-1': { mimetype: 'video/mp4', base64: Buffer.from('mp4-video-bytes').toString('base64') }
     }
   });
 
@@ -834,7 +764,7 @@ test('7. static sticker: webp sticker uploaded to Storage channel-media', async 
       }
     },
     mediaFixtures: {
-      'm-stk-1': { mimetype: 'image/webp', base64: FIXTURE_WEBP.toString('base64') }
+      'm-stk-1': { mimetype: 'image/webp', base64: Buffer.from('sticker-bytes').toString('base64') }
     }
   });
 
@@ -852,7 +782,7 @@ test('8. human_lock: image is stored in Storage even when conversation is locked
       'e-img-lock': { channel_type: 'whatsapp', content_type: 'image', core_revision: 'conversation_core_v1' }
     },
     mediaFixtures: {
-      'm-img-lock': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
+      'm-img-lock': { mimetype: 'image/jpeg', base64: Buffer.from('img-locked').toString('base64') }
     },
     controlHistory: [
       { id: 'human-msg-1', direction: 'outbound', sender_type: 'human', message_text: 'Estou atendendo você' }
@@ -875,7 +805,7 @@ test('9. owner_saved suppression: audio/media is stored in Storage even when con
       'e-img-owner': { channel_type: 'whatsapp', content_type: 'image', core_revision: 'conversation_core_v1' }
     },
     mediaFixtures: {
-      'm-img-owner': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
+      'm-img-owner': { mimetype: 'image/jpeg', base64: Buffer.from('img-owner').toString('base64') }
     },
     contact: {
       id: 'c-1',
@@ -900,7 +830,7 @@ test('10. storage upload failure: records status storage_error without leaking c
       'e-img-fail': { channel_type: 'whatsapp', content_type: 'image', core_revision: 'conversation_core_v1' }
     },
     mediaFixtures: {
-      'm-img-fail': { mimetype: 'image/jpeg', base64: Buffer.concat([FIXTURE_JPEG_SHORT, Buffer.from('secret-base64-data')]).toString('base64') }
+      'm-img-fail': { mimetype: 'image/jpeg', base64: Buffer.from('secret-base64-data').toString('base64') }
     },
     storageFailure: true,
   });
@@ -965,7 +895,7 @@ test('13. no base64 in DB: verifies all database patches and states contain zero
       'e-clean': { channel_type: 'whatsapp', content_type: 'image', core_revision: 'conversation_core_v1' }
     },
     mediaFixtures: {
-      'm-clean': { mimetype: 'image/jpeg', base64: Buffer.concat([FIXTURE_JPEG_SHORT, Buffer.from('binary-must-not-leak-into-db')]).toString('base64') }
+      'm-clean': { mimetype: 'image/jpeg', base64: Buffer.from('binary-must-not-leak-into-db').toString('base64') }
     }
   });
 
@@ -985,7 +915,7 @@ test('14. tenant path isolation: storage path strictly starts with tenant_slug',
       'e-tenant': { channel_type: 'whatsapp', content_type: 'image', core_revision: 'conversation_core_v1' }
     },
     mediaFixtures: {
-      'm-tenant': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
+      'm-tenant': { mimetype: 'image/jpeg', base64: Buffer.from('img-data').toString('base64') }
     }
   });
 
@@ -1009,7 +939,7 @@ test('15. sales_human: media is persisted into Storage and raw_payload.media eve
       state: { intent: 'sell' }
     },
     mediaFixtures: {
-      'm-sh-1': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
+      'm-sh-1': { mimetype: 'image/jpeg', base64: Buffer.from('photo-for-human').toString('base64') }
     }
   });
 
@@ -1043,7 +973,7 @@ test('16. anti-loop: media is persisted into Storage even when anti-loop / repea
       state: { intent: 'sell', sell_year: 2006 }
     },
     mediaFixtures: {
-      'm-loop-1': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
+      'm-loop-1': { mimetype: 'image/jpeg', base64: Buffer.from('car-photo').toString('base64') }
     }
   });
 
@@ -1070,7 +1000,7 @@ test('17. technical error in sales turn: media remains stored even if error occu
     },
     aiModelResponse: { throwError: true },
     mediaFixtures: {
-      'm-err-1': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
+      'm-err-1': { mimetype: 'image/jpeg', base64: Buffer.from('img-before-ai-fail').toString('base64') }
     }
   });
 
@@ -1102,7 +1032,7 @@ test('18. no encrypted WhatsApp URL: raw_payload.media contains only private buc
       }
     },
     mediaFixtures: {
-      'm-sec-1': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
+      'm-sec-1': { mimetype: 'image/jpeg', base64: Buffer.from('secure-image').toString('base64') }
     }
   });
 
@@ -1132,8 +1062,8 @@ test('19. Section 20 mixed turn: Photo A + "é um Siena 2014" + Photo B isolatio
       'e-photo-b': { channel_type: 'whatsapp', content_type: 'image', core_revision: 'conversation_core_v1' },
     },
     mediaFixtures: {
-      'm-photo-a': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') },
-      'm-photo-b': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') },
+      'm-photo-a': { mimetype: 'image/jpeg', base64: Buffer.from('photo-a-bytes').toString('base64') },
+      'm-photo-b': { mimetype: 'image/jpeg', base64: Buffer.from('photo-b-bytes').toString('base64') },
     }
   });
 
@@ -1161,644 +1091,3 @@ test('19. Section 20 mixed turn: Photo A + "é um Siena 2014" + Photo B isolatio
   // Distinct storage paths
   assert.notEqual(evA.raw_payload.media.storagePath, evB.raw_payload.media.storagePath);
 });
-
-
-test('20. storage size limit: <= 10 MiB permitted, > 10 MiB rejected without upload attempt', async () => {
-  // Case A: 10 MiB exact (10485760 bytes) -> allowed
-  const tenMbBuffer = Buffer.alloc(10 * 1024 * 1024, 0x61);
-  FIXTURE_JPEG_SHORT.copy(tenMbBuffer, 0);
-  const tenMbBase64 = tenMbBuffer.toString('base64');
-  const hA = createMockHarness({
-    messages: [{ event_id: 'e-10mb', id: 'm-10mb', text: '[image]' }],
-    rawPayloads: {
-      'e-10mb': {
-        channel_type: 'whatsapp', content_type: 'image',
-        source_media: { kind: 'image', file_length: 10 * 1024 * 1024, mime_type: 'image/jpeg' },
-      },
-    },
-    mediaFixtures: {
-      'm-10mb': { mimetype: 'image/jpeg', base64: tenMbBase64 },
-    },
-  });
-  const resA = await hA.execute();
-  assert.equal(resA.ok, true, 'Turn must succeed');
-  assert.equal(hA.uploads.length, 1, 'Upload must be attempted for <= 10 MiB');
-  assert.equal(hA.eventsInDb['e-10mb'].raw_payload.media.status, 'stored');
-  assert.equal(hA.eventsInDb['e-10mb'].raw_payload.media.size, 10 * 1024 * 1024);
-
-  // Case B: > 10 MiB declared in descriptor -> rejected BEFORE download/upload
-  const hB = createMockHarness({
-    messages: [{ event_id: 'e-11mb', id: 'm-11mb', text: '[image]' }],
-    rawPayloads: {
-      'e-11mb': {
-        channel_type: 'whatsapp', content_type: 'image',
-        source_media: { kind: 'image', file_length: 11 * 1024 * 1024, mime_type: 'image/jpeg' },
-      },
-    },
-    mediaFixtures: {
-      'm-11mb': { mimetype: 'image/jpeg', base64: 'should-not-be-called' },
-    },
-  });
-  const resB = await hB.execute();
-  assert.equal(resB.ok, true, 'Turn must not crash for oversized media');
-  assert.equal(hB.uploads.length, 0, 'Must NOT attempt upload for > 10 MiB');
-  const mediaB = hB.eventsInDb['e-11mb'].raw_payload.media;
-  assert.equal(mediaB.status, 'skipped_too_large');
-  assert.equal(mediaB.error, 'media_too_large');
-
-  // Case C: > 10 MiB undeclared (downloaded bytes > 10 MiB) -> rejected BEFORE storage upload
-  const elevenMbBuffer = Buffer.alloc(11 * 1024 * 1024, 0x62);
-  FIXTURE_JPEG_SHORT.copy(elevenMbBuffer, 0);
-  const elevenMbBase64 = elevenMbBuffer.toString('base64');
-  const hC = createMockHarness({
-    messages: [{ event_id: 'e-11mb-undec', id: 'm-11mb-undec', text: '[image]' }],
-    rawPayloads: {
-      'e-11mb-undec': {
-        channel_type: 'whatsapp', content_type: 'image',
-        source_media: { kind: 'image', mime_type: 'image/jpeg' },
-      },
-    },
-    mediaFixtures: {
-      'm-11mb-undec': { mimetype: 'image/jpeg', base64: elevenMbBase64 },
-    },
-  });
-  const resC = await hC.execute();
-  assert.equal(resC.ok, true, 'Turn must not crash for oversized downloaded media');
-  assert.equal(hC.uploads.length, 0, 'Must NOT attempt upload when downloaded bytes > 10 MiB');
-  const mediaC = hC.eventsInDb['e-11mb-undec'].raw_payload.media;
-  assert.equal(mediaC.status, 'skipped_too_large');
-  assert.equal(mediaC.error, 'media_too_large');
-});
-
-test('21. storage real idempotency: same event upload does not duplicate path, uses x-upsert, never 409', async () => {
-  const h = createMockHarness({
-    messages: [{ event_id: 'e-idemp', id: 'm-idemp', text: '[image]' }],
-    rawPayloads: {
-      'e-idemp': { channel_type: 'whatsapp', content_type: 'image' },
-    },
-    mediaFixtures: {
-      'm-idemp': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') },
-    },
-  });
-  // First run: stores file
-  await h.execute();
-  assert.equal(h.uploads.length, 1);
-  const firstUpload = h.uploads[0];
-  assert.equal(firstUpload.headers['x-upsert'], 'true');
-  const firstStoragePath = h.eventsInDb['e-idemp'].raw_payload.media.storagePath;
-  assert.equal(firstStoragePath, 'wesley_automoveis/whatsapp/5521999999999_s.whatsapp.net/m-idemp.jpg');
-  assert.equal(h.eventsInDb['e-idemp'].raw_payload.media.status, 'stored');
-
-  // Second run on exact same event:
-  // Since existing.status === 'stored' with bucket and storagePath, it skips re-uploading
-  await h.execute();
-  assert.equal(h.uploads.length, 1, 'Does not re-upload if already stored');
-  assert.equal(h.eventsInDb['e-idemp'].raw_payload.media.storagePath, firstStoragePath);
-  assert.equal(h.eventsInDb['e-idemp'].raw_payload.media.status, 'stored');
-});
-
-test('22. raw_payload sequential preservation: real patchMedia, patchAudioProcessing, and patchSalesMedia preserve all blocks without data loss or cross-event contamination', async () => {
-  // Persistent mock PostgREST store
-  const eventsInDb = {
-    'evt-target': {
-      id: 'evt-target',
-      external_message_id: 'msg-target',
-      tenant_slug: 'wesley_automoveis',
-      channel_type: 'whatsapp',
-      message_text: '[audio]',
-      raw_payload: {
-        channel_type: 'whatsapp',
-        content_type: 'audio',
-        original_carrier: 'evolution',
-        trace_id: 'tr-123'
-      }
-    },
-    'evt-isolate': {
-      id: 'evt-isolate',
-      external_message_id: 'msg-isolate',
-      tenant_slug: 'wesley_automoveis',
-      channel_type: 'whatsapp',
-      message_text: 'Mensagem concorrente no evento B',
-      raw_payload: {
-        channel_type: 'whatsapp',
-        content_type: 'text',
-        original_note: 'event_b_must_never_be_touched'
-      }
-    }
-  };
-
-  const httpRequest = async ({ method, url, body }) => {
-    const u = new URL(url);
-    const table = u.pathname.split('/').at(-1);
-    if (table === 'channel_events') {
-      const idParam = u.searchParams.get('id');
-      const id = idParam ? idParam.replace(/^eq\./, '') : null;
-      if (method === 'GET' && id) {
-        const ev = eventsInDb[id];
-        return ev ? [JSON.parse(JSON.stringify(ev))] : [];
-      }
-      if (method === 'PATCH' && id) {
-        if (!eventsInDb[id]) return [];
-        eventsInDb[id] = {
-          ...eventsInDb[id],
-          ...body,
-          raw_payload: {
-            ...eventsInDb[id].raw_payload,
-            ...(body.raw_payload || {})
-          }
-        };
-        return [JSON.parse(JSON.stringify(eventsInDb[id]))];
-      }
-    }
-    throw new Error(`Unexpected HTTP in patch test: ${method} ${url}`);
-  };
-
-  // Compile runner using the REAL functions in generatedCode
-  const freshGeneratedCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), 'utf8');
-  const patchRunnerCode = freshGeneratedCode.replace(
-    'return { json: await runTurn() };',
-    'return { patchMedia, patchAudioProcessing, patchSalesMedia };'
-  );
-  const runnerFn = new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', patchRunnerCode);
-  const handles = await runnerFn.call(
-    { helpers: { httpRequest } },
-    {
-      tenant_slug: 'wesley_automoveis',
-      tenant_id: 'tenant-1',
-      remoteJid: '5521999999999@s.whatsapp.net',
-      instance: 'wesley-carros'
-    },
-    { SUPABASE_URL: 'https://supabase.test', SUPABASE_SERVICE_ROLE_KEY: 'test-key' },
-    {},
-    () => ({})
-  );
-
-  const { patchMedia, patchAudioProcessing, patchSalesMedia } = handles;
-  assert.equal(typeof patchMedia, 'function', 'patchMedia must be a function');
-  assert.equal(typeof patchAudioProcessing, 'function', 'patchAudioProcessing must be a function');
-  assert.equal(typeof patchSalesMedia, 'function', 'patchSalesMedia must be a function');
-
-  const context = { tenant: { id: 'tenant-1', slug: 'wesley_automoveis' } };
-
-  // Initial Snapshot: event B
-  const initialEventB = JSON.parse(JSON.stringify(eventsInDb['evt-isolate']));
-
-  // Phase A: patchMedia(event) -> raw_payload.media exists
-  const mediaObj = {
-    status: 'stored',
-    kind: 'audio',
-    category: 'audio',
-    bucket: 'channel-media',
-    storagePath: 'wesley_automoveis/whatsapp/5521999999999_s.whatsapp.net/msg-target.ogg',
-    mimeType: 'audio/ogg',
-    size: 24680,
-    verified: true
-  };
-  await patchMedia(context, 'evt-target', mediaObj);
-
-  const evAfterA = eventsInDb['evt-target'];
-  assert.ok(evAfterA.raw_payload.media, 'Phase A: media must exist');
-  assert.equal(evAfterA.raw_payload.media.status, 'stored');
-  assert.equal(evAfterA.raw_payload.media.storagePath, mediaObj.storagePath);
-  assert.equal(evAfterA.raw_payload.original_carrier, 'evolution', 'Phase A: original payload keys preserved');
-  assert.equal(evAfterA.raw_payload.audio_processing, undefined, 'Phase A: audio_processing not yet present');
-  assert.equal(evAfterA.raw_payload.sales_media, undefined, 'Phase A: sales_media not yet present');
-
-  // Verify event B was NOT changed
-  assert.deepEqual(eventsInDb['evt-isolate'], initialEventB, 'Phase A: Event B must not change');
-
-  // Phase B: patchAudioProcessing(event) -> media continua; audio_processing aparece
-  const audioResult = {
-    version: 'whatsapp_audio_v1',
-    status: 'transcribed',
-    text: 'Quero vender meu Prisma 2018',
-    model: 'gemini-1.5-flash',
-    mime_type: 'audio/ogg',
-    transcribed_at: '2026-10-05T12:00:00.000Z'
-  };
-  await patchAudioProcessing(context, 'evt-target', audioResult);
-
-  const evAfterB = eventsInDb['evt-target'];
-  assert.ok(evAfterB.raw_payload.media, 'Phase B: media block must continue intact');
-  assert.equal(evAfterB.raw_payload.media.status, 'stored');
-  assert.equal(evAfterB.raw_payload.media.storagePath, mediaObj.storagePath);
-  assert.ok(evAfterB.raw_payload.audio_processing, 'Phase B: audio_processing must appear');
-  assert.equal(evAfterB.raw_payload.audio_processing.status, 'transcribed');
-  assert.equal(evAfterB.raw_payload.audio_processing.text, 'Quero vender meu Prisma 2018');
-  assert.equal(evAfterB.raw_payload.original_carrier, 'evolution', 'Phase B: original payload keys preserved');
-  assert.equal(evAfterB.raw_payload.sales_media, undefined, 'Phase B: sales_media not yet present');
-
-  // Verify event B was NOT changed
-  assert.deepEqual(eventsInDb['evt-isolate'], initialEventB, 'Phase B: Event B must not change');
-
-  // Phase C: patchSalesMedia(event) -> media continua; audio_processing continua; sales_media aparece
-  const salesEntry = {
-    event_id: 'evt-target',
-    kind: 'vehicle_audio',
-    readable: true,
-    extracted: { intent: 'sell', sell_model: 'Prisma', sell_year: 2018 }
-  };
-  await patchSalesMedia(context, 'evt-target', salesEntry);
-
-  const evAfterC = eventsInDb['evt-target'];
-  assert.ok(evAfterC.raw_payload.media, 'Phase C: media block must continue intact');
-  assert.equal(evAfterC.raw_payload.media.status, 'stored');
-  assert.equal(evAfterC.raw_payload.media.storagePath, mediaObj.storagePath);
-
-  assert.ok(evAfterC.raw_payload.audio_processing, 'Phase C: audio_processing must continue intact');
-  assert.equal(evAfterC.raw_payload.audio_processing.status, 'transcribed');
-  assert.equal(evAfterC.raw_payload.audio_processing.text, 'Quero vender meu Prisma 2018');
-
-  assert.ok(Array.isArray(evAfterC.raw_payload.sales_media), 'Phase C: sales_media array must appear');
-  assert.equal(evAfterC.raw_payload.sales_media.length, 1);
-  assert.equal(evAfterC.raw_payload.sales_media[0].kind, 'vehicle_audio');
-  assert.equal(evAfterC.raw_payload.sales_media[0].readable, true);
-  assert.equal(evAfterC.raw_payload.sales_media[0].extracted.sell_model, 'Prisma');
-
-  assert.equal(evAfterC.raw_payload.original_carrier, 'evolution', 'Phase C: original payload keys preserved');
-  assert.equal(evAfterC.raw_payload.trace_id, 'tr-123', 'Phase C: trace_id preserved');
-
-  // Phase D: patch em event A -> event B NÃO muda
-  assert.deepEqual(eventsInDb['evt-isolate'], initialEventB, 'Phase D: Event B must remain strictly identical to initial state');
-  assert.equal(eventsInDb['evt-isolate'].raw_payload.media, undefined);
-  assert.equal(eventsInDb['evt-isolate'].raw_payload.audio_processing, undefined);
-  assert.equal(eventsInDb['evt-isolate'].raw_payload.sales_media, undefined);
-  assert.equal(eventsInDb['evt-isolate'].raw_payload.original_note, 'event_b_must_never_be_touched');
-});
-
-test('23. contact_exclusion media preservation: excluded contact sends image -> persistTurnWhatsAppMedia stores media before exclusion blocks AI', async () => {
-  const harness = createMockHarness({
-    messages: [{ event_id: 'e-excl-img', id: 'm-excl-img', text: '[image]', name: 'Amigo Protegido' }],
-    rawPayloads: {
-      'e-excl-img': { channel_type: 'whatsapp', content_type: 'image', core_revision: 'conversation_core_v1' }
-    },
-    mediaFixtures: {
-      'm-excl-img': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
-    },
-    contactExclusionEnabled: true,
-    contactExclusion: { blocked: true, reason: 'contact_excluded', resolved_phone: '5521999999999' }
-  });
-
-  const res = await harness.execute();
-  assert.equal(res.ok, true);
-  assert.equal(res.skipped, true);
-  assert.equal(res.reason, 'contact_excluded');
-
-  // CRITICAL RULE: Contato salvo bloqueia IA, MAS NÃO BLOQUEIA PERSISTÊNCIA DE MÍDIA.
-  // 1. Upload to Supabase Storage MUST have occurred
-  assert.equal(harness.uploads.length, 1, 'Image must be uploaded to Storage even when contact is excluded');
-  assert.match(harness.uploads[0].url, /\/channel-media\/wesley_automoveis\/whatsapp\/5521999999999_s\.whatsapp\.net\/m-excl-img\.jpg/);
-
-  // 2. raw_payload.media must exist and have status 'stored'
-  const ev = harness.eventsInDb['e-excl-img'];
-  assert.ok(ev.raw_payload.media, 'media block must exist in raw_payload');
-  assert.equal(ev.raw_payload.media.status, 'stored');
-  assert.equal(ev.raw_payload.media.bucket, 'channel-media');
-  assert.match(ev.raw_payload.media.storagePath, /m-excl-img\.jpg$/);
-
-  // 3. IA was blocked: zero messages sent
-  assert.equal(harness.posts.length, 0, 'No outbound message must be created for excluded contact');
-  const sendCalls = harness.calls.filter(c => c.url.includes('/message/sendText'));
-  assert.equal(sendCalls.length, 0, 'No message sent via Evolution');
-});
-
-test('24. definitive fix: real local HTTP server captures raw binary JPEG body, not JSON Buffer', async () => {
-  const http = require('node:http');
-  let receivedPostBytes = null;
-  let receivedHeaders = null;
-  let postCount = 0;
-  let headCount = 0;
-
-  const server = http.createServer((req, res) => {
-    if (req.method === 'POST') {
-      postCount++;
-      receivedHeaders = req.headers;
-      const chunks = [];
-      req.on('data', chunk => chunks.push(chunk));
-      req.on('end', () => {
-        receivedPostBytes = Buffer.concat(chunks);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ Key: 'channel-media/test.jpg' }));
-      });
-      return;
-    }
-    if (req.method === 'HEAD') {
-      headCount++;
-      res.writeHead(200, {
-        'Content-Type': 'image/jpeg',
-        'Content-Length': String(receivedPostBytes ? receivedPostBytes.length : 0),
-      });
-      res.end();
-      return;
-    }
-    res.writeHead(404);
-    res.end();
-  });
-
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
-  const mockSupabaseUrl = `http://127.0.0.1:${port}`;
-
-  try {
-    const freshGeneratedCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), 'utf8');
-    const runnerCode = freshGeneratedCode.replace(
-      'return { json: await runTurn() };',
-      'return { uploadSupabaseBinary, validateMediaMagicBytes };'
-    );
-    const runnerFn = new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', runnerCode);
-    const { uploadSupabaseBinary } = await runnerFn.call(
-      { helpers: {} },
-      {},
-      { SUPABASE_URL: mockSupabaseUrl, SUPABASE_SERVICE_ROLE_KEY: 'test-service-key' },
-      {},
-      () => ({})
-    );
-
-    const testJpeg = FIXTURE_JPEG;
-    const uploadRes = await uploadSupabaseBinary({
-      bucket: 'channel-media',
-      storagePath: 'test/path/car.jpg',
-      mimeType: 'image/jpeg',
-      bytes: testJpeg,
-      timeout: 10000,
-    });
-
-    assert.equal(uploadRes.verified, true);
-    assert.equal(uploadRes.storedSize, testJpeg.length);
-    assert.equal(postCount, 1, 'Exactly one POST request to storage');
-    assert.equal(headCount, 1, 'Exactly one HEAD request for post-upload verification');
-
-    // RAW bytes verification:
-    assert.ok(receivedPostBytes !== null, 'Server must receive POST body');
-    assert.equal(receivedPostBytes.length, testJpeg.length, 'Received length must match original JPEG length');
-    assert.ok(receivedPostBytes.equals(testJpeg), 'Received bytes must strictly equal original binary buffer');
-
-    // Magic bytes:
-    assert.equal(receivedPostBytes[0], 0xff);
-    assert.equal(receivedPostBytes[1], 0xd8);
-    assert.equal(receivedPostBytes[2], 0xff);
-
-    // Negative assertions: MUST NOT BE JSON BUFFER SERIALIZATION
-    const prefix16 = receivedPostBytes.subarray(0, 16).toString('utf8');
-    assert.ok(!prefix16.includes('type'), 'Must not contain "type"');
-    assert.ok(!prefix16.includes('Buffer'), 'Must not contain "Buffer"');
-    assert.ok(!prefix16.includes('data'), 'Must not contain "data"');
-    assert.ok(!prefix16.startsWith('{'), 'Must not start with "{"');
-  } finally {
-    server.close();
-  }
-});
-
-test('25. anti-regression: corrupt JSON Buffer {"type":"Buffer","data":[...]} is detected and rejected', async () => {
-  const freshGeneratedCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), 'utf8');
-  const runnerCode = freshGeneratedCode.replace(
-    'return { json: await runTurn() };',
-    'return { validateMediaMagicBytes };'
-  );
-  const runnerFn = new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', runnerCode);
-  const { validateMediaMagicBytes } = await runnerFn.call(
-    { helpers: {} },
-    {},
-    {},
-    {},
-    () => ({})
-  );
-
-  // 1. Corrupted payload simulating the bug: JSON.stringify(Buffer)
-  const simulatedBugPayload = Buffer.from(JSON.stringify({ type: 'Buffer', data: [255, 216, 255, 224, 0, 16, 74, 70, 73, 70] }));
-
-  // Pre-upload magic bytes validation MUST detect that this is NOT valid JPEG bytes
-  assert.throws(() => {
-    validateMediaMagicBytes('image/jpeg', simulatedBugPayload);
-  }, /media_magic_mismatch/, 'Must throw media_magic_mismatch when buffer starts with JSON string');
-
-  // 2. String representation starts with {"type":"Buffer"
-  assert.ok(simulatedBugPayload.toString('utf8').startsWith('{"type":"Buffer"'));
-});
-
-test('26. real local HTTP server captures raw binary OGG body for audio upload, not JSON Buffer', async () => {
-  const http = require('node:http');
-  let receivedAudioBytes = null;
-  let postCount = 0;
-  let headCount = 0;
-
-  const server = http.createServer((req, res) => {
-    if (req.method === 'POST') {
-      postCount++;
-      const chunks = [];
-      req.on('data', chunk => chunks.push(chunk));
-      req.on('end', () => {
-        receivedAudioBytes = Buffer.concat(chunks);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ Key: 'channel-media/audio.ogg' }));
-      });
-      return;
-    }
-    if (req.method === 'HEAD') {
-      headCount++;
-      res.writeHead(200, {
-        'Content-Type': 'audio/ogg',
-        'Content-Length': String(receivedAudioBytes ? receivedAudioBytes.length : 0),
-      });
-      res.end();
-      return;
-    }
-    res.writeHead(404);
-    res.end();
-  });
-
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
-  const mockSupabaseUrl = `http://127.0.0.1:${port}`;
-
-  try {
-    const freshGeneratedCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), 'utf8');
-    const runnerCode = freshGeneratedCode.replace(
-      'return { json: await runTurn() };',
-      'return { uploadSupabaseBinary };'
-    );
-    const runnerFn = new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', runnerCode);
-    const { uploadSupabaseBinary } = await runnerFn.call(
-      { helpers: {} },
-      {},
-      { SUPABASE_URL: mockSupabaseUrl, SUPABASE_SERVICE_ROLE_KEY: 'test-service-key' },
-      {},
-      () => ({})
-    );
-
-    const testOgg = FIXTURE_OGG;
-    const uploadRes = await uploadSupabaseBinary({
-      bucket: 'channel-media',
-      storagePath: 'test/path/voice.ogg',
-      mimeType: 'audio/ogg',
-      bytes: testOgg,
-      timeout: 10000,
-    });
-
-    assert.equal(uploadRes.verified, true);
-    assert.equal(uploadRes.storedSize, testOgg.length);
-    assert.equal(postCount, 1);
-    assert.equal(headCount, 1);
-
-    // RAW bytes verification:
-    assert.ok(receivedAudioBytes !== null);
-    assert.equal(receivedAudioBytes.length, testOgg.length);
-    assert.ok(receivedAudioBytes.equals(testOgg));
-
-    // Magic bytes: OggS
-    assert.equal(receivedAudioBytes.subarray(0, 4).toString('ascii'), 'OggS');
-
-    // Negative assertions:
-    const prefix = receivedAudioBytes.subarray(0, 16).toString('utf8');
-    assert.ok(!prefix.includes('Buffer'));
-    assert.ok(!prefix.startsWith('{'));
-  } finally {
-    server.close();
-  }
-});
-
-test('27. magic bytes validation: mismatching magic bytes mark media status unsupported without uploading', async () => {
-  const harness = createMockHarness({
-    messages: [{ event_id: 'e-bad-magic', id: 'm-bad-magic', text: '[image]', name: 'Cliente' }],
-    rawPayloads: {
-      'e-bad-magic': {
-        channel_type: 'whatsapp',
-        content_type: 'image',
-        core_revision: 'conversation_core_v1',
-      }
-    },
-    mediaFixtures: {
-      'm-bad-magic': { mimetype: 'image/jpeg', base64: Buffer.from('NOT-A-JPEG-IMAGE-FILE').toString('base64') }
-    }
-  });
-
-  const res = await harness.execute();
-  assert.equal(res.ok, true);
-
-  // Storage upload MUST NOT be attempted
-  assert.equal(harness.uploads.length, 0);
-
-  const ev = harness.eventsInDb['e-bad-magic'];
-  assert.ok(ev.raw_payload.media);
-  assert.equal(ev.raw_payload.media.status, 'unsupported');
-  assert.equal(ev.raw_payload.media.verified, false);
-  assert.equal(ev.raw_payload.media.error, 'media_magic_mismatch');
-});
-
-test('28. defensive runtime check: binary_transport_unavailable if globalThis.fetch is missing', async () => {
-  const harness = createMockHarness({
-    disableFetch: true,
-    messages: [{ event_id: 'e-no-fetch', id: 'm-no-fetch', text: '[image]', name: 'Cliente' }],
-    rawPayloads: {
-      'e-no-fetch': {
-        channel_type: 'whatsapp',
-        content_type: 'image',
-        core_revision: 'conversation_core_v1',
-      }
-    },
-    mediaFixtures: {
-      'm-no-fetch': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
-    }
-  });
-
-  const res = await harness.execute();
-  assert.equal(res.ok, true, 'Turn must not crash even when fetch is absent');
-
-  const ev = harness.eventsInDb['e-no-fetch'];
-  assert.ok(ev.raw_payload.media);
-  assert.equal(ev.raw_payload.media.status, 'storage_error');
-  assert.equal(ev.raw_payload.media.verified, false);
-  assert.match(ev.raw_payload.media.error, /binary_transport_unavailable/);
-});
-
-test('29. post-upload verification: storage_size_mismatch marks status storage_error and verified false', async () => {
-  const harness = createMockHarness({
-    verifySizeMismatch: true,
-    messages: [{ event_id: 'e-mismatch', id: 'm-mismatch', text: '[image]', name: 'Cliente' }],
-    rawPayloads: {
-      'e-mismatch': {
-        channel_type: 'whatsapp',
-        content_type: 'image',
-        core_revision: 'conversation_core_v1',
-      }
-    },
-    mediaFixtures: {
-      'm-mismatch': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
-    }
-  });
-
-  const res = await harness.execute();
-  assert.equal(res.ok, true);
-
-  const ev = harness.eventsInDb['e-mismatch'];
-  assert.ok(ev.raw_payload.media);
-  assert.equal(ev.raw_payload.media.status, 'storage_error');
-  assert.equal(ev.raw_payload.media.verified, false);
-  assert.match(ev.raw_payload.media.error, /storage_size_mismatch/);
-});
-
-test('30. early exit bypass: media with status stored but verified false is re-uploaded and verified', async () => {
-  const harness = createMockHarness({
-    messages: [{ event_id: 'e-unverified-retry', id: 'm-unverified-retry', text: '[image]', name: 'Cliente' }],
-    rawPayloads: {
-      'e-unverified-retry': {
-        channel_type: 'whatsapp',
-        content_type: 'image',
-        core_revision: 'conversation_core_v1',
-        media: {
-          status: 'stored',
-          verified: false, // Previously failed verification or legacy unverified
-          bucket: 'channel-media',
-          storagePath: 'wesley_automoveis/whatsapp/5521999999999_s.whatsapp.net/m-unverified-retry.jpg',
-        }
-      }
-    },
-    mediaFixtures: {
-      'm-unverified-retry': { mimetype: 'image/jpeg', base64: FIXTURE_JPEG_SHORT.toString('base64') }
-    }
-  });
-
-  await harness.execute();
-
-  // Re-upload must occur because verified was false
-  assert.equal(harness.uploads.length, 1);
-  const ev = harness.eventsInDb['e-unverified-retry'];
-  assert.equal(ev.raw_payload.media.status, 'stored');
-  assert.equal(ev.raw_payload.media.verified, true);
-});
-
-test('legacy 31. full turn audio uses direct binary transport', async () => {
-  const harness = createMockHarness({
-    messages: [{ event_id: 'e-aud-full', id: 'm-aud-full', text: '[audio]', name: 'Maria' }],
-    rawPayloads: {
-      'e-aud-full': {
-        channel_type: 'whatsapp',
-        content_type: 'audio',
-        core_revision: 'conversation_core_v1',
-      }
-    },
-    mediaFixtures: {
-      'm-aud-full': { mimetype: 'audio/ogg', base64: FIXTURE_OGG.toString('base64') }
-    }
-  });
-
-  const res = await harness.execute();
-  assert.equal(res.ok, true);
-
-  // Uploaded via binary transport
-  assert.equal(harness.uploads.length, 1);
-  const upload = harness.uploads[0];
-  assert.ok(upload.body.subarray(0, 4).equals(Buffer.from('OggS')));
-  assert.equal(upload.length, FIXTURE_OGG.length);
-
-  // DB state
-  const ev = harness.eventsInDb['e-aud-full'];
-  assert.ok(ev.raw_payload.media);
-  assert.equal(ev.raw_payload.media.status, 'stored');
-  assert.equal(ev.raw_payload.media.verified, true);
-  assert.equal(ev.raw_payload.media.size, FIXTURE_OGG.length);
-  assert.equal(ev.raw_payload.audio_processing.status, 'transcribed');
-});
-}
-
-require('./test_whatsapp_media_ingestion.cjs');

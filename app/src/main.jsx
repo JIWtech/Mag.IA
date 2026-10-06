@@ -47,6 +47,7 @@ import {
   MessageSquare,
   Mic,
   Music2,
+  Loader2,
   Paperclip,
   RefreshCcw,
   Radio,
@@ -93,6 +94,7 @@ import {
   loadClientData,
   loadTeamAgents,
   moveKanbanCard,
+  getStageLabel,
   isGenesisSalesTenant,
   orderKanbanColumnsForTenant,
   persistTenantSlug,
@@ -100,6 +102,7 @@ import {
   loadAppointmentScheduling,
   loadAppointmentAvailability,
   subscribeToClientEvents,
+  subscribeToContacts,
   shouldRefreshConversationState,
   createDebouncedRealtimeRefresh,
   resolveConversationHeaderOwner,
@@ -116,6 +119,7 @@ import {
   sortKanbanCardsByConversationActivity,
   applyIncomingEventToConversations,
   applyIncomingEventToKanban,
+  applyContactUpdateToConversations,
   applyConversationReadState,
   canonicalConversationKey,
   conversationReadKey,
@@ -133,6 +137,7 @@ import { NoriaSelect } from './components/NoriaSelect';
 import { AudioMessagePlayer } from './components/AudioMessagePlayer';
 import {
   isTechnicalMediaPlaceholder,
+  isMediaPlaceholderForKind,
   normalizeTechnicalMediaPlaceholder,
   formatConversationPreview as formatConversationPreviewUtil,
   formatCoordinates,
@@ -156,6 +161,24 @@ const menu = [
 const activePageStorageKey = 'magia:active-page';
 const appDataCachePrefix = 'magia:app-data:';
 const sessionBootstrappedKey = 'noria:session-bootstrapped';
+const mediaRetryDelays = [0, 800, 2200];
+
+function withLocalMediaLoadState(event, loadState = '') {
+  const payload = event?.raw_payload;
+  const media = payload?.media;
+  if (!event || !payload || !media || typeof media !== 'object') return event;
+  return {
+    ...event,
+    raw_payload: {
+      ...payload,
+      media: { ...media, loadState },
+    },
+  };
+}
+
+function hasResolvedMediaUrl(event) {
+  return Boolean(event?.raw_payload?.media?.url);
+}
 
 function isSessionBootstrapped() {
   try {
@@ -279,6 +302,36 @@ function getInitialAppData(tenantSlug) {
     },
     ready: true,
   };
+}
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Falha ao renderizar o painel NORIA:', error, info);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <main className="auth-page auth-loading-page">
+        <section className="auth-loading-card" role="alert">
+          <h1 className="auth-loading-title">Não foi possível abrir o painel</h1>
+          <p className="muted">{this.state.error.message || 'Erro inesperado ao carregar a tela.'}</p>
+          <button className="primary-button" type="button" onClick={() => window.location.reload()}>
+            Tentar novamente
+          </button>
+        </section>
+      </main>
+    );
+  }
 }
 
 function App() {
@@ -471,7 +524,7 @@ function App() {
             ...col,
             cards: sortKanbanCardsByConversationActivity([{
               ...card,
-              stage: targetColObj?.title || targetColumnKey,
+              stage: targetColObj?.title || getStageLabel(targetColumnKey, { kanbanColumns: prev.kanbanColumns, tenantSettings, tenantSlug: activeTenantSlug }),
               targetColumnId: col.automationKey || targetColumnKey,
             }, ...filteredCards]),
           };
@@ -721,6 +774,46 @@ function App() {
     }
   }
 
+  const updateConversationMessageMedia = useCallback((eventId, nextMedia) => {
+    if (!eventId || !nextMedia) return;
+    setAppData((previous) => {
+      if (!previous?.conversations) return previous;
+      let changed = false;
+      const conversationsWithMedia = previous.conversations.map((conversation) => {
+        if (!(conversation.messages || []).some((message) => message.eventId === eventId)) return conversation;
+        changed = true;
+        const messages = (conversation.messages || []).map((message) => {
+          if (message.eventId !== eventId) return message;
+          return { ...message, media: { ...(message.media || {}), ...nextMedia } };
+        });
+        return { ...conversation, messages };
+      });
+      return changed ? { ...previous, conversations: conversationsWithMedia } : previous;
+    });
+  }, []);
+
+  const retryConversationAudio = useCallback(async (message) => {
+    const media = message?.media;
+    if (!message?.eventId || !media?.bucket || !media?.storagePath || media.status !== 'stored') return false;
+
+    updateConversationMessageMedia(message.eventId, { loadState: 'resolving' });
+    const retryEvent = {
+      id: message.eventId,
+      raw_payload: { media: { ...media, url: '' } },
+    };
+    const enriched = await enrichSingleMediaEvent(retryEvent, undefined, { force: true });
+    if (hasResolvedMediaUrl(enriched)) {
+      updateConversationMessageMedia(message.eventId, {
+        ...enriched.raw_payload.media,
+        loadState: '',
+      });
+      return true;
+    }
+
+    updateConversationMessageMedia(message.eventId, { loadState: 'retryable_error' });
+    return false;
+  }, [updateConversationMessageMedia]);
+
   useEffect(() => {
     if (isAuthRequired() && !session) return;
     let cancelled = false;
@@ -767,40 +860,65 @@ function App() {
       refreshData({ showLoading: false });
     });
 
-    const unsubscribe = subscribeToClientEvents(async (payload) => {
-      if (payload?.table === 'channel_events' && payload?.new) {
-        let incomingEvent = payload.new;
+    let cancelled = false;
 
-        if (hasStoredMediaNeedingUrl(incomingEvent)) {
-          incomingEvent = await enrichSingleMediaEvent(incomingEvent);
-        }
-        const incomingConversationKey = canonicalConversationKey(
-          incomingEvent.channel_type,
-          incomingEvent.external_conversation_id,
-          incomingEvent.contact_handle || incomingEvent.id,
+    const applyRealtimeEvent = (incomingEvent) => {
+      const incomingConversationKey = canonicalConversationKey(
+        incomingEvent.channel_type,
+        incomingEvent.external_conversation_id,
+        incomingEvent.contact_handle || incomingEvent.id,
+        activeTenantSlug,
+      );
+      const markIncomingAsRead = conversationViewRef.current.visible
+        && conversationViewRef.current.canonicalKey === incomingConversationKey;
+      setAppData((prev) => {
+        if (!prev) return prev;
+        const nextConversations = applyIncomingEventToConversations(
+          prev.conversations,
+          incomingEvent,
+          activeTenantSlug,
+          { markIncomingAsRead },
+        );
+        const nextKanbanColumns = applyIncomingEventToKanban(
+          prev.kanbanColumns,
+          incomingEvent,
           activeTenantSlug,
         );
-        const markIncomingAsRead = conversationViewRef.current.visible
-          && conversationViewRef.current.canonicalKey === incomingConversationKey;
-        setAppData((prev) => {
-          if (!prev) return prev;
-          const nextConversations = applyIncomingEventToConversations(
-            prev.conversations,
-            incomingEvent,
-            activeTenantSlug,
-            { markIncomingAsRead },
-          );
-          const nextKanbanColumns = applyIncomingEventToKanban(
-            prev.kanbanColumns,
-            incomingEvent,
-            activeTenantSlug,
-          );
-          return {
-            ...prev,
-            conversations: nextConversations,
-            kanbanColumns: nextKanbanColumns,
-          };
-        });
+        return {
+          ...prev,
+          conversations: nextConversations,
+          kanbanColumns: nextKanbanColumns,
+        };
+      });
+    };
+
+    const recoverRealtimeMedia = async (event) => {
+      for (let attempt = 0; attempt < mediaRetryDelays.length; attempt += 1) {
+        const delay = mediaRetryDelays[attempt];
+        if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+        if (cancelled) return;
+
+        const enriched = await enrichSingleMediaEvent(event);
+        if (cancelled) return;
+        if (hasResolvedMediaUrl(enriched)) {
+          applyRealtimeEvent(withLocalMediaLoadState(enriched));
+          return;
+        }
+      }
+      if (!cancelled) applyRealtimeEvent(withLocalMediaLoadState(event, 'retryable_error'));
+    };
+
+    const unsubscribe = subscribeToClientEvents(async (payload) => {
+      if (payload?.table === 'channel_events' && payload?.new) {
+        const incomingEvent = payload.new;
+        const isStoredMediaWaitingForUrl = hasStoredMediaNeedingUrl(incomingEvent);
+        applyRealtimeEvent(isStoredMediaWaitingForUrl
+          ? withLocalMediaLoadState(incomingEvent, 'resolving')
+          : incomingEvent);
+
+        if (isStoredMediaWaitingForUrl) {
+          void recoverRealtimeMedia(incomingEvent);
+        }
 
         if (shouldRefreshConversationState(incomingEvent)) {
           refreshFromRealtime();
@@ -839,6 +957,7 @@ function App() {
     }, 5 * 60 * 1000);
 
     return () => {
+      cancelled = true;
       unsubscribe();
       unsubscribeConversationReads();
       refreshFromRealtime.cancel();
@@ -846,6 +965,23 @@ function App() {
       window.clearInterval(fallbackPolling);
     };
   }, [activeTenantSlug, session?.user?.id, hasTenantAccess]);
+
+  useEffect(() => {
+    const tenantId = appData?.tenantId;
+    if (!tenantId) return undefined;
+
+    return subscribeToContacts((payload) => {
+      const contact = payload?.new;
+      if (!contact || contact.tenant_id !== tenantId) return;
+      setAppData((prev) => {
+        if (!prev || prev.tenantId !== tenantId) return prev;
+        return {
+          ...prev,
+          conversations: applyContactUpdateToConversations(prev.conversations, contact, tenantId),
+        };
+      });
+    }, tenantId);
+  }, [appData?.tenantId]);
 
   const hasBootstrapped = isSessionBootstrapped();
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
@@ -1010,6 +1146,9 @@ function App() {
             status={appData.status}
             ready={appDataReady}
             onOpenConversation={handleOpenChatFromKanban}
+            kanbanColumns={appData.kanbanColumns}
+            tenantSettings={tenantSettings}
+            tenantSlug={activeTenantSlug}
           />
         )}
         {active === 'conversas' && (
@@ -1025,8 +1164,10 @@ function App() {
             onInitialConversationOpened={() => setInitialConversationId(null)}
             onNavigateSettings={() => setActive('configuracoes')}
             onConversationViewStateChange={handleConversationViewStateChange}
+            onRetryAudioMedia={retryConversationAudio}
             ready={appDataReady}
             kanbanColumns={appData.kanbanColumns}
+            tenantSettings={tenantSettings}
           />
         )}
         {active === 'kanban' && (
@@ -1036,6 +1177,7 @@ function App() {
             tenantName={selectedTenant.name}
             agentsList={agentsList}
             tenantSlug={activeTenantSlug}
+            tenantSettings={tenantSettings}
             onChanged={refreshData}
             onOpenChat={handleOpenChatFromKanban}
             onOpenAppointment={handleOpenAppointmentFromKanban}
@@ -1190,7 +1332,16 @@ function getConversationLastMessageMeta(item) {
   return { type: 'text', label: '', icon: <MessageSquare size={13} /> };
 }
 
-function Dashboard({ conversations = [], dataSource, status, ready = true, onOpenConversation }) {
+function Dashboard({
+  conversations = [],
+  dataSource,
+  status,
+  ready = true,
+  onOpenConversation,
+  kanbanColumns = [],
+  tenantSettings = null,
+  tenantSlug = '',
+}) {
   const [isMobileRecentList, setIsMobileRecentList] = useState(() => (
     typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
   ));
@@ -1399,7 +1550,7 @@ function Dashboard({ conversations = [], dataSource, status, ready = true, onOpe
 
                         {/* 4. Etapa */}
                         <div className="table-cell table-stage-cell">
-                          <span className="stage-pill-badge" title={item.stage}>{item.stage}</span>
+                          <span className="stage-pill-badge" title={getStageLabel(item.stage || item.salesStageKey, { kanbanColumns, tenantSettings, tenantSlug })}>{getStageLabel(item.stage || item.salesStageKey, { kanbanColumns, tenantSettings, tenantSlug })}</span>
                         </div>
 
                         {/* 5. Responsável */}
@@ -1487,7 +1638,7 @@ function ChannelIcon({ channel, size = 14 }) {
 }
 
 function getInitials(name) {
-  if (!name) return 'C';
+  if (!name || !/\p{L}/u.test(String(name))) return '';
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) {
     return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -1515,7 +1666,8 @@ function ContactAvatar({ name, avatarUrl, className = 'conversation-avatar' }) {
       </div>
     );
   }
-  return <div className={className}>{getInitials(name)}</div>;
+  const initials = getInitials(name);
+  return <div className={className}>{initials || <UserRound size={18} aria-label="Contato sem foto" />}</div>;
 }
 
 function getChannelClass(channel) {
@@ -1563,7 +1715,53 @@ function ContactAvatarBadge({ channel, presence = null }) {
   );
 }
 
-function MediaAttachment({ media, onMediaLoad }) {
+function AudioRecoveryNotice({ state = 'retryable_error', onRetry }) {
+  const isPreparing = state === 'resolving';
+  const isMissingSource = state === 'missing_source';
+  const message = isPreparing
+    ? 'Preparando áudio…'
+    : isMissingSource
+      ? 'Este áudio não chegou com arquivo anexado. Peça para reenviar.'
+      : 'Não foi possível carregar este áudio agora.';
+
+  return (
+    <div
+      className={`audio-media-notice ${isPreparing ? 'is-loading' : 'is-error'}`}
+      role={isPreparing ? 'status' : 'alert'}
+      aria-live="polite"
+    >
+      {isPreparing
+        ? <Loader2 size={16} className="audio-spinner" aria-hidden="true" />
+        : <AlertCircle size={16} aria-hidden="true" />}
+      <span>{message}</span>
+      {!isPreparing && !isMissingSource && typeof onRetry === 'function' && (
+        <button type="button" className="audio-retry-button" onClick={onRetry}>
+          Tentar novamente
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function TranscribedAudioCard({ transcription }) {
+  if (!transcription?.text) return null;
+  return (
+    <div className="transcribed-audio-card" role="region" aria-label="Áudio transcrito">
+      <div className="transcribed-audio-header">
+        <div className="transcribed-audio-badge">
+          <Mic size={14} className="transcribed-audio-icon" aria-hidden="true" />
+          <span>Áudio transcrito</span>
+        </div>
+        <span className="transcribed-audio-subtext">A gravação não foi disponibilizada pelo canal. A transcrição permanece disponível.</span>
+      </div>
+      <div className="transcribed-audio-text">
+        {transcription.text}
+      </div>
+    </div>
+  );
+}
+
+function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetry }) {
   if (!media) return null;
   const kind = String(media.kind || media.category || '').toLowerCase();
   if (!kind || kind === 'text' || kind === 'conversation' || kind === 'none' || !REAL_MEDIA_KINDS.has(kind)) {
@@ -1594,7 +1792,40 @@ function MediaAttachment({ media, onMediaLoad }) {
   }[kind] || { label: 'Arquivo', icon: FileText };
   const Icon = config.icon;
 
-  if (media.status === 'store_failed') {
+  if (kind === 'audio') {
+    if (media.url) {
+      const canRetry = media.status === 'stored' && media.bucket && media.storagePath;
+      return <AudioMessagePlayer media={media} onLoad={onMediaLoad} onRetry={canRetry ? onRetry : undefined} />;
+    }
+    // O evento de entrada jÃ¡ existe, mas o pipeline nativo do n8n ainda pode
+    // estar transferindo o arquivo ao Storage. Nunca o apresente como ausente
+    // durante esse intervalo: o Realtime trocarÃ¡ pending por stored e assinarÃ¡
+    // a URL privada em seguida.
+    if (media.status === 'pending' || media.loadState === 'resolving' || (media.status === 'stored' && media.bucket && media.storagePath)) {
+      return <AudioRecoveryNotice state="resolving" />;
+    }
+    if (media.loadState === 'retryable_error') {
+      return <AudioRecoveryNotice onRetry={onRetry} />;
+    }
+    if (audioTranscription?.text) {
+      return <TranscribedAudioCard transcription={audioTranscription} />;
+    }
+    if (['store_failed', 'verification_failed', 'download_failed'].includes(media.status)) {
+      return <AudioRecoveryNotice onRetry={media.bucket && media.storagePath ? onRetry : undefined} />;
+    }
+    return <AudioRecoveryNotice state="missing_source" />;
+  }
+
+  if (media.status === 'pending' || media.loadState === 'resolving') {
+    return (
+      <div className="media-placeholder media-placeholder-loading" role="status" aria-live="polite">
+        <Loader2 size={20} className="audio-spinner" aria-hidden="true" />
+        <span>Preparando {config.label.toLowerCase()}â€¦</span>
+      </div>
+    );
+  }
+
+  if (['store_failed', 'storage_error', 'persistence_error', 'skipped_too_large'].includes(media.status)) {
     return (
       <div className="media-placeholder" title={unavailableMediaLabel(kind)}>
         <Icon size={20} />
@@ -1603,7 +1834,7 @@ function MediaAttachment({ media, onMediaLoad }) {
     );
   }
 
-  if (kind === 'image' && media.url) {
+  if ((kind === 'image' || kind === 'sticker') && media.url) {
     if (imageError) {
       return (
         <div className="media-placeholder" title="Não foi possível carregar a imagem original">
@@ -1623,7 +1854,7 @@ function MediaAttachment({ media, onMediaLoad }) {
           className={`media-image-button ${!imageLoaded ? 'is-loading' : ''}`}
           type="button"
           onClick={() => imageLoaded && setExpandedImage(true)}
-          aria-label={hasRealCaption ? `Ampliar imagem: ${accessibleAlt}` : 'Ampliar imagem'}
+          aria-label={hasRealCaption ? `Ampliar ${kind === 'sticker' ? 'figurinha' : 'imagem'}: ${accessibleAlt}` : `Ampliar ${kind === 'sticker' ? 'figurinha' : 'imagem'}`}
         >
           <div className={`media-image-container ${imageLoaded ? 'is-loaded' : ''}`}>
             {!imageLoaded && (
@@ -1634,7 +1865,7 @@ function MediaAttachment({ media, onMediaLoad }) {
             <img
               className={`media-image ${imageLoaded ? 'is-loaded' : 'is-loading'}`}
               src={media.thumbnailUrl || media.url}
-              alt={accessibleAlt}
+              alt={accessibleAlt || (kind === 'sticker' ? 'Figurinha' : '')}
               decoding="async"
               onLoad={() => {
                 setImageLoaded(true);
@@ -1647,7 +1878,7 @@ function MediaAttachment({ media, onMediaLoad }) {
           </div>
         </button>
         {expandedImage && (
-          <div className="media-lightbox" role="dialog" aria-modal="true" aria-label="Imagem ampliada" onClick={() => setExpandedImage(false)}>
+          <div className="media-lightbox" role="dialog" aria-modal="true" aria-label={kind === 'sticker' ? 'Figurinha ampliada' : 'Imagem ampliada'} onClick={() => setExpandedImage(false)}>
             <button className="media-lightbox-close" type="button" aria-label="Fechar imagem" onClick={() => setExpandedImage(false)}>
               <X size={20} />
             </button>
@@ -1661,10 +1892,6 @@ function MediaAttachment({ media, onMediaLoad }) {
         )}
       </>
     );
-  }
-
-  if (kind === 'audio' && media.url) {
-    return <AudioMessagePlayer media={media} onLoad={onMediaLoad} />;
   }
 
   if (kind === 'video' && media.url) {
@@ -1885,8 +2112,10 @@ function Conversations({
   onInitialConversationOpened,
   onNavigateSettings = null,
   onConversationViewStateChange = null,
+  onRetryAudioMedia = null,
   ready = true,
   kanbanColumns = [],
+  tenantSettings = null,
 }) {
   const [selectedId, setSelectedId] = useState(null);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
@@ -2517,7 +2746,7 @@ function Conversations({
                   <strong className="chat-header-name">{selected.contact}</strong>
                 </div>
                 <div className="chat-header-sub">
-                  <span className="chat-header-stage-chip">{selected.stage}</span>
+                  <span className="chat-header-stage-chip">{getStageLabel(selected.stage || selected.salesStageKey, { kanbanColumns, tenantSettings, tenantSlug })}</span>
                   <div className={`chat-header-owner-chip ${validOwnerAgent ? 'has-owner' : isAiOwner ? 'is-ai' : 'no-owner'}`}>
                     {isAiOwner ? (
                       <Bot size={12} className="owner-chip-icon" />
@@ -2569,9 +2798,27 @@ function Conversations({
               else if (isSystem) senderLabel = 'Sistema';
 
               return (
-                <div key={`${message.at}-${index}`} className={`bubble ${isAi ? 'ai' : isAgent || isSystem ? 'agent' : 'contact'}`}>
+                <div
+                  key={message.eventId
+                    ? `event-${message.eventId}`
+                    : `legacy-${message.createdAt || message.at}-${message.from || 'contact'}-${index}`}
+                  className={`bubble ${isAi ? 'ai' : isAgent || isSystem ? 'agent' : 'contact'}`}
+                >
                   <div className="bubble-sender">{senderLabel}</div>
-                  {message.media && <MediaAttachment media={message.media} onMediaLoad={scrollToLatest} />}
+                  {message.media && (
+                    <MediaAttachment
+                      media={message.media}
+                      audioTranscription={message.audioTranscription}
+                      onMediaLoad={scrollToLatest}
+                      onRetry={() => onRetryAudioMedia?.(message)}
+                    />
+                  )}
+                  {!message.media && message.audioTranscription && (
+                    <TranscribedAudioCard transcription={message.audioTranscription} />
+                  )}
+                  {!message.media && !message.audioTranscription && isMediaPlaceholderForKind(message.text, 'audio') && (
+                    <AudioRecoveryNotice state="missing_source" />
+                  )}
                   {(() => {
                     const loc = message.location || (
                       (message.text && ['[location]', 'location', '[localização]', '[localizacao]'].includes(message.text.trim().toLowerCase()))
@@ -2582,6 +2829,9 @@ function Conversations({
                   })()}
                   {(() => {
                     if (!message.text) return null;
+                    if (!message.media && isMediaPlaceholderForKind(message.text, 'audio')) {
+                      return null;
+                    }
                     if (message.media && isTechnicalMediaPlaceholder(message.text, message.media)) {
                       return null;
                     }
@@ -3200,6 +3450,7 @@ function Kanban({
   tenantName = '',
   agentsList = [],
   tenantSlug = 'clinica_nubia',
+  tenantSettings = null,
   onChanged,
   onOpenChat,
   onOpenAppointment,
@@ -3640,7 +3891,7 @@ function Kanban({
           <h3>Proposta de organização do fluxo</h3>
           <div className="split-grid">
             <div><strong>Ordem atual</strong><ol>{orderedColumns.map((column) => <li key={column.id}>{column.title}</li>)}</ol></div>
-            <div><strong>Sugestão da IA</strong><ol>{flowProposal.orderedAutomationKeys.map((key) => <li key={key}>{orderedColumns.find((column) => (column.automationKey || column.id) === key)?.title || key}</li>)}</ol></div>
+            <div><strong>Sugestão da IA</strong><ol>{flowProposal.orderedAutomationKeys.map((key) => <li key={key}>{orderedColumns.find((column) => (column.automationKey || column.id) === key)?.title || getStageLabel(key, { kanbanColumns: orderedColumns, tenantSettings, tenantSlug })}</li>)}</ol></div>
           </div>
           {flowProposal.reasoning && <p>{flowProposal.reasoning}</p>}
           <div className="row-actions">
@@ -5493,4 +5744,6 @@ function LoginPage() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(
+  <AppErrorBoundary><App /></AppErrorBoundary>,
+);

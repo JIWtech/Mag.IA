@@ -52,6 +52,33 @@ async function runTurn() {
   const event = { tenant_id: context.tenant.id, tenant_slug: tenantSlug, channel_type: 'whatsapp',
     service: 'geral', stage: 'Conversas IA', handoff: false, ai_provider: 'rules', raw_payload: {} };
 
+  const exclusion = await contactExclusionStatus(context);
+  if (exclusion.blocked) {
+    if (!await commit()) return { ok: true, skipped: true, reason: 'superseded' };
+    await recordContactExclusion(context, exclusion);
+    await complete('done');
+    return { ok: true, skipped: true, reason: exclusion.reason };
+  }
+
+  const contact = await loadContact(context);
+  if (shouldIgnoreBecauseOwnerSavedContact(contact, turn)) {
+    if (!await commit()) return { ok: true, skipped: true };
+    event.ai_provider = 'owner_saved_suppression';
+    event.handoff = false;
+    event.stage = 'Atendimento humano';
+    event.service = 'atendimento_humano';
+    event.raw_payload = {
+      ...(event.raw_payload || {}),
+      ai_suppressed: true,
+      ai_suppressed_reason: 'owner_saved_contact',
+      is_owner_saved: true,
+      owner_saved_source: contact?.metadata?.whatsapp_owner_saved_source || 'evolution_contacts',
+    };
+    await saveEvent(event);
+    await complete('done');
+    return { ok: true, skipped: true, ai_suppressed: true, reason: 'owner_saved_contact' };
+  }
+
   if (salesEnabled(context)) return runSalesTurn(context, history, event, control);
 
   if (normalized === '/reset' || normalized === 'reset') {

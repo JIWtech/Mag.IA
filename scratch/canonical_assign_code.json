@@ -1,0 +1,12 @@
+[
+  {
+    "name": "run_command",
+    "args": {
+      "CommandLine": "node -e \"\nconst fs = require('fs');\nconst readline = require('readline');\nconst path = 'C:\\\\\\\\Users\\\\\\\\Admin\\\\\\\\.gemini\\\\\\\\antigravity-ide\\\\\\\\brain\\\\\\\\60c782f3-af67-4557-a0ea-d92f85dceb73\\\\\\\\.system_generated\\\\\\\\logs\\\\\\\\transcript_full.jsonl';\nconst rl = readline.createInterface({ input: fs.createReadStream(path) });\nrl.on('line', l => {\n  const o = JSON.parse(l);\n  if (o.tool_calls && JSON.stringify(o.tool_calls).includes('canonical assign A')) {\n    console.log('Found tool call at step:', o.step_index);\n    fs.writeFileSync('scratch/canonical_assign_code.json', JSON.stringify(o.tool_calls, null, 2));\n  }\n});\n\"",
+      "Cwd": "c:\\MagIA-Projeto-Oficial",
+      "WaitMsBeforeAsync": 5000,
+      "toolAction": "Running command",
+      "toolSummary": "Extract canonical assign tool call from transcript"
+    }
+  }
+]

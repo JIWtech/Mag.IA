@@ -1,0 +1,133 @@
+A correção da autoria e o alinhamento com o mecanismo canônico de atribuição de conversas foram concluídos.
+
+---
+
+### 1. Como a atribuição manual funciona hoje
+
+No frontend ([`app/src/main.jsx`](file:///c:/MagIA-Projeto-Oficial/app/src/main.jsx#L664-L682)), quando um operador humano é selecionado na barra de atendimento, o sistema despacha o comando `assign_conversation` para o `magia_command_router` ([`n8n/code/command_router.js`](file:///c:/MagIA-Projeto-Oficial/n8n/code/command_router.js#L410-L442)).
+
+Esse comando registra no Supabase um evento em `channel_events` com a seguinte estrutura canônica:
+```json
+{
+  "sender_type": "system",
+  "service": "conversation_assigned",
+  "stage": "Atendimento humano",
+  "handoff": true,
+  "delivery_status": "assigned",
+  "message_text": "Conversa atribuida a Wesley",
+  "sent_by_user": "Wesley",
+  "raw_payload": {
+    "command": "assign_conversation",
+    "assigned_by": "Operador Mag.IA",
+    "assignee": {
+      "id": "2b927dd1-8f69-4b33-9bdf-6abc2968c1cf",
+      "name": "Wesley",
+      "role": "Atendente"
+    }
+  }
+}
+```
+**Características essenciais observadas**:
+- O evento é de sistema (`sender_type: 'system'`), não de assistente nem de agente;
+- Não dispara mensagem externa para o cliente no WhatsApp;
+- Serve para registrar na timeline a mudança de custódia e alimentar a descoberta do responsável na UI.
+
+---
+
+### 2. Qual era o erro conceitual de `sent_by_user`
+
+O erro consistia em aplicar `sent_by_user = 'Wesley'` diretamente no evento de mensagem da IA (`sender_type = 'assistant'`). 
+
+Isso gerava três falhas conceituais graves:
+1. **Falsificação de autoria na UI**: O frontend (`eventsToConversations`) mapeia `conv.messages[i].sent_by` a partir de `event.sent_by_user`. O chat exibiria a mensagem do bot como se o próprio Wesley a tivesse digitado.
+2. **Poluição de métricas e auditoria**: Consultas de BI e auditoria que filtram `sent_by_user = 'Wesley'` contabilizariam respostas automáticas como intervenções humanas ativas.
+3. **Fusão indevida de conceitos**: Confundia *quem escreveu a mensagem* (autoria: IA) com *quem assumirá a conversa a seguir* (atribuição: Wesley).
+
+---
+
+### 3. Como a atribuição automática passou a reutilizar o mecanismo canônico
+
+O processo de handoff em [`runSalesTurn`](file:///c:/MagIA-Projeto-Oficial/n8n/code/whatsapp_sales.js#L960-L988) foi estritamente dividido em 3 passos:
+
+- **Passo 1 (Mensagem da IA)**:
+  A IA envia a mensagem de despedida ao WhatsApp do cliente (*"Sem problema, vou passar seu atendimento para o Wesley continuar por aqui."*).
+  O evento registrado em `channel_events` possui:
+  - `sender_type = 'assistant'`
+  - `ai_provider = 'sales_core'`
+  - `sent_by_user = undefined` (nulo)
+  - `raw_payload.assignee = undefined` (não polui o payload da mensagem do bot)
+
+- **Passo 2 (Persistência do Lead)**:
+  `magia_sales_save` atualiza o registro do lead com `stage_key = 'sales_human'` e ativa a trava `ai_locked = true`.
+
+- **Passo 3 (Atribuição Canônica Separada)**:
+  Implementada a função [`salesAssignConversation(context, assignee, lead)`](file:///c:/MagIA-Projeto-Oficial/n8n/code/whatsapp_sales.js#L651-L689). Se um operador for resolvido (ex.: Wesley), ela grava um evento dedicado em `channel_events` idêntico ao comando manual:
+  - `sender_type: 'system'`
+  - `service: 'conversation_assigned'`
+  - `message_text: 'Conversa atribuida a Wesley'`
+  - `sent_by_user: 'Wesley'` (identificando o responsável pelo registro do sistema)
+  - `raw_payload: { command: 'assign_conversation', assigned_by: 'IA - Anti-loop', assignee: { id, name, role } }`
+
+Se nenhum operador específico estiver disponível (ex.: fallback geral de equipe), a conversa vai para `sales_human` com IA travada e **nenhum** evento falso de `assign_conversation` é criado.
+
+---
+
+### 4. Revisão do `sendChannelMessage`
+
+A alteração anterior em [`n8n/code/whatsapp_core_overrides.js`](file:///c:/MagIA-Projeto-Oficial/n8n/code/whatsapp_core_overrides.js#L247-L258) que propagava `sent_by_user` para o POST de `channel_events` foi **completamente revertida**. 
+
+O `sendChannelMessage` trata unicamente de envios automatizados da IA via Evolution API e, portanto, **nunca** deve assinar autoria humana nas mensagens de texto emitidas pelo assistente.
+
+---
+
+### 5. Como o frontend identifica o `assignee`
+
+No arquivo [`app/src/dataService.js`](file:///c:/MagIA-Projeto-Oficial/app/src/dataService.js):
+- **Na lista de conversas** ([linhas 2586–2604](file:///c:/MagIA-Projeto-Oficial/app/src/dataService.js#L2586-L2604)): O pipeline lê os eventos em ordem cronológica. Ao encontrar `event.service === 'conversation_assigned'` ou `payload.assignee`, extrai `candidateName = cleanAgentName(assignee.name || payload.assigned_to)` e `candidateId = assignee.id`, atualizando `explicitOwnerByChat` e `explicitOwnerIdByChat`.
+- **Nos cartões do Kanban** ([linhas 2320–2342](file:///c:/MagIA-Projeto-Oficial/app/src/dataService.js#L2320-L2342)): Lê `payload.assignee` do evento e define `card.owner = newAssigneeName`, `card.ownerId = String(assignee.id)` e `card.ownerKind = 'agent'`.
+- **Isolamento de prévia**: A função `isKanbanOperationalEvent` classifica `conversation_assigned` como evento operacional. Isso garante que a mensagem de sistema não substitua a última mensagem real trocada com o contato na prévia da conversa.
+
+---
+
+### 6. Testes adicionados
+
+Em [`scripts/test_whatsapp_sales.cjs`](file:///c:/MagIA-Projeto-Oficial/scripts/test_whatsapp_sales.cjs#L1428-L1545), foram adicionados os 7 testes da Seção 7:
+- **`canonical assign A`**: Valida que a mensagem de handoff da IA possui `sender_type = 'assistant'` e **não** possui `sent_by_user = 'Wesley'`.
+- **`canonical assign B`**: Valida que, após a mensagem da IA, é gerado um segundo evento no banco com `sender_type = 'system'` e `service = 'conversation_assigned'`.
+- **`canonical assign C`**: Valida que o evento de assignment contém `raw_payload.command = 'assign_conversation'` e `assignee` com `id` e `name` corretos do Wesley.
+- **`canonical assign D`**: Importa dinamicamente `eventsToConversations` de `dataService.js` e comprova que o frontend resolve o cartão e a conversa com `owner = 'Wesley'` e `ownerId = '2b927dd1-8f69-4b33-9bdf-6abc2968c1cf'`.
+- **`canonical assign E`**: Comprova que a auditoria da conversa registra a mensagem da IA como `from: 'ai'` e `sent_by: null`, sem atribuir autoria ao Wesley.
+- **`canonical assign F`**: Comprova que, sem operador disponível, o handoff para a equipe mantém `sales_human` e `ai_locked`, sem gerar evento falso de `conversation_assigned`.
+- **`canonical assign G`**: Valida que, após o handoff, novas mensagens recebidas não disparam respostas automáticas da IA (`human_lock: true`, `sent.length: 0`).
+
+---
+
+### 7. Totais dos testes
+
+| Suíte de Testes | Passaram | Falharam | Status |
+| :--- | :---: | :---: | :---: |
+| `scripts/test_whatsapp_sales.cjs` | **106** | 0 | **PASS** |
+| `scripts/test_whatsapp_core.cjs` | **56** | 0 | **PASS** |
+| `scripts/test_whatsapp_media.cjs` | **26** | 0 | **PASS** |
+| `app/src/*.test.js` | **219** | 0 | **PASS** |
+| **Total Geral** | **407** | **0** | **100% OK** |
+
+---
+
+### 8. Build
+
+- **Frontend Vite** (`cd app && npm run build`):
+  `✓ built in 3.77s` — build de produção compilado com sucesso.
+- **WhatsApp Core Builder** (`node scripts/build_whatsapp_core.cjs`):
+  `whatsapp_conversation_core.generated.js` gerado e sincronizado.
+- **Workflow Builder** (`node scripts/build_whatsapp_core_workflow.cjs`):
+  Nó `Processar Conversa WhatsApp` em `n8n/workflows/magia_whatsapp_evolution_mvp.json` sincronizado.
+
+---
+
+### 9. Paridade e integridade
+
+- Teste de paridade estrutural `parity G: source, generated core and generated workflow are identical` aprovado.
+- `git diff --check` executado sem erros de formatação ou divergências de whitespace.
+- Paridade 100% verificada entre código fonte canônico, core compilado e workflow n8n.
+- **Restrições respeitadas**: Nada foi publicado no n8n, nenhuma migration/alteração foi feita no Supabase e nenhum commit/push foi executado.

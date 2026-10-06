@@ -4,7 +4,7 @@ import { loadUserTenants, enabledChannels } from './tenantAccess.js';
 import { prepareConversationEvents } from './conversationEvents.js';
 import { applyConversationLifecycle } from './conversationLifecycle.js';
 import { isEligibleForExternalOutbound, isInternalOperationalEvent } from './eventClassification.js';
-import { TECHNICAL_MEDIA_LABELS, REAL_MEDIA_KINDS } from './audioUtils.js';
+import { TECHNICAL_MEDIA_LABELS, REAL_MEDIA_KINDS, isMediaPlaceholderForKind } from './audioUtils.js';
 
 const runtimeEnv = (typeof import.meta !== 'undefined' && import.meta.env) || {};
 const supabaseUrl = runtimeEnv.VITE_SUPABASE_URL || '';
@@ -77,7 +77,7 @@ export function subscribeToClientEvents(onChange, activeTenantSlug = defaultTena
   const supabase = getClient();
   if (!supabase) return () => { };
 
-  const channel = supabase
+  let channel = supabase
     .channel(`tenant-events:${activeTenantSlug}`)
     .on(
       'postgres_changes',
@@ -106,8 +106,9 @@ export function subscribeToClientEvents(onChange, activeTenantSlug = defaultTena
         table: 'broadcast_campaigns',
       },
       (payload) => onChange?.({ table: 'broadcast_campaigns', ...payload }),
-    )
-    .subscribe((status, err) => {
+    );
+
+  channel.subscribe((status, err) => {
       if (status === 'CHANNEL_ERROR') {
         console.warn(`[Realtime] Erro no canal tenant-events:${activeTenantSlug}`, err);
       }
@@ -188,7 +189,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     .select('settings').eq('tenant_id', tenant.id).maybeSingle();
   if (settingsError) throw new Error('Nao foi possivel carregar as configuracoes da empresa.');
   const tenantChannels = enabledChannels(uiSettings?.settings);
-  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig, followUpJobs, contactAvatars, salesLeads, conversationReads, teamAgents] = await Promise.all([
+  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig, followUpJobs, salesLeads, conversationReads, teamAgents] = await Promise.all([
     supabase
       .from('channel_events')
       .select('*')
@@ -200,7 +201,6 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     tenant ? loadBroadcastCampaigns(tenant.id) : [],
     tenant ? loadKanbanConfig(tenant.id) : null,
     tenant ? loadFollowUpJobs(tenant.id, activeTenantSlug) : [],
-    tenant ? loadContactAvatars(tenant.id) : [],
     tenant && isGenesisSalesTenant(activeTenantSlug) ? loadSalesLeads(tenant.id) : [],
     tenant && userId ? loadConversationReads(tenant.id, userId) : [],
     tenant ? loadTeamAgents(activeTenantSlug) : [],
@@ -229,13 +229,17 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     };
   }
 
+  // Resolve only the contacts that can be displayed in the conversations already
+  // loaded. A global .limit(1000) silently lost identities for larger tenants.
+  const contactDirectory = await loadRelevantContacts(tenant.id, data, broadcastContacts);
+
   const eventsWithMediaUrls = await enrichMediaUrls(
     data.map((event) => ({ ...event, raw_payload: asObject(event.raw_payload) })),
     supabase,
   );
-  const avatarIndex = buildContactAvatarIndex(contactAvatars, tenant.id);
-  const eventsWithAvatars = applyContactAvatars(eventsWithMediaUrls, avatarIndex, tenant.id);
-  const broadcastContactsWithAvatars = applyContactAvatarsToBroadcastContacts(broadcastContacts, avatarIndex, tenant.id);
+  const contactIndex = buildContactDirectory(contactDirectory, tenant.id);
+  const eventsWithAvatars = applyContactDirectory(eventsWithMediaUrls, contactIndex, tenant.id);
+  const broadcastContactsWithAvatars = applyContactAvatarsToBroadcastContacts(broadcastContacts, contactIndex, tenant.id);
 
   const kanbanColumns = eventsToKanban(eventsWithAvatars, activeTenantSlug, appointments, kanbanConfig, followUpJobs, salesLeads, teamAgents);
 
@@ -260,6 +264,8 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
     broadcastCampaigns,
     conversationReads,
     teamAgents,
+    tenantSettings: uiSettings?.settings || null,
+    kanbanConfig,
   };
 }
 
@@ -597,11 +603,112 @@ export async function updateBroadcastRecipient(campaignId, externalConversationI
   if (error) throw error;
 }
 
-function normalizeStage(stage) {
-  const s = String(stage || '').toLowerCase().trim();
+export const GENESIS_SALES_STAGE_DEFAULT_NAMES = {
+  sales_new: 'Patio - Novos contatos',
+  sales_qualifying: 'IA - Qualificacao automotiva',
+  sales_hot: 'Leads quentes - Venda',
+  sales_appraisal: 'Avaliacao de retoma - Compra',
+  sales_financing: 'Fila de financiamento',
+  sales_after_sales: 'Pos-venda - Manutencao',
+  sales_human: 'Atendimento humano',
+  sales_closed: 'Negocio fechado',
+};
+
+export function getStageLabel(stageKeyOrName, context = {}) {
+  if (!stageKeyOrName) return 'Qualificação';
+  const raw = String(stageKeyOrName).trim();
+  if (!raw) return 'Qualificação';
+
+  const kanbanColumns = Array.isArray(context) ? context : context?.kanbanColumns;
+  const tenantSettings = context?.tenantSettings;
+  const tenantSlug = typeof context === 'string'
+    ? context
+    : (context?.tenantSlug || context?.tenant_slug || '');
+
+  // 1. Prioridade máxima: resolver pelas colunas configuradas do Kanban do tenant
+  if (Array.isArray(kanbanColumns) && kanbanColumns.length) {
+    const col = findKanbanColumn(kanbanColumns, raw);
+    if (col && (col.title || col.name)) {
+      return col.title || col.name;
+    }
+  }
+
+  // 2. Resolver pelas configurações do tenant (settings.sales.stages ou settings.stages)
+  const settingsStages = tenantSettings?.sales?.stages
+    || tenantSettings?.settings?.sales?.stages
+    || tenantSettings?.stages
+    || tenantSettings?.settings?.stages;
+  if (settingsStages && typeof settingsStages === 'object') {
+    const canonicalKey = canonicalKanbanKey(raw);
+    const configuredStage = settingsStages[raw] || settingsStages[canonicalKey];
+    if (configuredStage?.name) {
+      return configuredStage.name;
+    }
+  }
+
+  // 3. Fallback para nomes padrão Genesis: SOMENTE SE for comprovadamente o tenant Genesis (wesley_automoveis) ou capability sales_v1
+  const isGenesis = isGenesisSalesTenant(tenantSlug)
+    || tenantSettings?.conversation_capability === 'sales_v1'
+    || tenantSettings?.settings?.conversation_capability === 'sales_v1';
+  if (isGenesis) {
+    const canonical = canonicalKanbanKey(raw);
+    if (GENESIS_SALES_STAGE_DEFAULT_NAMES[canonical]) {
+      return GENESIS_SALES_STAGE_DEFAULT_NAMES[canonical];
+    }
+    if (GENESIS_SALES_STAGE_DEFAULT_NAMES[raw]) {
+      return GENESIS_SALES_STAGE_DEFAULT_NAMES[raw];
+    }
+  }
+
+  // 4. Fallback para padrões legados (ex: clinica_nubia)
+  const s = raw.toLowerCase();
   if (s === 'reset' || s === '/reset') return 'Qualificação';
   if (s.includes('aguardando') && (s.includes('final') || s.includes('pagamento'))) return 'Aguardando finalizacao';
   if (s.includes('finaliz') || s.includes('encerr')) return 'Finalizado';
+  if (s.includes('verificar sinal')) return 'Verificar Sinal';
+  if (s.includes('sinal informado')) return 'Sinal informado';
+  if (s.includes('produto') && (s.includes('apresent') || s.includes('catalog') || s.includes('foto'))) return 'Produtos apresentados';
+  if (s.includes('interesse') && s.includes('compra')) return 'Interesse em compra';
+  if (s.includes('venda') && s.includes('conclu')) return 'Venda concluida';
+  if (s.includes('agendamento confirmado')) return 'Agendamento confirmado';
+  if (s.includes('qualific') || s === 'qualificacao') return 'Qualificação';
+  if (s.includes('agend') || s === 'agendamento') return 'Agendamento';
+  if (s.includes('brief') || s.includes('briefing')) return 'Briefing necessário';
+  if (s.includes('suport') || s.includes('suporte')) return 'Suporte técnico';
+  if (s.includes('orc') || s.includes('orç') || s.includes('orcamento')) return 'Orçamento solicitado';
+  if (s.includes('human') || s.includes('atendimento_humano') || s.includes('atendimento humano')) return 'Atendimento humano';
+  if (s.includes('diagnos') || s.includes('diagnostico')) return 'Diagnóstico';
+  if (s.includes('negoc') || s.includes('negociacao')) return 'Negociação';
+  if (s.includes('fechad') || s.includes('fechado')) return 'Cliente fechado';
+  if (s.includes('propost') || s.includes('proposta')) return 'Proposta';
+  if (s.includes('fora de contexto')) return 'Fora de contexto';
+
+  // 5. Se já for um texto amigável (já contém espaços, acentos, letras maiúsculas e não é snake_case comercial puro)
+  if (!raw.startsWith('sales_') && (/[A-Z]/.test(raw) || /s/.test(raw) || /[áéíóúãõâêîôûç]/i.test(raw))) {
+    return raw;
+  }
+
+  // 6. Fallback defensivo final contra chaves snake_case técnicas não mapeadas:
+  // Nunca mascarar silenciosamente: avisar no console para visibilidade operacional
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn(`[getStageLabel] Chave de etapa não configurada "${raw}" para o tenant "${tenantSlug || 'desconhecido'}".`);
+  }
+  if (raw.includes('_')) {
+    return raw
+      .split('_')
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  return raw || 'Qualificação';
+}
+
+export function normalizeStage(stage) {
+  const s = String(stage || '').toLowerCase().trim();
+  if (s === 'reset' || s === '/reset') return 'Qualificação';
+  if (s.includes('aguardando') && (s.includes('final') || s.includes('pagamento'))) return 'Aguardando finalizacao';
+  if (s.includes('finaliz') || s.includes('encerr') || s === 'sales_closed') return 'Finalizado';
   if (s.includes('verificar sinal')) return 'Verificar Sinal';
   if (s.includes('sinal informado')) return 'Sinal informado';
   if (s.includes('produto') && (s.includes('apresent') || s.includes('catalog') || s.includes('foto'))) return 'Produtos apresentados';
@@ -613,7 +720,7 @@ function normalizeStage(stage) {
   if (s.includes('brief') || s.includes('briefing')) return 'Briefing necessário';
   if (s.includes('suport') || s.includes('suporte')) return 'Suporte técnico';
   if (s.includes('orc') || s.includes('orç') || s.includes('orcamento')) return 'Orçamento solicitado';
-  if (s.includes('human') || s.includes('atendimento_humano') || s.includes('atendimento humano')) return 'Atendimento humano';
+  if (s.includes('human') || s.includes('atendimento_humano') || s.includes('atendimento humano') || s === 'sales_human') return 'Atendimento humano';
   if (s.includes('diagnos') || s.includes('diagnostico')) return 'Diagnóstico';
   if (s.includes('negoc') || s.includes('negociacao')) return 'Negociação';
   if (s.includes('fechad') || s.includes('fechado')) return 'Cliente fechado';
@@ -736,6 +843,8 @@ export async function enrichMediaUrls(events, supabase) {
     const payload = asObject(event.raw_payload);
     const media = asObject(payload.media);
     if (media.status !== 'stored' || !media.bucket || !media.storagePath || media.url) continue;
+    if (String(event?.direction || '').toLowerCase() === 'outbound'
+      && !isExplicitOutboundMedia(media, payload, event)) continue;
     targets.set(`${media.bucket}:${media.storagePath}`, media);
   }
 
@@ -800,14 +909,28 @@ export function hasStoredMediaNeedingUrl(event) {
   const kind = String(media.kind || media.category || '').toLowerCase();
   if (kind === 'text' || kind === 'conversation') return false;
   if (!REAL_MEDIA_KINDS.has(kind)) return false;
+  if (String(event.direction || '').toLowerCase() === 'outbound'
+    && !isExplicitOutboundMedia(media, payload, event)) return false;
   return media.status === 'stored' && Boolean(media.bucket) && Boolean(media.storagePath) && !media.url;
 }
 
-export async function enrichSingleMediaEvent(event, client) {
-  if (!event || !hasStoredMediaNeedingUrl(event)) return event;
+export async function enrichSingleMediaEvent(event, client, { force = false } = {}) {
+  if (!event) return event;
+  const payload = asObject(event.raw_payload);
+  const media = asObject(payload.media);
+  const candidate = force && media.status === 'stored' && media.bucket && media.storagePath
+    ? { ...event, raw_payload: { ...payload, media: { ...media, url: '' } } }
+    : event;
+
+  if (!hasStoredMediaNeedingUrl(candidate)) return event;
+  if (force) {
+    const key = `${media.bucket}:${media.storagePath}`;
+    mediaObjectUrlCache.delete(key);
+    mediaUrlRequestCache.delete(key);
+  }
   const supabase = client || getClient();
   if (!supabase) return event;
-  const [enriched] = await enrichMediaUrls([event], supabase);
+  const [enriched] = await enrichMediaUrls([candidate], supabase);
   return enriched || event;
 }
 
@@ -875,8 +998,32 @@ export function normalizeLocation(rawPayload, event = null) {
   };
 }
 
-export function normalizeMedia(rawPayload) {
+function isExplicitOutboundMedia(media = {}, payload = {}, event = {}) {
+  const origin = String(
+    media.origin
+    || media.source
+    || media.direction
+    || media.message_origin
+    || payload.media_origin
+    || payload.media_source
+    || '',
+  ).toLowerCase();
+  if (['outbound', 'outbound_media', 'operator', 'manual_reply', 'assistant', 'whatsapp_fromme', 'from_me'].includes(origin)) {
+    return true;
+  }
+
+  const mediaEventId = media.event_id || media.eventId || media.source_event_id || media.sourceEventId;
+  if (event.id && mediaEventId && String(event.id) === String(mediaEventId)) return true;
+
+  const mediaMessageId = media.external_message_id || media.externalMessageId || media.message_id || media.messageId;
+  if (event.external_message_id && mediaMessageId && String(event.external_message_id) === String(mediaMessageId)) return true;
+
+  return Boolean(payload.fromMe || payload.data?.key?.fromMe);
+}
+
+export function normalizeMedia(rawPayload, event = null) {
   const payload = asObject(rawPayload);
+  const isOutboundEvent = String(event?.direction || '').toLowerCase() === 'outbound';
 
   // 1. Rejeição explícita de mensagens de texto puro (evita falso-positivo de "Anexo recebido")
   const messageType = String(payload.messageType || payload.data?.messageType || '').toLowerCase();
@@ -936,11 +1083,15 @@ export function normalizeMedia(rawPayload) {
   if (normalized.kind || normalized.category) {
     const rawKind = normalized.kind || normalized.category;
     const kind = String(rawKind).toLowerCase();
-    if (REAL_MEDIA_KINDS.has(kind)) {
+    // Uma resposta textual outbound antiga pode ter copiado `raw_payload.media`
+    // do inbound. Ela só pode renderizar mídia direta quando o payload declara
+    // que o arquivo pertence ao próprio evento outbound.
+    if (REAL_MEDIA_KINDS.has(kind) && (!isOutboundEvent || isExplicitOutboundMedia(normalized, payload, event))) {
       return {
         kind,
         category: normalized.category || kind,
         status: normalized.status || '',
+        loadState: normalized.loadState || '',
         bucket: normalized.bucket || '',
         storagePath: normalized.storagePath || '',
         caption: normalized.caption || '',
@@ -956,41 +1107,135 @@ export function normalizeMedia(rawPayload) {
   }
 
   // 4. Mídia Evolution API (WhatsApp)
-  if (evolutionMessage.imageMessage) {
+  // Eventos outbound do workflow podem reter o envelope bruto do inbound que os
+  // originou. Esse envelope descreve a mensagem do cliente, não uma mídia que a
+  // IA tenha enviado. Para outbound, aceite somente mídia declarada nos blocos
+  // normalizados acima (media/magia_operator).
+  if (!isOutboundEvent && evolutionMessage.imageMessage) {
     const img = evolutionMessage.imageMessage;
     return { kind: 'image', caption: img.caption || '', mimeType: img.mimetype || 'image/jpeg', url: img.url || '' };
   }
-  if (evolutionMessage.audioMessage) {
+  if (!isOutboundEvent && evolutionMessage.audioMessage) {
     const aud = evolutionMessage.audioMessage;
     return { kind: 'audio', duration: Number(aud.seconds || 0), mimeType: aud.mimetype || 'audio/ogg', url: aud.url || '' };
   }
-  if (evolutionMessage.videoMessage) {
+  if (!isOutboundEvent && evolutionMessage.videoMessage) {
     const vid = evolutionMessage.videoMessage;
     return { kind: 'video', caption: vid.caption || '', duration: Number(vid.seconds || 0), mimeType: vid.mimetype || 'video/mp4', url: vid.url || '' };
   }
-  if (evolutionMessage.documentMessage) {
+  if (!isOutboundEvent && evolutionMessage.documentMessage) {
     const doc = evolutionMessage.documentMessage;
     return { kind: 'document', fileName: doc.fileName || 'Documento', mimeType: doc.mimetype || 'application/octet-stream', size: Number(doc.fileLength || 0), url: doc.url || '' };
   }
-  if (evolutionMessage.stickerMessage) {
+  if (!isOutboundEvent && evolutionMessage.stickerMessage) {
     const stk = evolutionMessage.stickerMessage;
     return { kind: 'sticker', mimeType: stk.mimetype || 'image/webp', url: stk.url || '' };
   }
 
   // 5. Mídia Telegram
-  if (Array.isArray(telegramMessage.photo) && telegramMessage.photo.length) {
+  if (!isOutboundEvent && Array.isArray(telegramMessage.photo) && telegramMessage.photo.length) {
     const photo = telegramMessage.photo[telegramMessage.photo.length - 1] || {};
     return { kind: 'image', caption: telegramMessage.caption || '', size: Number(photo.file_size || 0) };
   }
-  if (telegramMessage.voice) return { kind: 'audio', caption: telegramMessage.caption || '', duration: Number(telegramMessage.voice.duration || 0), mimeType: telegramMessage.voice.mime_type || '', size: Number(telegramMessage.voice.file_size || 0) };
-  if (telegramMessage.audio) return { kind: 'audio', caption: telegramMessage.caption || '', duration: Number(telegramMessage.audio.duration || 0), fileName: telegramMessage.audio.file_name || '', mimeType: telegramMessage.audio.mime_type || '', size: Number(telegramMessage.audio.file_size || 0) };
-  if (telegramMessage.video || telegramMessage.video_note || telegramMessage.animation) {
+  if (!isOutboundEvent && telegramMessage.voice) return { kind: 'audio', caption: telegramMessage.caption || '', duration: Number(telegramMessage.voice.duration || 0), mimeType: telegramMessage.voice.mime_type || '', size: Number(telegramMessage.voice.file_size || 0) };
+  if (!isOutboundEvent && telegramMessage.audio) return { kind: 'audio', caption: telegramMessage.caption || '', duration: Number(telegramMessage.audio.duration || 0), fileName: telegramMessage.audio.file_name || '', mimeType: telegramMessage.audio.mime_type || '', size: Number(telegramMessage.audio.file_size || 0) };
+  if (!isOutboundEvent && (telegramMessage.video || telegramMessage.video_note || telegramMessage.animation)) {
     const video = telegramMessage.video || telegramMessage.video_note || telegramMessage.animation;
     return { kind: 'video', caption: telegramMessage.caption || '', duration: Number(video.duration || 0), fileName: video.file_name || '', mimeType: video.mime_type || '', size: Number(video.file_size || 0) };
   }
-  if (telegramMessage.document) return { kind: 'document', caption: telegramMessage.caption || '', fileName: telegramMessage.document.file_name || '', mimeType: telegramMessage.document.mime_type || '', size: Number(telegramMessage.document.file_size || 0) };
+  if (!isOutboundEvent && telegramMessage.document) return { kind: 'document', caption: telegramMessage.caption || '', fileName: telegramMessage.document.file_name || '', mimeType: telegramMessage.document.mime_type || '', size: Number(telegramMessage.document.file_size || 0) };
 
   return null;
+}
+
+export function normalizeAudioTranscription(rawPayload, event = null) {
+  const payload = asObject(rawPayload);
+  const eventId = String(event?.id || '').trim();
+  if (!eventId) return null;
+
+  let record = null;
+  const transcriptions = payload.audio_transcriptions;
+  if (transcriptions && typeof transcriptions === 'object' && !Array.isArray(transcriptions)) {
+    const candidate = transcriptions[eventId];
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      record = candidate;
+    }
+  }
+
+  if (!record && payload.audio_processing && typeof payload.audio_processing === 'object' && !Array.isArray(payload.audio_processing)) {
+    const isAudioMessage = isMediaPlaceholderForKind(event?.message_text, 'audio')
+      || String(payload.content_type || '').toLowerCase() === 'audio';
+    if (isAudioMessage && String(payload.audio_processing.status || '').toLowerCase() === 'transcribed') {
+      record = payload.audio_processing;
+    }
+  }
+
+  if (!record) return null;
+
+  const status = String(record.status || '').trim().toLowerCase();
+  const text = String(record.text || '').trim();
+  const version = String(record.version || '').trim();
+  const model = String(record.model || '').trim();
+
+  if (status !== 'transcribed' || !text) {
+    return null;
+  }
+
+  return {
+    status: 'transcribed',
+    text,
+    version: version || 'whatsapp_audio_v1',
+    model: model || null,
+    transcribedAt: record.transcribed_at || null,
+  };
+}
+
+const genericLeadInquiryText = 'ola posso ter mais informacoes sobre isso';
+const genericLeadInquiryWindowMs = 3 * 60 * 1000;
+
+function normalizeLeadInquiryText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function isGenericLeadInquiry(eventOrMessage = {}) {
+  const text = String(eventOrMessage.message_text || eventOrMessage.text || '').trim();
+  return normalizeLeadInquiryText(text) === genericLeadInquiryText;
+}
+
+function isSubstantiveInboundFollowUp(eventOrMessage = {}) {
+  const text = String(eventOrMessage.message_text || eventOrMessage.text || '').trim();
+  if (!text || isGenericLeadInquiry(eventOrMessage) || /^\[(?:audio|image|video|document|sticker|contact)\]$/i.test(text)) return false;
+  return normalizeLeadInquiryText(text).replace(/\s/g, '').length >= 3;
+}
+
+function isShortlyAfter(previousAt, nextAt) {
+  const previous = Date.parse(previousAt || '');
+  const next = Date.parse(nextAt || '');
+  return !Number.isNaN(previous) && !Number.isNaN(next) && next >= previous && next - previous <= genericLeadInquiryWindowMs;
+}
+
+function isSameInboundConversation(previous = {}, next = {}) {
+  return String(previous.direction || 'inbound').toLowerCase() !== 'outbound'
+    && String(next.direction || 'inbound').toLowerCase() !== 'outbound'
+    && String(previous.tenant_slug || '') === String(next.tenant_slug || '')
+    && String(previous.channel_type || '').toLowerCase() === String(next.channel_type || '').toLowerCase()
+    && Boolean(previous.external_conversation_id)
+    && String(previous.external_conversation_id) === String(next.external_conversation_id);
+}
+
+// Some ad providers create this exact generic opening immediately before the
+// contact sends the actual vehicle inquiry. Keep both rows for audit, but do
+// not render the disposable opener once a useful follow-up arrives.
+export function shouldHideGenericLeadInquiry(event = {}, laterEvents = []) {
+  if (String(event.direction || 'inbound').toLowerCase() === 'outbound' || !isGenericLeadInquiry(event)) return false;
+  return (laterEvents || []).some((next) => isSameInboundConversation(event, next)
+    && isShortlyAfter(event.created_at, next.created_at)
+    && isSubstantiveInboundFollowUp(next));
 }
 
 function mediaPreview(media) {
@@ -1074,11 +1319,32 @@ export function getTrustedContactName(event = {}) {
 
 export function isUsefulContactName(value, phone = '') {
   const name = String(value || '').trim();
-  if (!name || !/\p{L}/u.test(name)) return false;
+  if (!name || /^(?:unknown|undefined|null|n\/?a)$/i.test(name)) return false;
+  if (/^[\s._\-–—]+$/u.test(name)) return false;
+  if (/^\+?\d+(?:@(s\.whatsapp\.net|c\.us))?$/i.test(name) || /@(s\.whatsapp\.net|c\.us|g\.us)$/i.test(name)) return false;
 
   const digits = name.replace(/\D/g, '');
   const normalizedPhone = String(phone || '').replace(/\D/g, '');
-  return !normalizedPhone || digits !== normalizedPhone;
+  if (/^\d+$/.test(name) || (normalizedPhone && digits === normalizedPhone)) return false;
+  // WhatsApp permits intentional emoji-only push names. Keep them as display
+  // names, while markers such as "." and "-" remain invalid above.
+  return /\p{L}|\p{Extended_Pictographic}/u.test(name);
+}
+
+export function subscribeToContacts(onChange, tenantId) {
+  const supabase = getClient();
+  if (!supabase || !tenantId) return () => {};
+  const channel = supabase
+    .channel(`tenant-contacts:${tenantId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'contacts', filter: `tenant_id=eq.${tenantId}` },
+      (payload) => onChange?.({ table: 'contacts', ...payload }),
+    )
+    .subscribe((status, err) => {
+      if (status === 'CHANNEL_ERROR') console.warn(`[Realtime] Erro no canal tenant-contacts:${tenantId}`, err);
+    });
+  return () => { supabase.removeChannel(channel); };
 }
 
 export function getUsefulTrustedContactName(event = {}) {
@@ -1089,21 +1355,40 @@ export function getUsefulTrustedContactName(event = {}) {
 
 export function conversationPhoneFallback(event = {}) {
   if (normalizeChannel(event.channel_type).type !== 'whatsapp') return '';
-  const raw = String(event.external_conversation_id || '').trim();
-  if (!raw) return '';
-  const normalized = normalizeExternalConversationId('whatsapp', raw, event.contact_handle);
-  const digits = String(normalized || raw)
-    .replace(/@(s\.whatsapp\.net|c\.us)$/i, '')
-    .split(':')[0]
-    .replace(/\D/g, '');
-  return digits.length >= 10 && digits.length <= 15 ? digits : '';
+  const candidates = [event.external_conversation_id, event.contact_handle];
+  for (const candidate of candidates) {
+    const raw = String(candidate || '').trim();
+    if (!raw) continue;
+    const normalized = normalizeExternalConversationId('whatsapp', raw, event.contact_handle);
+    const digits = String(normalized || raw)
+      .replace(/@(s\.whatsapp\.net|c\.us)$/i, '')
+      .split(':')[0]
+      .replace(/\D/g, '');
+    if (digits.length >= 10 && digits.length <= 15) return digits;
+  }
+  return '';
+}
+
+export function formatWhatsAppPhone(value = '') {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    const area = digits.slice(2, 4);
+    const subscriber = digits.slice(4);
+    const split = subscriber.length === 9 ? 5 : 4;
+    return `+55 (${area}) ${subscriber.slice(0, split)}-${subscriber.slice(split)}`;
+  }
+  return `+${digits}`;
 }
 
 export function resolveConversationDisplayName(event = {}, fallbackName = '') {
-  return getUsefulTrustedContactName(event)
-    || String(event.contact_handle || '').trim()
-    || conversationPhoneFallback(event)
-    || fallbackName;
+  const canonical = String(event.contact_name_canonical || event.contact?.name || '').trim();
+  const phone = conversationPhoneFallback(event);
+  return (isUsefulContactName(canonical, phone) ? canonical : '')
+    || getUsefulTrustedContactName(event)
+    || formatWhatsAppPhone(phone)
+    || fallbackName
+    || 'Contato WhatsApp';
 }
 
 export function conversationReadKey(tenantId, userId, channelType, externalConversationId) {
@@ -1598,7 +1883,7 @@ export function resolveEventMessagePreview(event, fallbackOwner = '') {
     const usefulName = location?.name || location?.address;
     preview = usefulName || 'Localização';
   } else {
-    const media = normalizeMedia(event.raw_payload);
+    const media = normalizeMedia(event.raw_payload, event);
     const caption = String(media?.caption || '').trim();
     const eventText = String(event.message_text || '').trim();
     const hasRealCaption = caption && !isGeneratedMediaLabel(caption) && !Object.prototype.hasOwnProperty.call(TECHNICAL_MEDIA_LABELS, caption.toLowerCase());
@@ -1608,6 +1893,11 @@ export function resolveEventMessagePreview(event, fallbackOwner = '') {
       text = caption;
     } else if (eventText && !isGeneratedMediaLabel(eventText)) {
       text = eventText;
+    }
+
+    const audioTranscription = normalizeAudioTranscription(event.raw_payload, event);
+    if ((!text || isMediaPlaceholderForKind(text, 'audio')) && audioTranscription?.text) {
+      text = audioTranscription.text;
     }
 
     preview = text || mediaPreview(media) || (event.direction === 'outbound' ? event.response_text : '') || '';
@@ -1635,14 +1925,16 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
     return (Number.isNaN(tA) ? 0 : tA) - (Number.isNaN(tB) ? 0 : tB);
   });
 
-  for (const event of sortedChronological) {
+  for (let eventIndex = 0; eventIndex < sortedChronological.length; eventIndex += 1) {
+    const event = sortedChronological[eventIndex];
     if (tenantSlug && event.tenant_slug && event.tenant_slug !== tenantSlug) continue;
+    if (shouldHideGenericLeadInquiry(event, sortedChronological.slice(eventIndex + 1))) continue;
     // Mantém o evento em channel_events para auditoria, mas não materializa
     // operações internas como mensagens da conversa.
     if (isInternalOperationalEvent(event)) continue;
 
     const channelType = normalizeChannel(event.channel_type);
-    const stageName = normalizeStage(event.stage);
+    const stageName = getStageLabel(event.stage, { kanbanColumns, tenantSlug });
     const resolvedTenant = tenantSlug || event.tenant_slug || '';
     const key = canonicalConversationKey(
       channelType.type,
@@ -1656,7 +1948,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
       event.contact_handle,
     );
     const isHumanTransfer = Boolean(event.handoff && (normalizeStage(event.stage) === 'Atendimento humano' || event.service === 'manual_reply'));
-    const isClosed = stageName === 'Finalizado' || event.service === 'conversation_closed' || event.ai_provider === 'conversation_closed';
+    const isClosed = stageName === 'Finalizado' || normalizeStage(event.stage) === 'Finalizado' || event.service === 'conversation_closed' || event.ai_provider === 'conversation_closed';
     const payload = asObject(event.raw_payload);
     const eventAssignee = payload?.assignee;
     const initialOwner = eventAssignee?.name || payload?.assigned_to || (
@@ -1669,6 +1961,8 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
     if (!byChat.has(key)) {
       const fallbackName = `Contato ${channelType.label}`;
       const trustedContactName = getUsefulTrustedContactName(event);
+      const canonicalContactName = String(event.contact_name_canonical || event.contact?.name || '').trim();
+      const hasCanonicalContactName = isUsefulContactName(canonicalContactName, conversationPhoneFallback(event));
       const contactName = resolveConversationDisplayName(event, fallbackName);
       const initialAvatar = extractAvatarUrlFromEvent(event);
       const initialPreview = resolveEventMessagePreview(event, initialOwner);
@@ -1680,6 +1974,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         externalConversationId: event.external_conversation_id || normalizedExtId || key,
         contact: contactName,
         contactNameIsTrusted: Boolean(trustedContactName),
+        contactNameIsCanonical: hasCanonicalContactName,
         company: event.contact_handle ? `@${event.contact_handle}` : channelType.label,
         channel: channelType.label,
         channelType: channelType.type,
@@ -1688,7 +1983,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         owner: initialOwner,
         ownerId: initialOwnerId,
         unread: 0,
-        lastMessage: initialPreview?.text || event.message_text || mediaPreview(normalizeMedia(event.raw_payload)) || '',
+        lastMessage: initialPreview?.text || event.message_text || mediaPreview(normalizeMedia(event.raw_payload, event)) || '',
         lastMessageSender: initialPreview?.sender || null,
         lastMessageSenderType: initialPreview?.senderType || null,
         lastAt: formatDate(event.created_at),
@@ -1711,7 +2006,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
     // Se o contato começou com nome genérico/fallback ("Contato WhatsApp") e agora temos um contact_name real:
     const trustedContactName = getUsefulTrustedContactName(event);
     const displayName = resolveConversationDisplayName(event, `Contato ${channelType.label}`);
-    if (trustedContactName && !conversation.contactNameIsTrusted) {
+    if (!conversation.contactNameIsCanonical && trustedContactName) {
       conversation.contact = trustedContactName;
       conversation.contactNameIsTrusted = true;
     } else if (displayName && (!conversation.contact || conversation.contact.startsWith('Contato ') || conversation.contact === 'Contato')) {
@@ -1733,7 +2028,8 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
       conversation.lastMessageSender = previewInfo.sender;
       conversation.lastMessageSenderType = previewInfo.senderType;
     }
-    const media = normalizeMedia(event.raw_payload);
+    const media = normalizeMedia(event.raw_payload, event);
+    const audioTranscription = normalizeAudioTranscription(event.raw_payload, event);
     const location = normalizeLocation(event.raw_payload, event);
     const text = event.message_text || media?.caption || '';
     const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
@@ -1765,6 +2061,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         at: formatDate(event.created_at),
         status: event.delivery_status,
         media,
+        audioTranscription,
         location,
         eventId: event.id,
         createdAt: event.created_at || null,
@@ -1776,6 +2073,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         text: visibleText,
         at: formatDate(event.created_at),
         media,
+        audioTranscription,
         location,
         eventId: event.id,
         createdAt: event.created_at || null,
@@ -1834,7 +2132,8 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         });
         if (conversation.status !== 'finalizado' && (controlMode === 'ai' || controlMode === 'human')) {
           conversation.status = controlMode === 'ai' ? 'ia_ativa' : 'atendimento_humano';
-          conversation.stage = normalizeStage(matchingCard.salesStageKey);
+          const matchingColumn = findKanbanColumn(kanbanColumns, matchingCard.salesStageKey || matchingCard.targetColumnId);
+          conversation.stage = matchingColumn?.title || matchingCard.stage || getStageLabel(matchingCard.salesStageKey, { kanbanColumns, tenantSlug });
         }
       }
     } else {
@@ -1860,11 +2159,11 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
   return sortConversationsByRecentActivity(Array.from(byChat.values()));
 }
 
-export function applyIncomingEventToConversations(conversations = [], event, tenantSlug = '', { markIncomingAsRead = false } = {}) {
+export function applyIncomingEventToConversations(conversations = [], event, tenantSlug = '', { markIncomingAsRead = false, kanbanColumns = [], tenantSettings = null } = {}) {
   if (!event || isInternalOperationalEvent(event)) return conversations;
   if (tenantSlug && event.tenant_slug && event.tenant_slug !== tenantSlug) return conversations;
 
-  const stageName = normalizeStage(event.stage);
+  const stageName = getStageLabel(event.stage, { kanbanColumns, tenantSettings, tenantSlug });
   const channelType = normalizeChannel(event.channel_type);
   const resolvedTenant = tenantSlug || event.tenant_slug || '';
   const targetKey = canonicalConversationKey(
@@ -1889,7 +2188,8 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
       || (event.contact_handle && (c.contactHandle === event.contact_handle || c.company === `@${event.contact_handle}`)),
   );
 
-  const media = normalizeMedia(event.raw_payload);
+  const media = normalizeMedia(event.raw_payload, event);
+  const audioTranscription = normalizeAudioTranscription(event.raw_payload, event);
   const location = normalizeLocation(event.raw_payload, event);
   const text = event.message_text || media?.caption || '';
   const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
@@ -1901,6 +2201,15 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
     const newMessages = [...(prevConv.messages || [])];
     const incomingEventAlreadyPresent = newMessages.some((message) => event.id && message.eventId === event.id);
 
+    if (event.direction !== 'outbound' && isSubstantiveInboundFollowUp(event)) {
+      for (let index = newMessages.length - 1; index >= 0; index -= 1) {
+        const previousMessage = newMessages[index];
+        if (previousMessage.from !== 'contact' || !isGenericLeadInquiry(previousMessage)) continue;
+        if (isShortlyAfter(previousMessage.createdAt, event.created_at)) newMessages.splice(index, 1);
+        break;
+      }
+    }
+
     if (event.direction === 'outbound') {
       const isOperator = ['agent', 'human', 'operator', 'atendente'].includes(event.sender_type);
       const msg = {
@@ -1910,20 +2219,25 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
         at,
         status: event.delivery_status,
         media,
+        audioTranscription,
         location,
         eventId: event.id,
         createdAt: event.created_at || null,
         sessionId: payload?.conversation_session_id || null,
       };
-      const existingMsgIndex = newMessages.findIndex(
-        (m) => (event.id && m.eventId === event.id) || (m.text === msg.text && m.at === at && m.from === msg.from),
-      );
+      const existingMsgIndex = event.id
+        ? newMessages.findIndex((m) => m.eventId === event.id)
+        : newMessages.findIndex((m) => !m.eventId
+          && m.text === msg.text
+          && m.createdAt === msg.createdAt
+          && m.from === msg.from);
       if (existingMsgIndex >= 0) {
         newMessages[existingMsgIndex] = {
           ...newMessages[existingMsgIndex],
           status: event.delivery_status || newMessages[existingMsgIndex].status,
           text: msg.text || newMessages[existingMsgIndex].text,
           media: media || newMessages[existingMsgIndex].media,
+          audioTranscription: audioTranscription || newMessages[existingMsgIndex].audioTranscription || null,
           location: (location || newMessages[existingMsgIndex].location) ? {
             ...(newMessages[existingMsgIndex].location || {}),
             ...(location || {}),
@@ -1938,20 +2252,25 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
         text: visibleText,
         at,
         media,
+        audioTranscription,
         location,
         eventId: event.id,
         createdAt: event.created_at || null,
         sessionId: payload?.conversation_session_id || null,
       };
-      const existingMsgIndex = newMessages.findIndex(
-        (m) => (event.id && m.eventId === event.id) || (m.text === msg.text && m.at === at && m.from === 'contact'),
-      );
+      const existingMsgIndex = event.id
+        ? newMessages.findIndex((m) => m.eventId === event.id)
+        : newMessages.findIndex((m) => !m.eventId
+          && m.text === msg.text
+          && m.createdAt === msg.createdAt
+          && m.from === 'contact');
       if (existingMsgIndex >= 0) {
         newMessages[existingMsgIndex] = {
           ...newMessages[existingMsgIndex],
           status: event.delivery_status || newMessages[existingMsgIndex].status,
           text: msg.text || newMessages[existingMsgIndex].text,
           media: media || newMessages[existingMsgIndex].media,
+          audioTranscription: audioTranscription || newMessages[existingMsgIndex].audioTranscription || null,
           location: (location || newMessages[existingMsgIndex].location) ? {
             ...(newMessages[existingMsgIndex].location || {}),
             ...(location || {}),
@@ -1986,12 +2305,16 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
     const incomingPreview = resolveEventMessagePreview(event, prevConv.owner);
     const shouldUpdateLastMessage = Boolean(isNewer && incomingPreview);
 
-    // Atualiza nome de contato caso o anterior seja fallback e o novo evento traga o nome real
     const trustedContactName = getUsefulTrustedContactName(event);
     const displayName = resolveConversationDisplayName(event, `Contato ${channelType.label}`);
     const previousNameIsTrusted = prevConv.contactNameIsTrusted ?? isUsefulContactName(prevConv.contact);
-    const updatedContact = trustedContactName && !previousNameIsTrusted
-      ? trustedContactName
+    const canonicalContactName = String(event.contact_name_canonical || event.contact?.name || '').trim();
+    const hasCanonicalContactName = isUsefulContactName(canonicalContactName, conversationPhoneFallback(event));
+    const previousNameIsCanonical = Boolean(prevConv.contactNameIsCanonical);
+    const updatedContact = hasCanonicalContactName
+      ? canonicalContactName
+      : trustedContactName && !previousNameIsCanonical
+        ? trustedContactName
       : displayName && (!prevConv.contact || prevConv.contact.startsWith('Contato ') || prevConv.contact === 'Contato')
         ? displayName
         : prevConv.contact;
@@ -2013,6 +2336,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
       ...prevConv,
       contact: updatedContact,
       contactNameIsTrusted: trustedContactName ? true : previousNameIsTrusted,
+      contactNameIsCanonical: hasCanonicalContactName || previousNameIsCanonical,
       avatarUrl: nextAvatarUrl,
       messages: newMessages,
       lastMessage: shouldUpdateLastMessage ? incomingPreview.text : prevConv.lastMessage,
@@ -2030,7 +2354,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
     return sortConversationsByRecentActivity(nextConversations);
   }
 
-  const [created] = eventsToConversations([event], resolvedTenant);
+  const [created] = eventsToConversations([event], resolvedTenant, [], kanbanColumns);
   if (created) {
     created.unread = isUnreadInboundEvent(event, { markIncomingAsRead }) ? 1 : 0;
     return sortConversationsByRecentActivity([created, ...(conversations || [])]);
@@ -2069,7 +2393,7 @@ export function applyIncomingEventToKanban(columns = [], event, tenantSlug = '',
   const isSecret = trimmedText === '[secretencrypted]';
 
   const location = normalizeLocation(event.raw_payload, event);
-  const media = normalizeMedia(event.raw_payload);
+  const media = normalizeMedia(event.raw_payload, event);
   const isLocation = Boolean(location)
     || trimmedText === '[location]'
     || trimmedText === 'location'
@@ -2489,10 +2813,12 @@ export function eventsToKanban(
       normalizedExternalId: normalizeExternalConversationId(channelType.type, event.external_conversation_id),
       externalConversationId: event.external_conversation_id,
       title: resolveConversationDisplayName(identityEvent, `Contato ${channelType.label}`),
-      subtitle: activityEvent.message_text || activityEvent.service || 'Mensagem recente',
+      subtitle: activityEvent.message_text
+        || (!['sales_stage_changed', 'kanban_stage_changed', 'kanban_move', 'resume_ai', 'conversation_assigned', 'conversation_closed', 'handoff_requested'].includes(activityEvent.service) && activityEvent.service)
+        || 'Mensagem recente',
       channel: channelType.label,
       channelType: channelType.type,
-      stage: normalizeStage(salesLead?.stage_key || event.stage),
+      stage: getStageLabel(salesLead?.stage_key || event.stage, { kanbanColumns: columns, tenantSlug }),
       targetColumnId: target,
       value: formatCurrency(estimatedValue(event)),
       owner: ownerMetadata.name,
@@ -2624,6 +2950,41 @@ export function sortKanbanCardsByConversationActivity(cards = []) {
   });
 }
 
+export async function loadRelevantContacts(tenantId, events = [], broadcastContacts = []) {
+  const supabase = getClient();
+  if (!supabase || !tenantId) return [];
+  const handles = new Set();
+  for (const entry of [...(events || []), ...(broadcastContacts || [])]) {
+    const channel = entry.channel_type || entry.channelType;
+    const handle = entry.external_conversation_id || entry.externalConversationId || entry.contact_handle;
+    if (normalizeChannel(channel).type !== 'whatsapp') continue;
+    const normalized = normalizeExternalConversationId(channel, handle);
+    if (normalized) handles.add(normalized);
+  }
+  if (!handles.size) return [];
+  const columns = ['id', 'tenant_id', 'name', 'source_channel', 'external_handle', 'avatar_url'].join(', ');
+  const result = [];
+  const requested = [...handles];
+  for (let start = 0; start < requested.length; start += 200) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select(columns)
+      .eq('tenant_id', tenantId)
+      .eq('source_channel', 'whatsapp')
+      .is('deleted_at', null)
+      .in('external_handle', requested.slice(start, start + 200))
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+    if (error) {
+      console.warn('Contact directory fallback:', error.message);
+      continue;
+    }
+    result.push(...(data || []));
+  }
+  return result;
+}
+
+// Kept for narrow legacy callers. Conversation loading uses loadRelevantContacts.
 export async function loadContactAvatars(tenantId) {
   const supabase = getClient();
   const contactAvatarColumns = [
@@ -2667,7 +3028,7 @@ export function normalizeAvatarUrl(value) {
   }
 }
 
-export function buildContactAvatarIndex(contacts = [], tenantId = '') {
+export function buildContactDirectory(contacts = [], tenantId = '') {
   const index = new Map();
   const targetTenant = String(tenantId || '').trim();
 
@@ -2676,48 +3037,100 @@ export function buildContactAvatarIndex(contacts = [], tenantId = '') {
     if (targetTenant && contactTenant && contactTenant !== targetTenant) {
       continue;
     }
-    const avatarUrl = normalizeAvatarUrl(contact?.avatar_url || contact?.avatarUrl);
-    if (!avatarUrl || !contact?.external_handle) continue;
+    if (!contact?.external_handle) continue;
+    const entry = {
+      id: contact?.id || null,
+      name: String(contact?.name || '').trim() || null,
+      avatarUrl: normalizeAvatarUrl(contact?.avatar_url || contact?.avatarUrl),
+    };
 
     const scopedTenant = targetTenant || contactTenant;
     if (scopedTenant) {
-      index.set(contactAvatarKey(contact.source_channel, contact.external_handle, scopedTenant), avatarUrl);
+      index.set(contactAvatarKey(contact.source_channel, contact.external_handle, scopedTenant), entry);
     }
-    index.set(contactAvatarKey(contact.source_channel, contact.external_handle), avatarUrl);
+    index.set(contactAvatarKey(contact.source_channel, contact.external_handle), entry);
   }
   return index;
 }
 
-export function applyContactAvatars(events = [], avatarIndex, tenantId = '') {
-  if (!Array.isArray(events) || !avatarIndex) return events;
+export function buildContactAvatarIndex(contacts = [], tenantId = '') {
+  const directory = buildContactDirectory(contacts, tenantId);
+  const index = new Map();
+  for (const [key, contact] of directory) {
+    if (contact?.avatarUrl) index.set(key, contact.avatarUrl);
+  }
+  return index;
+}
+
+function contactEntryFor(channel, handle, contactIndex, tenantId = '') {
+  const scoped = tenantId && contactIndex.get(contactAvatarKey(channel, handle, tenantId));
+  const entry = scoped || contactIndex.get(contactAvatarKey(channel, handle)) || null;
+  return typeof entry === 'string' ? { avatarUrl: entry, name: null } : entry;
+}
+
+export function applyContactDirectory(events = [], contactIndex, tenantId = '') {
+  if (!Array.isArray(events) || !contactIndex) return events;
   return events.map((event) => {
     const channel = event.channel_type;
     const handle = event.external_conversation_id || event.contact_handle;
     const scopedTenant = tenantId || event.tenant_id || event.tenant_slug || '';
-    const avatarUrl = (scopedTenant && avatarIndex.get(contactAvatarKey(channel, handle, scopedTenant)))
-      || avatarIndex.get(contactAvatarKey(channel, handle))
-      || null;
+    const contact = contactEntryFor(channel, handle, contactIndex, scopedTenant);
     return {
       ...event,
-      avatar_url: avatarUrl,
+      ...(contact?.avatarUrl ? { avatar_url: contact.avatarUrl } : {}),
+      ...(contact?.name ? { contact_name_canonical: contact.name } : {}),
     };
   });
 }
 
-export function applyContactAvatarsToBroadcastContacts(contacts = [], avatarIndex, tenantId = '') {
-  if (!Array.isArray(contacts) || !avatarIndex) return contacts;
+export function applyContactAvatars(events = [], avatarIndex, tenantId = '') {
+  return applyContactDirectory(events, avatarIndex, tenantId);
+}
+
+export function applyContactAvatarsToBroadcastContacts(contacts = [], contactIndex, tenantId = '') {
+  if (!Array.isArray(contacts) || !contactIndex) return contacts;
   return contacts.map((contact) => {
     const channel = contact.channel_type || contact.channelType;
     const handle = contact.external_conversation_id || contact.externalConversationId;
     const scopedTenant = tenantId || contact.tenant_id || contact.tenantId || '';
-    const avatarUrl = (scopedTenant && avatarIndex.get(contactAvatarKey(channel, handle, scopedTenant)))
-      || avatarIndex.get(contactAvatarKey(channel, handle))
-      || null;
+    const resolved = contactEntryFor(channel, handle, contactIndex, scopedTenant);
     return {
       ...contact,
-      avatarUrl,
+      avatarUrl: resolved?.avatarUrl || null,
+      ...(resolved?.name ? { name: resolved.name } : {}),
     };
   });
+}
+
+export function applyContactUpdateToConversations(conversations = [], contact = {}, tenantId = '') {
+  if (!Array.isArray(conversations) || !contact?.external_handle) return conversations;
+  const channel = contact.source_channel || 'whatsapp';
+  const targetKey = contactAvatarKey(channel, contact.external_handle, tenantId || contact.tenant_id || '');
+  const nextName = String(contact.name || '').trim();
+  const nextAvatarUrl = normalizeAvatarUrl(contact.avatar_url || contact.avatarUrl);
+  let changed = false;
+  const next = conversations.map((conversation) => {
+    const conversationKey = contactAvatarKey(
+      conversation.channelType || conversation.channel,
+      conversation.externalConversationId || conversation.normalizedExternalId,
+      tenantId || contact.tenant_id || '',
+    );
+    if (conversationKey !== targetKey) return conversation;
+    const contactName = isUsefulContactName(nextName, conversationPhoneFallback({
+      channel_type: conversation.channelType,
+      external_conversation_id: conversation.externalConversationId,
+    })) ? nextName : conversation.contact;
+    if (contactName === conversation.contact && (!nextAvatarUrl || nextAvatarUrl === conversation.avatarUrl)) return conversation;
+    changed = true;
+    return {
+      ...conversation,
+      contact: contactName,
+      contactNameIsTrusted: contactName === nextName ? true : conversation.contactNameIsTrusted,
+      contactNameIsCanonical: contactName === nextName ? true : conversation.contactNameIsCanonical,
+      avatarUrl: nextAvatarUrl || conversation.avatarUrl || null,
+    };
+  });
+  return changed ? next : conversations;
 }
 
 export function resolveContactAvatarState({ currentFailed = false, prevUrl = null, nextUrl = null } = {}) {
@@ -3344,9 +3757,9 @@ async function moveGenesisSalesCard(tenantSlug, card, targetColumnKey, agentName
   const channelType = normalizeChannel(card.channelType || card.channel || 'whatsapp').type;
   const nowIso = new Date().toISOString();
   const ownerName = card.ownerKind === 'agent' || card.ownerKind === 'human' ? card.owner : null;
-  const targetTitle = String(targetColObj?.title || targetColumnKey || '').trim();
+  const targetTitle = String(targetColObj?.title || getStageLabel(targetColumnKey, { tenantSlug }) || '').trim();
   const isHumanTarget = canonical === 'sales_human';
-  const stage = isConversationClose ? 'Finalizada' : (targetTitle || canonical);
+  const stage = isConversationClose ? 'Finalizada' : (targetTitle || getStageLabel(canonical, { tenantSlug }));
   const newEvent = {
     tenant_slug: tenantSlug,
     channel_type: channelType,

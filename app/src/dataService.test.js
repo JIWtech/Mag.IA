@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  getStageLabel,
+  normalizeStage,
+  GENESIS_SALES_STAGE_DEFAULT_NAMES,
   eventsToConversations,
   eventsToKanban,
   buildContactAvatarIndex,
+  buildContactDirectory,
   buildGenesisSalesMovePayload,
   getConversationActivityEpoch,
   sortConversationsByRecentActivity,
@@ -25,6 +29,10 @@ import {
   shouldAdvanceConversationRead,
   upsertConversationReadMarker,
   applyContactAvatars,
+  applyContactDirectory,
+  applyContactUpdateToConversations,
+  formatWhatsAppPhone,
+  isUsefulContactName,
   extractPayloadAvatar,
   extractAvatarUrlFromEvent,
   resolveContactAvatarState,
@@ -575,6 +583,42 @@ test('a missing or invalid avatar keeps the initials fallback available', () => 
   assert.equal(avatars.has('whatsapp:chat-1'), false);
 });
 
+test('contact directory gives canonical contact name priority over an inbound placeholder', () => {
+  const directory = buildContactDirectory([{
+    id: 'contact-guilherme', tenant_id: 'tenant-a', source_channel: 'whatsapp',
+    external_handle: '5521992988071@s.whatsapp.net', name: 'Guilherme Santos', avatar_url: null,
+  }], 'tenant-a');
+  const [enriched] = applyContactDirectory([event({
+    tenant_slug: 'tenant-a', channel_type: 'whatsapp', external_conversation_id: '5521992988071@s.whatsapp.net',
+    contact_name: '.', created_at: '2026-10-01T10:00:00.000Z',
+  })], directory, 'tenant-a');
+  const [conversation] = eventsToConversations([enriched], 'tenant-a');
+  assert.equal(conversation.contact, 'Guilherme Santos');
+});
+
+test('emoji display names are useful while punctuation and telephone fallbacks are formatted', () => {
+  assert.equal(isUsefulContactName('🧋', '5521992988071'), true);
+  assert.equal(isUsefulContactName('.', '5521992988071'), false);
+  assert.equal(isUsefulContactName('5521992988071', '5521992988071'), false);
+  assert.equal(formatWhatsAppPhone('5521992988071'), '+55 (21) 99298-8071');
+  const [emoji] = eventsToConversations([event({ contact_name: '🧋', external_conversation_id: '5521992988071@s.whatsapp.net' })], 'tenant-a');
+  const [phone] = eventsToConversations([event({ contact_name: '.', external_conversation_id: '5521992988071@s.whatsapp.net' })], 'tenant-a');
+  assert.equal(emoji.contact, '🧋');
+  assert.equal(phone.contact, '+55 (21) 99298-8071');
+});
+
+test('contact realtime update changes canonical name and avatar without reloading conversations', () => {
+  const [initial] = eventsToConversations([event({
+    tenant_slug: 'tenant-a', channel_type: 'whatsapp', external_conversation_id: '5521992988071@s.whatsapp.net', contact_name: '.',
+  })], 'tenant-a');
+  const [updated] = applyContactUpdateToConversations([initial], {
+    tenant_id: 'tenant-a', source_channel: 'whatsapp', external_handle: '5521992988071@s.whatsapp.net',
+    name: 'Raphael do Civic', avatar_url: 'https://cdn.example/raphael.jpg',
+  }, 'tenant-a');
+  assert.equal(updated.contact, 'Raphael do Civic');
+  assert.equal(updated.avatarUrl, 'https://cdn.example/raphael.jpg');
+});
+
 test('TEST A: contact com avatar_url https valida resulta em conversation.avatarUrl correto', () => {
   const contacts = [{
     tenant_id: 'tenant-a',
@@ -1105,6 +1149,39 @@ test('applyIncomingEventToConversations materializes new conversation when none 
   assert.equal(updated[0].contact, 'Novo Cliente');
   assert.equal(updated[0].lastMessage, 'Primeira mensagem');
   assert.equal(updated[0].unread, 1);
+});
+
+test('hides only a disposable generic ad opener once the same contact sends a useful follow-up', () => {
+  const opener = event({
+    id: 'ad-opener', tenant_slug: 'tenant-a', external_conversation_id: 'ad-chat',
+    created_at: '2026-10-04T14:35:15.000Z', message_text: 'Olá! Posso ter mais informações sobre isso?',
+  });
+  const vehicle = event({
+    id: 'vehicle-detail', tenant_slug: 'tenant-a', external_conversation_id: 'ad-chat',
+    created_at: '2026-10-04T14:36:04.000Z', message_text: 'Sandero 2016 1.6',
+  });
+
+  const [conversation] = eventsToConversations([opener, vehicle], 'tenant-a');
+  assert.deepEqual(conversation.messages.map((message) => message.text), ['Sandero 2016 1.6']);
+  assert.equal(conversation.lastMessage, 'Sandero 2016 1.6');
+
+  const [standalone] = eventsToConversations([opener], 'tenant-a');
+  assert.deepEqual(standalone.messages.map((message) => message.text), ['Olá! Posso ter mais informações sobre isso?']);
+});
+
+test('realtime follow-up removes a previously rendered disposable generic ad opener', () => {
+  const opener = event({
+    id: 'ad-opener-realtime', tenant_slug: 'tenant-a', external_conversation_id: 'ad-chat-realtime',
+    created_at: '2026-10-04T14:35:15.000Z', message_text: 'Olá! Posso ter mais informações sobre isso?',
+  });
+  const [initial] = eventsToConversations([opener], 'tenant-a');
+  const detailedFollowUp = event({
+    id: 'vehicle-detail-realtime', tenant_slug: 'tenant-a', external_conversation_id: 'ad-chat-realtime',
+    created_at: '2026-10-04T14:36:04.000Z', message_text: 'Sandero 2016 1.6',
+  });
+
+  const [updated] = applyIncomingEventToConversations([initial], detailedFollowUp, 'tenant-a');
+  assert.deepEqual(updated.messages.map((message) => message.text), ['Sandero 2016 1.6']);
 });
 
 test('unread: incrementa somente para inbound novo fora da conversa visivel', () => {
@@ -2445,7 +2522,7 @@ test('sales control A: persisted qualification overrides historical handoff, man
   assert.equal(card.ownerId, null);
   assert.equal(card.aiReason, 'IA conduzindo a conversa');
   assert.equal(conversation.status, 'ia_ativa');
-  assert.equal(conversation.stage, 'Qualificação');
+  assert.equal(conversation.stage, 'IA - Qualificacao automotiva');
   assert.equal(conversation.ownerId, null);
   assert.equal(conversation.lastMessageSender, 'Wesley');
 });
@@ -2619,8 +2696,8 @@ test('contact identity only trusts inbound contact events across conversations, 
 
   const [outboundOnly] = eventsToConversations([manualReply]);
   const [outboundOnlyCard] = cardsFor(eventsToKanban([manualReply]), 'identity-chat');
-  assert.equal(outboundOnly.contact, '5511999999999');
-  assert.equal(outboundOnlyCard.title, '5511999999999');
+  assert.equal(outboundOnly.contact, '+55 (11) 99999-9999');
+  assert.equal(outboundOnlyCard.title, '+55 (11) 99999-9999');
 
   const [realInboundGenesis] = eventsToConversations([
     { ...inbound, contact_name: 'Gênesis automóveis' },
@@ -2637,7 +2714,7 @@ test('contact identity only trusts inbound contact events across conversations, 
 
 test('contact identity requires a useful trusted name and keeps Conversations and Kanban consistent', () => {
   const phone = '5521985198468';
-  for (const invalidName of ['', '..', '...', '🌙', '🐝🐝', phone]) {
+  for (const invalidName of ['', '..', '...', phone]) {
     const inbound = event({
       id: `identity-invalid-${invalidName || 'empty'}`,
       external_conversation_id: `identity-invalid-${invalidName || 'empty'}`,
@@ -2648,8 +2725,8 @@ test('contact identity requires a useful trusted name and keeps Conversations an
     });
     const [conversation] = eventsToConversations([inbound]);
     const [card] = cardsFor(eventsToKanban([inbound]), inbound.external_conversation_id);
-    assert.equal(conversation.contact, phone, invalidName || 'empty');
-    assert.equal(card.title, phone, invalidName || 'empty');
+    assert.equal(conversation.contact, '+55 (21) 98519-8468', invalidName || 'empty');
+    assert.equal(card.title, '+55 (21) 98519-8468', invalidName || 'empty');
   }
 
   for (const validName of ['🚛 CD Tids', 'Oficina_j3a', 'Gênesis automóveis']) {
@@ -2687,8 +2764,8 @@ test('contact identity requires a useful trusted name and keeps Conversations an
   });
   const [conversation] = eventsToConversations([namedInbound, emojiInbound]);
   const [card] = cardsFor(eventsToKanban([namedInbound, emojiInbound]), 'identity-useful-chat');
-  assert.equal(conversation.contact, 'Márcio veja meus status');
-  assert.equal(card.title, 'Márcio veja meus status');
+  assert.equal(conversation.contact, '🌙');
+  assert.equal(card.title, '🌙');
 
   const realtime = applyIncomingEventToConversations(
     eventsToConversations([namedInbound]),
@@ -2699,9 +2776,9 @@ test('contact identity requires a useful trusted name and keeps Conversations an
 
 test('contact display fallback derives WhatsApp phone from external_conversation_id when handle is absent', () => {
   const cases = [
-    { contact_name: '..', external_conversation_id: '5521959261839@s.whatsapp.net', expected: '5521959261839' },
-    { contact_name: '🌙', external_conversation_id: '5521985198468@s.whatsapp.net', expected: '5521985198468' },
-    { contact_name: '5521985198468', external_conversation_id: '5521985198468@s.whatsapp.net', expected: '5521985198468' },
+    { contact_name: '..', external_conversation_id: '5521959261839@s.whatsapp.net', expected: '+55 (21) 95926-1839' },
+    { contact_name: '🌙', external_conversation_id: '5521985198468@s.whatsapp.net', expected: '🌙' },
+    { contact_name: '5521985198468', external_conversation_id: '5521985198468@s.whatsapp.net', expected: '+55 (21) 98519-8468' },
   ];
 
   for (const item of cases) {
@@ -2731,4 +2808,130 @@ test('contact display fallback derives WhatsApp phone from external_conversation
   const [card] = cardsFor(eventsToKanban([missingIdentifier]), '');
   assert.equal(conversation.contact, 'Contato WhatsApp');
   assert.equal(card.title, 'Contato WhatsApp');
+});
+
+test('Cenário A: getStageLabel resolves Genesis stages for wesley_automoveis', () => {
+  const ctx = { tenantSlug: 'wesley_automoveis' };
+  assert.equal(getStageLabel('sales_appraisal', ctx), 'Avaliacao de retoma - Compra');
+  assert.equal(getStageLabel('sales_new', ctx), 'Patio - Novos contatos');
+  assert.equal(getStageLabel('sales_qualifying', ctx), 'IA - Qualificacao automotiva');
+  assert.equal(getStageLabel('sales_hot', ctx), 'Leads quentes - Venda');
+  assert.equal(getStageLabel('sales_human', ctx), 'Atendimento humano');
+  assert.equal(getStageLabel('sales_financing', ctx), 'Fila de financiamento');
+  assert.equal(getStageLabel('sales_after_sales', ctx), 'Pos-venda - Manutencao');
+  assert.equal(getStageLabel('sales_closed', ctx), 'Negocio fechado');
+});
+
+test('Cenário B: outro tenant com sales_appraisal e nome customizado mostra nome customizado', () => {
+  const customSettings = {
+    sales: {
+      stages: {
+        sales_appraisal: { name: 'Avaliação personalizada' },
+      },
+    },
+  };
+  assert.equal(
+    getStageLabel('sales_appraisal', { tenantSlug: 'clinica_estetica', tenantSettings: customSettings }),
+    'Avaliação personalizada'
+  );
+  const customCols = [{ id: 'sales_appraisal', title: 'Avaliação personalizada de coluna' }];
+  assert.equal(
+    getStageLabel('sales_appraisal', { tenantSlug: 'clinica_estetica', kanbanColumns: customCols }),
+    'Avaliação personalizada de coluna'
+  );
+});
+
+test('Cenário C: outro tenant com sales_appraisal SEM tenantSettings NÃO recebe label específico da Genesis', () => {
+  // Outro tenant sem tenantSettings nem colunas
+  const result = getStageLabel('sales_appraisal', { tenantSlug: 'universo_prata' });
+  // Deve NÃO ser o nome da Genesis
+  assert.notEqual(result, 'Avaliacao de retoma - Compra');
+  // Deve cair no fallback limpo (Title Case)
+  assert.equal(result, 'Sales Appraisal');
+
+  // Outro tenant com sales_new sem settings também não pode receber "Patio - Novos contatos"
+  const newResult = getStageLabel('sales_new', { tenantSlug: 'clinica_nubia' });
+  assert.notEqual(newResult, 'Patio - Novos contatos');
+  assert.equal(newResult, 'Sales New');
+});
+
+test('Cenário D: string já amigável deve ser preservada', () => {
+  assert.equal(getStageLabel('Atendimento humano'), 'Atendimento humano');
+  assert.equal(getStageLabel('Leads quentes - Venda'), 'Leads quentes - Venda');
+  assert.equal(getStageLabel('Avaliação personalizada'), 'Avaliação personalizada');
+  assert.equal(getStageLabel('Qualificação'), 'Qualificação');
+});
+
+test('Cenário E: chaves técnicas usadas internamente permanecem técnicas na lógica', () => {
+  const lead = genesisLead('sales_appraisal', { chat_id: 'chat-appr' });
+  const e = event({ id: 'ev-appr', external_conversation_id: 'chat-appr', stage: 'sales_appraisal' });
+  const kanban = eventsToKanban([e], 'wesley_automoveis', [], genesisColumns, [], [lead]);
+  const card = cardsFor(kanban, 'chat-appr')[0];
+  assert.ok(card);
+  // Preservação estrita das chaves de máquina para RPCs e operações backend
+  assert.equal(card.salesStageKey, 'sales_appraisal');
+  assert.equal(card.targetColumnId, 'sales_appraisal');
+  // Apresentação amigável resolvida para o tenant Genesis
+  assert.equal(card.stage, 'Avaliacao de retoma - Compra');
+
+  const convs = eventsToConversations([e], 'wesley_automoveis', controlAgents, kanban);
+  assert.equal(convs.length, 1);
+  assert.equal(convs[0].salesStageKey, 'sales_appraisal');
+  assert.equal(convs[0].stage, 'Avaliacao de retoma - Compra');
+});
+
+test('normalizeStage atua estritamente como categorizador semântico interno', () => {
+  assert.equal(normalizeStage('sales_human'), 'Atendimento humano');
+  assert.equal(normalizeStage('atendimento_humano'), 'Atendimento humano');
+  assert.equal(normalizeStage('sales_closed'), 'Finalizado');
+  assert.equal(normalizeStage('finalizado'), 'Finalizado');
+  assert.equal(normalizeStage('Finalizada'), 'Finalizado');
+  assert.equal(normalizeStage('sales_qualifying'), 'Qualificação');
+  assert.equal(normalizeStage('reset'), 'Qualificação');
+  assert.equal(normalizeStage('/reset'), 'Qualificação');
+  assert.equal(normalizeStage('Fora de contexto'), 'Fora de contexto');
+  assert.equal(normalizeStage('verificar sinal'), 'Verificar Sinal');
+});
+
+test('getStageLabel prioritizes tenant configured Kanban column titles', () => {
+  const customColumns = [
+    { id: 'sales_appraisal', automationKey: 'sales_appraisal', title: 'Avaliação VIP de Veículo' },
+    { id: 'sales_new', automationKey: 'sales_new', title: 'Recepção e Entrada' },
+  ];
+  assert.equal(
+    getStageLabel('sales_appraisal', { kanbanColumns: customColumns }),
+    'Avaliação VIP de Veículo'
+  );
+  assert.equal(
+    getStageLabel('sales_new', { kanbanColumns: customColumns }),
+    'Recepção e Entrada'
+  );
+});
+
+test('getStageLabel prioritizes tenantSettings if kanbanColumns is absent', () => {
+  const tenantSettings = {
+    sales: {
+      stages: {
+        sales_appraisal: { name: 'Avaliação Customizada' },
+        custom_stage_x: { name: 'Etapa Customizada X' },
+      },
+    },
+  };
+  assert.equal(
+    getStageLabel('sales_appraisal', { tenantSettings }),
+    'Avaliação Customizada'
+  );
+  assert.equal(
+    getStageLabel('custom_stage_x', { tenantSettings }),
+    'Etapa Customizada X'
+  );
+});
+
+test('getStageLabel preserves and normalizes legacy stages and prevents raw technical leaks', () => {
+  assert.equal(getStageLabel('finalizado'), 'Finalizado');
+  assert.equal(getStageLabel('Finalizada'), 'Finalizado');
+  assert.equal(getStageLabel('qualificacao'), 'Qualificação');
+  assert.equal(getStageLabel('aguardando_humano'), 'Atendimento humano');
+  // Unknown snake_case keys get converted to Title Case
+  assert.equal(getStageLabel('unmapped_partner_queue'), 'Unmapped Partner Queue');
 });

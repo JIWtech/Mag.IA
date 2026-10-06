@@ -4,6 +4,53 @@ function audioHistoryText(row) {
     ? saved.text : row.message_text;
 }
 
+async function downloadWhatsAppAudio(item) {
+  const suffix = tenantEnvSuffix(tenantSlug);
+  const instance = $json.instance || env('EVOLUTION_INSTANCE_' + suffix);
+  try {
+    return await helpers.httpRequest({ method: 'POST',
+      url: env('EVOLUTION_API_URL_' + suffix).replace(/\/$/, '') + '/chat/getBase64FromMediaMessage/' + encodeFilter(instance),
+      headers: { apikey: env('EVOLUTION_API_KEY_' + suffix), 'Content-Type': 'application/json' },
+      body: { message: { key: { id: item.id || item.external_message_id, remoteJid: chatId, fromMe: false } }, convertToMp4: false },
+      json: true, timeout: 15000 });
+  } catch {
+    throw new Error('audio_download_failed');
+  }
+}
+
+async function reuseIngressAudio(item) {
+  const ingress = $json?.media_ingestion || {};
+  const binary = typeof $binary === 'undefined' ? {} : $binary;
+  if (String(ingress.event_id || '') !== String(item.event_id || '') || !binary?.media_file) return null;
+  try {
+    const bytes = await helpers.getBinaryDataBuffer(0, 'media_file');
+    if (!bytes || !bytes.length) return null;
+    return {
+      mimetype: String(ingress.mimeType || ingress.media?.mimeType || 'audio/ogg'),
+      base64: Buffer.from(bytes).toString('base64'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+
+async function patchAudioProcessing(context, eventId, audioResult, existingPayload = null) {
+  const tenantId = context?.tenant?.id || $json.tenant_id;
+  const path = '/rest/v1/channel_events?tenant_id=eq.' + encodeFilter(tenantId)
+    + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
+    + '&id=eq.' + encodeFilter(eventId);
+  let payload = existingPayload;
+  if (!payload || typeof payload !== 'object') {
+    const rows = await supabaseGet(path + '&select=id,raw_payload&limit=1');
+    payload = rows?.[0]?.raw_payload || {};
+  }
+  const saved = await supabasePatch(path, { raw_payload: { ...payload, audio_processing: audioResult } })
+    .catch(() => { throw new Error('audio_transcription_not_persisted'); });
+  if (!Array.isArray(saved) || saved.length !== 1) throw new Error('audio_transcription_not_persisted');
+  return saved;
+}
+
 async function transcribeTurnAudio(context) {
   const audioMessages = turn.messages.filter(row => row.text === '[audio]');
   if (!audioMessages.length || settingsFor(context).whatsapp_audio_enabled !== true) return;
@@ -17,28 +64,23 @@ async function transcribeTurnAudio(context) {
       .catch(()=>{throw new Error('audio_metadata_lookup_failed');});
     const row = rows?.[0];
     if (!row || row.external_message_id !== item.id) throw new Error('audio_message_scope_mismatch');
-    const cached = row.raw_payload?.audio_transcriptions?.[item.event_id] || row.raw_payload?.audio_processing;
+    const rawPayload = row.raw_payload || {};
+    const cached = rawPayload.audio_transcriptions?.[item.event_id] || rawPayload.audio_processing;
     if (cached?.version === 'whatsapp_audio_v1' && cached.status === 'transcribed'
       && typeof cached.text === 'string' && cached.text.trim() && cached.text.length <= 6000) {
       turn.audio_transcriptions[item.event_id] = cached;
       item.text = cached.text;
       continue;
     }
-    if (row.raw_payload?.content_type !== 'audio') throw new Error('audio_metadata_missing');
-    if (Number(row.raw_payload?.audio_metadata?.seconds) > 120) throw new Error('audio_too_long');
-    if (Number(row.raw_payload?.audio_metadata?.bytes) > 5 * 1024 * 1024) throw new Error('audio_too_large');
+    if (row.raw_payload?.content_type !== 'audio' && !row.raw_payload?.source_media?.kind) throw new Error('audio_metadata_missing');
+    if (Number(row.raw_payload?.audio_metadata?.seconds || row.raw_payload?.source_media?.duration) > 120) throw new Error('audio_too_long');
+    if (Number(row.raw_payload?.audio_metadata?.bytes || row.raw_payload?.source_media?.file_length) > 5 * 1024 * 1024) throw new Error('audio_too_large');
     const gate = usageGate(context);
     if (!gate.allowed) throw new Error('audio_' + sessionUsageDiagnostic(gate).reason);
     const model = String(settingsFor(context).ai_model || '');
     if (!/^gemini-[a-z0-9.-]+$/.test(model)) throw new Error('audio_model_missing');
-    const suffix = tenantEnvSuffix(tenantSlug);
-    let media;
-    try {
-      media = await helpers.httpRequest({method:'POST',
-        url:env('EVOLUTION_API_URL_' + suffix).replace(/\/$/,'') + '/chat/getBase64FromMediaMessage/' + encodeFilter($json.instance),
-        headers:{apikey:env('EVOLUTION_API_KEY_' + suffix),'Content-Type':'application/json'},
-        body:{message:{key:{id:item.id,remoteJid:chatId,fromMe:false}},convertToMp4:false},json:true,timeout:10000});
-    } catch { throw new Error('audio_download_failed'); }
+    let media = await reuseIngressAudio(item);
+    if (!media) media = await downloadWhatsAppAudio(item);
     const mime = String(media?.mimetype || '').split(';')[0].trim().toLowerCase();
     if (!['audio/ogg','audio/mpeg','audio/mp3','audio/mp4','audio/m4a','audio/wav','audio/x-wav','audio/aac','audio/flac','audio/webm'].includes(mime)) {
       throw new Error('audio_format_unsupported');
@@ -47,7 +89,16 @@ async function transcribeTurnAudio(context) {
     if (!base64 || base64.length > Math.ceil(5 * 1024 * 1024 / 3) * 4
       || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) throw new Error('audio_invalid_or_large');
     if (Buffer.from(base64,'base64').length > 5 * 1024 * 1024) throw new Error('audio_too_large');
-    // Reserve usage before the request, including failed/uncertain calls. Never store the audio bytes.
+    // Storage ownership belongs to the ingestion nodes. Audio processing never
+    // uploads or rewrites its descriptor, so it cannot regress a stored file.
+    const payloadWithMedia = rawPayload;
+    if (cached?.version === 'whatsapp_audio_v1' && cached.status === 'transcribed'
+      && typeof cached.text === 'string' && cached.text.trim() && cached.text.length <= 6000) {
+      turn.audio_transcriptions[item.event_id] = cached;
+      item.text = cached.text;
+      continue;
+    }
+    // Reserve usage before the request, including failed/uncertain calls. Audio bytes remain only in private Storage.
     markUsage();
     let body;
     try {
@@ -68,9 +119,7 @@ async function transcribeTurnAudio(context) {
     if (parsed.text.length > 6000) throw new Error('audio_transcription_too_long');
     const result = {version:'whatsapp_audio_v1',status:'transcribed',text:parsed.text.trim(),model,
       mime_type:mime,usage:body.usageMetadata || {},transcribed_at:new Date().toISOString()};
-    const saved = await supabasePatch(path,{raw_payload:{...row.raw_payload,audio_processing:result}})
-      .catch(()=>{throw new Error('audio_transcription_not_persisted');});
-    if (!Array.isArray(saved) || saved.length !== 1) throw new Error('audio_transcription_not_persisted');
+    await patchAudioProcessing(context, item.event_id, result, payloadWithMedia);
     turn.audio_transcriptions[item.event_id] = result;
     item.text = result.text;
   }

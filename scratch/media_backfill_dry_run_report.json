@@ -1,0 +1,1097 @@
+{
+  "total_scanned": 553,
+  "total_candidates": 120,
+  "already_stored": 1,
+  "recoverable": 0,
+  "unavailable": 0,
+  "pending_connectivity": 119,
+  "error": 0,
+  "byKind": {
+    "image": 100,
+    "audio": 16,
+    "sticker": 1,
+    "video": 3
+  },
+  "items": [
+    {
+      "id": "13d28f82-a748-4e3e-8d93-3c2374c73906",
+      "created_at": "2026-10-03T15:38:00.7028+00:00",
+      "external_message_id": "AC3FB5307AC6ED88A20D0F9D6D519EFD",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "ALREADY_STORED",
+      "storagePath": "wesley_automoveis/whatsapp/5521985198468_s.whatsapp.net/AC3FB5307AC6ED88A20D0F9D6D519EFD.jpg"
+    },
+    {
+      "id": "c44c90e3-0cde-4d5b-862e-eb60ab0082fa",
+      "created_at": "2026-10-03T15:40:25.140458+00:00",
+      "external_message_id": "ACB64544945AA41D758643E056E6EDB7",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Cannot reach Evolution (fetch failed)"
+    },
+    {
+      "id": "1101be0c-4e79-44fa-b96a-0ea30443f295",
+      "created_at": "2026-10-03T16:31:43.222934+00:00",
+      "external_message_id": "AC30937639BFA64A23E08449425CC3F4",
+      "remoteJid": "5521964522140@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "a29bb45c-21a5-43ce-a2fd-e12887e5a6be",
+      "created_at": "2026-10-03T16:35:05.032126+00:00",
+      "external_message_id": "3A2D13CC2F8877440772",
+      "remoteJid": "5521970104451@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "f5e4923e-b225-48ed-a11d-46c3b270d372",
+      "created_at": "2026-10-03T18:39:54.562626+00:00",
+      "external_message_id": "ACC05B98157756A054C20B5029804F79",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "2627d628-2211-413c-9667-6df4b8551757",
+      "created_at": "2026-10-03T18:47:22.019659+00:00",
+      "external_message_id": "4AB56F77D7EA9D209185",
+      "remoteJid": "5521985851647@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "031265ce-6e69-428e-8599-a672ab4f9e04",
+      "created_at": "2026-10-03T18:47:22.498917+00:00",
+      "external_message_id": "4AA4C440C8A2C4A1AA4A",
+      "remoteJid": "5521985851647@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "133c7ced-861d-4882-b400-9a30f501991b",
+      "created_at": "2026-10-03T18:47:22.772365+00:00",
+      "external_message_id": "4A9DD25E2C702230F424",
+      "remoteJid": "5521985851647@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "b3784805-0bda-4265-ac28-e6117a38c104",
+      "created_at": "2026-10-03T18:47:22.907356+00:00",
+      "external_message_id": "4A337A55D8691B70B0FF",
+      "remoteJid": "5521985851647@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "3da6f7a9-4ab5-4c38-a71e-7f1c533a0e7a",
+      "created_at": "2026-10-03T18:47:33.784325+00:00",
+      "external_message_id": "3AD2FF8D670E52D37C3A",
+      "remoteJid": "5521985851647@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "06a79a10-8126-44e6-b378-4ee80e951de7",
+      "created_at": "2026-10-03T18:47:41.142931+00:00",
+      "external_message_id": "3ADFAE548A07B9362C7E",
+      "remoteJid": "5521985851647@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "b2963c21-5112-4e66-9175-0f2fe48264ac",
+      "created_at": "2026-10-03T19:11:32.64177+00:00",
+      "external_message_id": "3AAC8CD1085A5E8AC64C",
+      "remoteJid": "5521990010176@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "5b99d011-6f65-48a8-a967-b3d8cf40f1c9",
+      "created_at": "2026-10-03T19:11:33.796796+00:00",
+      "external_message_id": "3A962C890FA5BFDFA5AD",
+      "remoteJid": "5521990010176@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "790de03f-e006-4b8b-b300-42a6714e5de7",
+      "created_at": "2026-10-03T19:11:34.655817+00:00",
+      "external_message_id": "3AFE653AFE553B637C7F",
+      "remoteJid": "5521990010176@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "04bd8195-430c-4944-a3fc-3fb5dfe4fc81",
+      "created_at": "2026-10-03T19:11:34.732225+00:00",
+      "external_message_id": "3ABC60993C40A1C0B847",
+      "remoteJid": "5521990010176@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d7e33f3d-8207-4a59-a6d1-6f6116ea3330",
+      "created_at": "2026-10-03T19:11:39.787586+00:00",
+      "external_message_id": "3A3154BBF6E6FCB7BC14",
+      "remoteJid": "5521990010176@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "54aaa56d-0d82-4fcf-b0a6-5f6ad57d25a1",
+      "created_at": "2026-10-03T19:11:45.553599+00:00",
+      "external_message_id": "3A197D1F4849159E38DF",
+      "remoteJid": "5521990010176@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "792698b2-0474-4a5c-ba5d-56d5ae29dd8c",
+      "created_at": "2026-10-03T19:11:56.742496+00:00",
+      "external_message_id": "3A50868E0DCDF8A5344A",
+      "remoteJid": "5521990010176@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "4213e746-78e6-4684-a203-c52b934b95b4",
+      "created_at": "2026-10-03T19:12:06.129382+00:00",
+      "external_message_id": "3AE72713B786B86DE8FF",
+      "remoteJid": "5521990010176@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "7ab8fd06-93f2-4f6b-b93d-ae820151bf5b",
+      "created_at": "2026-10-03T19:14:09.724387+00:00",
+      "external_message_id": "ACD70E8F18FB633383DCE6AEC2DCFD95",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "fec542d4-12b3-4fb7-a22e-627a042fad6e",
+      "created_at": "2026-10-03T19:14:51.328965+00:00",
+      "external_message_id": "AC420AD1839B9EA48470B200BA648B78",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "c36f1bf4-6bbf-4f9e-ba1d-0d7d35245f75",
+      "created_at": "2026-10-03T19:15:21.372565+00:00",
+      "external_message_id": "AC1467C19C62FCB9AF13E1A96B132368",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "99fe4318-46e2-465a-8ece-211c8e968e79",
+      "created_at": "2026-10-03T19:34:29.239219+00:00",
+      "external_message_id": "A5073D15B06116DAC528B1300139B586",
+      "remoteJid": "5521999080914@s.whatsapp.net",
+      "kind": "sticker",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "8a241303-67b0-40cd-909f-896541979f37",
+      "created_at": "2026-10-03T20:11:38.548774+00:00",
+      "external_message_id": "3AAD3727342EE24D3A58",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "902c7fb5-b7dc-49b4-bda3-c5c9763b0dcb",
+      "created_at": "2026-10-03T20:11:38.90528+00:00",
+      "external_message_id": "3AF246648F3A090E6593",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "cd8cf068-9f20-4a6a-948c-81aaa7c4d488",
+      "created_at": "2026-10-03T20:11:39.066972+00:00",
+      "external_message_id": "3A291F19437D87FFAF9E",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "28febc53-3852-43f4-9c0c-bc8a669cb84d",
+      "created_at": "2026-10-03T20:11:39.078037+00:00",
+      "external_message_id": "3ACC0A5A1969027DEFFE",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "3b211768-f90f-445f-a246-ba044dc40ecb",
+      "created_at": "2026-10-03T20:12:31.925466+00:00",
+      "external_message_id": "3A1C9FF11DA69870EA44",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "777c2952-3c24-496d-93b4-333b25773363",
+      "created_at": "2026-10-03T20:12:33.114222+00:00",
+      "external_message_id": "3A3CA0430174E6365EAA",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "6c32748f-d126-469f-be36-54c0a551f077",
+      "created_at": "2026-10-03T20:12:33.575212+00:00",
+      "external_message_id": "3A7984BBE560DAA68CA5",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "1ffff914-f93e-4da0-a97a-5334a2340aae",
+      "created_at": "2026-10-03T20:12:38.794251+00:00",
+      "external_message_id": "3ABD8C16C3104EC63CB4",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "8a44bd65-72ed-440b-a22f-90fa4cc459d7",
+      "created_at": "2026-10-03T20:13:51.149678+00:00",
+      "external_message_id": "3A4F6DC663474C96A5D5",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d525ee6d-aa5c-46a4-a0be-7a5c0b4b5cb8",
+      "created_at": "2026-10-03T20:46:55.71218+00:00",
+      "external_message_id": "3EB03F4CFA0586B55DA77F",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "9429e5f5-b1b1-4f66-86fd-9f63de00ddcb",
+      "created_at": "2026-10-03T20:46:56.251559+00:00",
+      "external_message_id": "3EB04CB7DDC74D8E4BCCB4",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "c761ff6d-fdf0-44ad-9a83-7f9f85ea29da",
+      "created_at": "2026-10-03T20:46:57.385886+00:00",
+      "external_message_id": "3EB09E9E5C3869BFA35840",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "4964b5ba-8c20-4499-9d92-d8e2b8db15d3",
+      "created_at": "2026-10-03T20:46:57.580986+00:00",
+      "external_message_id": "3EB0E0CE2E3EFD7E19C603",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "8dc6d799-f60c-4cd7-817e-1d8355bd25c6",
+      "created_at": "2026-10-03T20:46:57.595249+00:00",
+      "external_message_id": "3EB05EC46359F90027788D",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "752e623a-fbe7-4dd1-bf11-7a6bd435402d",
+      "created_at": "2026-10-03T20:46:57.623413+00:00",
+      "external_message_id": "3EB08C47D8A56405F830F9",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "f111017a-dac6-499d-b6ca-3f9692b85dd6",
+      "created_at": "2026-10-03T20:47:23.871097+00:00",
+      "external_message_id": "AC84ED53BD8F0C81257B2F7ABEB8E2B3",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "4ac9d002-3383-4dfe-acd0-de747e7af184",
+      "created_at": "2026-10-03T20:47:24.671776+00:00",
+      "external_message_id": "AC804A9335D3A99C3434DFFAE220075D",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "becaafda-e784-4d93-82c0-f4528cc210ad",
+      "created_at": "2026-10-03T20:47:24.802787+00:00",
+      "external_message_id": "ACEF30989C0390BB7260DC9009F6BAEF",
+      "remoteJid": "5521973097859@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "364d3c10-26ab-49bf-89f5-5e2816c1dad3",
+      "created_at": "2026-10-03T20:59:51.494838+00:00",
+      "external_message_id": "3A06B583D48F9014FD0F",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "b8a3ee74-aa5e-4737-b7ab-60d9ddc47f88",
+      "created_at": "2026-10-03T21:45:59.037467+00:00",
+      "external_message_id": "3A836408701A251C5554",
+      "remoteJid": "5521994487479@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "9949ebad-48b1-4f74-8f0c-1a4296a10348",
+      "created_at": "2026-10-03T22:00:16.154125+00:00",
+      "external_message_id": "ACDD59A6784456FFC31CF74BD6A14581",
+      "remoteJid": "5521974523896@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "9368ec49-a6ed-42bd-9c0a-886a92ab6115",
+      "created_at": "2026-10-03T22:17:26.150655+00:00",
+      "external_message_id": "ACDB788E39C78027FA8F631681835B41",
+      "remoteJid": "5521974445485@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "b70fa5f9-e876-42d6-a7df-c116508566c5",
+      "created_at": "2026-10-03T22:17:26.598326+00:00",
+      "external_message_id": "AC477BED7016B12405DA0EE7C8F36A7C",
+      "remoteJid": "5521974445485@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "bbbb5f10-8553-43b9-9dc0-4c3206cd9417",
+      "created_at": "2026-10-03T22:17:27.264015+00:00",
+      "external_message_id": "ACB8C6B600F3DAF8F498627DAF591C06",
+      "remoteJid": "5521974445485@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d845240b-76b0-435c-9b2f-4b80595a991c",
+      "created_at": "2026-10-03T22:17:27.829182+00:00",
+      "external_message_id": "AC127A7ABDFA8DC4ED74132FEC65322A",
+      "remoteJid": "5521974445485@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "58baf4fd-5394-4b2d-851a-03ac43275c97",
+      "created_at": "2026-10-03T22:17:33.937093+00:00",
+      "external_message_id": "AC8B62CFA0790256F81FBCB65E2C6FE7",
+      "remoteJid": "5521974445485@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "5b134d43-0d7a-4f30-86a4-dfd5f0bcd577",
+      "created_at": "2026-10-03T22:17:43.869685+00:00",
+      "external_message_id": "AC40BB49922678654F571E2258E9AF4B",
+      "remoteJid": "5521974445485@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "1c90b797-a2a8-4601-ada7-9793ba1a1c4e",
+      "created_at": "2026-10-03T22:24:48.527878+00:00",
+      "external_message_id": "AC0659DC8395F65AD050484607025C80",
+      "remoteJid": "5521974523896@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "fe7e5729-395e-4e96-9fa2-b5f7d4cc8ec7",
+      "created_at": "2026-10-03T23:14:20.583341+00:00",
+      "external_message_id": "ACB547E87A8DEE1534A9BD5846F4FA3C",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "292a251f-8eaa-45e0-8afe-eee3b277acd2",
+      "created_at": "2026-10-03T23:41:11.61231+00:00",
+      "external_message_id": "AC88A955533B86272FCD77BC20FC30C9",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "aa75ef24-89bd-4f10-97c4-eb8aac7c8eaf",
+      "created_at": "2026-10-03T23:56:16.21241+00:00",
+      "external_message_id": "AC2D414A63F9FB19D7E63E77ECEAB11D",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "ea700e10-46b9-44bf-a88c-287e24b46f63",
+      "created_at": "2026-10-04T00:08:16.577047+00:00",
+      "external_message_id": "AC30753BC49EEB45EF1158C622BA2FEA",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d7c3dd98-4b99-40b5-ac7b-1a677d5f254e",
+      "created_at": "2026-10-04T00:20:38.490095+00:00",
+      "external_message_id": "AC920D39A3EA079BDC014059D89D8BA2",
+      "remoteJid": "5521965289535@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "299ae4e4-4792-47ef-bf40-184b0a5fe5b7",
+      "created_at": "2026-10-04T00:20:38.958165+00:00",
+      "external_message_id": "AC416122D8E369C3068A702E85C311C0",
+      "remoteJid": "5521965289535@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "8b41620b-8915-4c15-ba6e-2436758f88c8",
+      "created_at": "2026-10-04T00:20:41.433391+00:00",
+      "external_message_id": "AC3D5276CEB1DA717EBCF8657010836A",
+      "remoteJid": "5521965289535@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "e07df709-7fae-4650-a983-48f30084a468",
+      "created_at": "2026-10-04T00:27:57.869147+00:00",
+      "external_message_id": "AC7B49AF7488A82D97B8DEC5EC0D2A04",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "c4232145-058c-459c-bc96-1be4f4b9f6d8",
+      "created_at": "2026-10-04T01:09:15.786955+00:00",
+      "external_message_id": "ACD37855EC52C8D70CE830E1FED63BD7",
+      "remoteJid": "5521965289535@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "493c0c85-bd5e-4b32-80e1-4b776c835cfa",
+      "created_at": "2026-10-04T01:09:19.810159+00:00",
+      "external_message_id": "AC270A3E0D7BFB225EA863D16F3F7270",
+      "remoteJid": "5521965289535@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "49ae0730-f77c-4f7c-a524-6de2cc78a971",
+      "created_at": "2026-10-04T01:09:21.006798+00:00",
+      "external_message_id": "ACC46D799DF665A6243D4873613C85B5",
+      "remoteJid": "5521965289535@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "4a88d797-dafd-418f-9ea3-b82943f39f02",
+      "created_at": "2026-10-04T01:34:40.36522+00:00",
+      "external_message_id": "3AF849ECCA1EF5142B82",
+      "remoteJid": "5521968809869@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "f93d6a8b-8ce8-49ab-9f35-e0639219f0f8",
+      "created_at": "2026-10-04T10:11:29.255104+00:00",
+      "external_message_id": "ACC9CEBC4AF886BDF8B53A2453324844",
+      "remoteJid": "5521968906071@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "8cb8f025-97e9-4307-bcdc-dea27146c0e6",
+      "created_at": "2026-10-04T10:11:30.83977+00:00",
+      "external_message_id": "ACF0581A4C77517E294ADB601C0968F9",
+      "remoteJid": "5521968906071@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "50f7dfec-2fd9-44cf-ae62-539631f75b37",
+      "created_at": "2026-10-04T10:11:31.503774+00:00",
+      "external_message_id": "ACA2E9723CEB9BBECF19EFF1F424D2DC",
+      "remoteJid": "5521968906071@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "419ae74b-4af8-41b9-bb64-9b01d388793a",
+      "created_at": "2026-10-04T10:38:14.153263+00:00",
+      "external_message_id": "A5F0E731C6868DC63E34AA92D8986F35",
+      "remoteJid": "5521973188192@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "ae489b7a-5fd6-4fd2-9a18-5efc3c3d4785",
+      "created_at": "2026-10-04T11:57:53.885375+00:00",
+      "external_message_id": "AC35541DA7AF87EF2C44CCA4C070044B",
+      "remoteJid": "5521985412926@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "a10ef403-9120-44be-8572-092a5312939d",
+      "created_at": "2026-10-04T14:56:02.814118+00:00",
+      "external_message_id": "AC59E1C6C3149DFBBDCD453B67380675",
+      "remoteJid": "5521985412926@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "5c1d9c45-ae27-48af-a511-fe145fc212b6",
+      "created_at": "2026-10-04T16:00:38.944309+00:00",
+      "external_message_id": "AC714149FE0956C813F1C5EEC2FEA60F",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "9a189a4c-b86b-4414-82fb-eff95b4759c3",
+      "created_at": "2026-10-04T16:06:57.962797+00:00",
+      "external_message_id": "AC863D0E57A5B49A0F5C9CB25F55A5C8",
+      "remoteJid": "5521985198468@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "b0c57196-21b6-4a74-8bbb-6bba555b5e4c",
+      "created_at": "2026-10-04T17:04:41.554493+00:00",
+      "external_message_id": "ACCB69F64D4FEBC4565BA121D3DA0CED",
+      "remoteJid": "5521968545426@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "7f36692a-f78a-4137-8b55-b27e3c672f17",
+      "created_at": "2026-10-04T17:04:42.494515+00:00",
+      "external_message_id": "AC54223393AE894F3AE37DE7FA1AF6EC",
+      "remoteJid": "5521968545426@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "6c64ead1-278c-400a-8f7e-ea2364c458d3",
+      "created_at": "2026-10-04T17:04:43.278204+00:00",
+      "external_message_id": "ACC4405F36EA616F9040792A31A4218C",
+      "remoteJid": "5521968545426@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "5604e835-a908-4f47-8c16-dacd7ceb1d78",
+      "created_at": "2026-10-04T17:04:43.55395+00:00",
+      "external_message_id": "ACBC43A465754BBE415380C171DDB91F",
+      "remoteJid": "5521968545426@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "50d48e01-1605-4939-a7b7-99c17d2b7658",
+      "created_at": "2026-10-04T17:34:00.494167+00:00",
+      "external_message_id": "ACFB2A16A87DA167A5042981C9B50461",
+      "remoteJid": "5521998968758@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "c396675f-8f24-4324-96a9-fbaa8e1c613f",
+      "created_at": "2026-10-04T19:55:03.635261+00:00",
+      "external_message_id": "ACCB9FB54D6372FA868A49CB8F155FF4",
+      "remoteJid": "5521982641733@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "cb4ef033-e7ac-4cf7-bdfa-3b7129e50962",
+      "created_at": "2026-10-04T19:55:05.365889+00:00",
+      "external_message_id": "AC4467E8ECCC78C4C7C8DDC291182EA1",
+      "remoteJid": "5521982641733@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d14ebde5-32ab-42ac-a339-2fd42af64621",
+      "created_at": "2026-10-04T19:55:05.568222+00:00",
+      "external_message_id": "ACBEC70A75EAB35C8B66B74926D89042",
+      "remoteJid": "5521982641733@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "76cd79d6-003e-4964-819b-89df230d8340",
+      "created_at": "2026-10-04T19:55:05.774248+00:00",
+      "external_message_id": "AC64667EA254AB065F25779C2FF1AAAA",
+      "remoteJid": "5521982641733@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "16781251-ba97-49c3-aab9-276d00e86ae3",
+      "created_at": "2026-10-04T20:19:11.009185+00:00",
+      "external_message_id": "ACB6D8F9456A758BBA134F36556B9198",
+      "remoteJid": "5521974177612@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "0706b5c5-a8b7-40d8-9560-ba6427908f9d",
+      "created_at": "2026-10-04T20:19:11.258133+00:00",
+      "external_message_id": "AC9B6AA91202D10376C98920202B725B",
+      "remoteJid": "5521974177612@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "efc2f66f-2e05-4aee-9192-712d284d6e7e",
+      "created_at": "2026-10-04T20:37:24.56573+00:00",
+      "external_message_id": "AC820FB60AADDFD9C1D7C0FE9028D958",
+      "remoteJid": "5521973411823@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d1749c31-2f7f-46a8-9c28-ad12123eab1e",
+      "created_at": "2026-10-04T21:29:31.760457+00:00",
+      "external_message_id": "2AB27797861D178B0323",
+      "remoteJid": "5521979419141@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "c44f80be-9e0e-4573-9c48-fa843e353de5",
+      "created_at": "2026-10-04T21:29:34.027512+00:00",
+      "external_message_id": "2ACC47F4A124FBBE3220",
+      "remoteJid": "5521979419141@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "c324eff5-3e74-45da-88ba-f8476268f25f",
+      "created_at": "2026-10-04T21:29:34.687294+00:00",
+      "external_message_id": "2A27417253E6A54F9E31",
+      "remoteJid": "5521979419141@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "a20bb6e5-13a6-432c-b419-ce8de5e9cae8",
+      "created_at": "2026-10-04T21:29:35.305754+00:00",
+      "external_message_id": "2A644F5B893EA8F5F0C5",
+      "remoteJid": "5521979419141@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d9c4fa7f-4f3f-46a8-b46b-576c6eb5ee7e",
+      "created_at": "2026-10-04T21:29:36.018476+00:00",
+      "external_message_id": "2A40CAEE8BDD94B9DE64",
+      "remoteJid": "5521979419141@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "cfc8e2f9-3770-45ed-88ba-c3e0b1888c91",
+      "created_at": "2026-10-04T21:29:36.586174+00:00",
+      "external_message_id": "2A66858A40A2849DC8C9",
+      "remoteJid": "5521979419141@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "f50cf987-3862-49ab-963c-cf76e436aa61",
+      "created_at": "2026-10-04T21:29:36.9152+00:00",
+      "external_message_id": "2AB4B20216CF2EE68E4E",
+      "remoteJid": "5521979419141@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "42118802-3571-4875-a537-99b1cec8f3d3",
+      "created_at": "2026-10-04T21:30:12.343357+00:00",
+      "external_message_id": "2AE2B7FC93BAE300BB06",
+      "remoteJid": "5521979419141@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "256862ce-229e-4300-935e-c283899ecfa3",
+      "created_at": "2026-10-05T00:51:18.427989+00:00",
+      "external_message_id": "ACB2C28CD2FACB3B767349DBB6AD224B",
+      "remoteJid": "5521992627077@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "313dfebd-bacf-43ca-a797-e152eb2d0a6b",
+      "created_at": "2026-10-05T02:19:43.946194+00:00",
+      "external_message_id": "3A3A949B05D56BED5F8A",
+      "remoteJid": "5521979227896@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "c4457df0-1bdb-4491-b69e-a2f90727af36",
+      "created_at": "2026-10-05T02:19:46.851011+00:00",
+      "external_message_id": "3A2970BE06BC234D44A4",
+      "remoteJid": "5521979227896@s.whatsapp.net",
+      "kind": "video",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "da71fe01-dc1e-493c-bf46-fde417cb9901",
+      "created_at": "2026-10-05T02:19:47.882919+00:00",
+      "external_message_id": "3A4ACEC42CB0CF142533",
+      "remoteJid": "5521979227896@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "7a434e7a-9118-41ae-b2fe-738382ccaa2a",
+      "created_at": "2026-10-05T02:19:49.022275+00:00",
+      "external_message_id": "3AE6110046553AA1265E",
+      "remoteJid": "5521979227896@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "c9d9ee9d-77cc-4cf8-871c-901bcff198ec",
+      "created_at": "2026-10-05T02:19:49.078877+00:00",
+      "external_message_id": "3A1A47CE21BA0D521C8D",
+      "remoteJid": "5521979227896@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "6840d14d-ccd1-4081-a74f-aa8c06027888",
+      "created_at": "2026-10-05T02:19:49.102636+00:00",
+      "external_message_id": "3AF56B288AD3C9519CEF",
+      "remoteJid": "5521979227896@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "06ca5d7a-aabe-4aee-a102-ad4c6f753ee0",
+      "created_at": "2026-10-05T02:19:49.869046+00:00",
+      "external_message_id": "3A4DF8BBE503B556D3D5",
+      "remoteJid": "5521979227896@s.whatsapp.net",
+      "kind": "video",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d80498f7-13a6-4049-899f-1b84d26045b7",
+      "created_at": "2026-10-05T02:19:49.888148+00:00",
+      "external_message_id": "3A1B93BA3915F02D7E12",
+      "remoteJid": "5521979227896@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "851c9293-415a-4bcd-995c-5375efc292f7",
+      "created_at": "2026-10-05T03:12:55.062765+00:00",
+      "external_message_id": "AC3189922CC745C35440E8E94C3B9756",
+      "remoteJid": "5521979541257@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "eff06b9b-af71-49f7-afd4-9b042e1914fd",
+      "created_at": "2026-10-05T11:59:06.005773+00:00",
+      "external_message_id": "3A2D9333FFF6F7CD72F0",
+      "remoteJid": "5521993990360@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "803a8553-b378-4363-9f92-bea3b9393577",
+      "created_at": "2026-10-05T11:59:08.110206+00:00",
+      "external_message_id": "3AFA2EB8B544A37BAC47",
+      "remoteJid": "5521993990360@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "111bc476-eca8-483e-9c81-b611dabbf46e",
+      "created_at": "2026-10-05T11:59:08.629964+00:00",
+      "external_message_id": "3A2B720962F48C046C19",
+      "remoteJid": "5521993990360@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "84611d63-c1d8-4df2-a3eb-356f280d2ab4",
+      "created_at": "2026-10-05T11:59:09.392783+00:00",
+      "external_message_id": "3AC3AD227AA49897BC6C",
+      "remoteJid": "5521993990360@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "356cf4ad-4042-40cf-8561-a3815b313962",
+      "created_at": "2026-10-05T11:59:09.891513+00:00",
+      "external_message_id": "3ADC2C723B5EBC4744D4",
+      "remoteJid": "5521993990360@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "657892cf-d89f-4dca-a2f0-825e25cb4752",
+      "created_at": "2026-10-05T11:59:17.253934+00:00",
+      "external_message_id": "3AD36B9A4519CDC54B24",
+      "remoteJid": "5521993990360@s.whatsapp.net",
+      "kind": "video",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "997a7719-b922-42e1-9c20-d9804b4c3f23",
+      "created_at": "2026-10-05T12:28:20.011048+00:00",
+      "external_message_id": "ACA8105B0DE20C61B589594886F6077A",
+      "remoteJid": "5521991122770@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "df2918bc-56be-4b96-8ed1-092e567bdf97",
+      "created_at": "2026-10-05T12:28:21.610131+00:00",
+      "external_message_id": "AC8418281C059E8CF5957F71E9D0F58C",
+      "remoteJid": "5521991122770@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "29a8d789-957c-4e2e-ae76-beadde09f8ce",
+      "created_at": "2026-10-05T12:28:21.891955+00:00",
+      "external_message_id": "AC1CA55842E0C38221BD51EECE2867DA",
+      "remoteJid": "5521991122770@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "7b0b68d7-791e-4cab-8d81-76fc087d31fe",
+      "created_at": "2026-10-05T12:28:21.970857+00:00",
+      "external_message_id": "ACC7C8D67A6E3156375D514E2F86B3A6",
+      "remoteJid": "5521991122770@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "5fb3fdc1-1f88-439c-a744-1f24977ba43c",
+      "created_at": "2026-10-05T14:26:46.83208+00:00",
+      "external_message_id": "ACEA5264EAA76116666D2D5D9BCBB079",
+      "remoteJid": "5521996005913@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "aa95e294-8f7d-44b4-902c-c44f690b6ffd",
+      "created_at": "2026-10-05T15:34:45.738044+00:00",
+      "external_message_id": "AC84B43BAAD872252E811329FC3F22CF",
+      "remoteJid": "5521996005913@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "d26a1eaf-e773-46cf-880f-5ef1c60ea395",
+      "created_at": "2026-10-05T15:58:18.229675+00:00",
+      "external_message_id": "ACAC8C7175A4BCEC42C9A2E1AE0353CE",
+      "remoteJid": "5521989953786@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "904078a4-c1c8-4ab8-892f-8f81baa28af4",
+      "created_at": "2026-10-05T15:58:34.537168+00:00",
+      "external_message_id": "AC16CE4025CA8BE4B5677C91D97E5287",
+      "remoteJid": "5521989953786@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "430bc5bd-e1aa-44df-a36c-4ee4d4908515",
+      "created_at": "2026-10-05T15:59:20.762846+00:00",
+      "external_message_id": "ACA9AF6B578F2A606A68ED1BE67AF217",
+      "remoteJid": "5521989953786@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "06720e20-3093-40a7-8aa9-cd49a97c6262",
+      "created_at": "2026-10-05T16:16:11.061185+00:00",
+      "external_message_id": "3AE845A93497F3E74CF3",
+      "remoteJid": "5521964975393@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "25c4eaa4-90a9-4726-a63e-878a55f34aaa",
+      "created_at": "2026-10-05T16:21:47.401722+00:00",
+      "external_message_id": "ACA16449BDA9742AF7ECCB6D65550A0C",
+      "remoteJid": "5521991667101@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "4c5a1738-9851-492d-b06a-555c846dc48b",
+      "created_at": "2026-10-05T16:29:05.440998+00:00",
+      "external_message_id": "AC941AF7F7147AF64C84D7C2F6A455F0",
+      "remoteJid": "5521985412926@s.whatsapp.net",
+      "kind": "audio",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    },
+    {
+      "id": "0ce99892-ac9b-456c-ad2f-f1219b739f14",
+      "created_at": "2026-10-05T16:31:33.189517+00:00",
+      "external_message_id": "4AA30311565545D0E9F2",
+      "remoteJid": "5521964975393@s.whatsapp.net",
+      "kind": "image",
+      "status": "PENDING_CONNECTIVITY",
+      "error": "Evolution unreachable from local environment"
+    }
+  ]
+}

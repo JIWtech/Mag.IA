@@ -212,6 +212,13 @@ export function normalizeTechnicalMediaPlaceholder(text) {
   return text;
 }
 
+export function isMediaPlaceholderForKind(text, kind) {
+  if (!text) return false;
+  const normalizedKind = String(kind || '').toLowerCase();
+  const placeholder = String(text).trim().toLowerCase();
+  return (PLACEHOLDERS_BY_KIND[normalizedKind] || []).includes(placeholder);
+}
+
 /**
  * Detecta se o texto da mensagem é estritamente um placeholder técnico de mídia.
  * Quando há mídia real correspondente, o placeholder não deve ser exibido na bolha,
@@ -226,11 +233,8 @@ export function normalizeTechnicalMediaPlaceholder(text) {
  */
 export function isTechnicalMediaPlaceholder(text, media) {
   if (!text || !media) return false;
-  const raw = String(text).trim().toLowerCase();
   const kind = String(media.kind || media.category || '').toLowerCase();
-
-  const placeholders = PLACEHOLDERS_BY_KIND[kind] || [];
-  return placeholders.includes(raw);
+  return isMediaPlaceholderForKind(text, kind);
 }
 
 /**
