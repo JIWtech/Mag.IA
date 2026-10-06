@@ -6,6 +6,9 @@ const mediaMessage=input.raw_payload?.data?.message || {};
 const salesMedia=input.core_sales ? (mediaMessage.imageMessage?'image':mediaMessage.documentMessage?'document':'') : '';
 if (salesMedia && !text.startsWith('['+salesMedia+']')) text='['+salesMedia+']\n'+text;
 const audio = input.raw_payload?.data?.message?.audioMessage || {};
+const transportKey = input.raw_payload?.data?.key || input.raw_payload?.data?.message?.key || {};
+const exclusionPhone = [transportKey.remoteJid, transportKey.remoteJidAlt]
+  .find(value => /^[1-9][0-9]{9,14}@s\.whatsapp\.net$/.test(String(value || '')));
 const isFragment = text.split(/\s+/).length <= 2 && !/[?!.]$/.test(text);
 const quiet = Math.max(input.core_quiet_ms, isFragment ? input.core_fragment_ms : 0);
 const queued = await this.helpers.httpRequest({ method: 'POST',
@@ -14,6 +17,7 @@ const queued = await this.helpers.httpRequest({ method: 'POST',
   body: { p_tenant: input.tenant_id, p_chat: input.remoteJid, p_instance: input.instance,
     p_quiet_ms: quiet, p_message: { id: input.messageId, text, name: input.contactName,
       raw: { channel_type: 'whatsapp', content_type: input.contentType, core_revision: 'conversation_core_v1',
+        ...(exclusionPhone ? {exclusion_phone:exclusionPhone} : {}),
         ...(salesMedia ? {sales_media_type:salesMedia} : {}),
         ...(input.contentType === 'audio' ? {audio_metadata:{seconds:Number(audio.seconds)||0,bytes:Number(audio.fileLength)||0}} : {}) } } },
   json: true, timeout: 10000,

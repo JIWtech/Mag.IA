@@ -190,7 +190,7 @@ export async function loadClientData(fallback, activeTenantSlug = defaultTenantS
       .select('*')
       .eq('tenant_slug', activeTenantSlug)
       .order('created_at', { ascending: false })
-      .limit(150),
+      .limit(1000),
     tenant ? loadAppointments(tenant.id) : [],
     tenant ? loadBroadcastContacts(tenant.id) : [],
     tenant ? loadBroadcastCampaigns(tenant.id) : [],
@@ -393,8 +393,8 @@ async function loadKanbanConfig(tenantId) {
 }
 
 async function loadFollowUpJobs(tenantId, tenantSlug) {
-  // This operational view is deliberately enabled only for the Nubia board.
-  if (tenantSlug !== 'clinica_nubia_oficial') return [];
+  // Only the tenants with a configured follow-up dashboard load this view.
+  if (tenantSlug !== 'clinica_nubia_oficial' && !isGenesisSalesTenant(tenantSlug)) return [];
 
   const supabase = getClient();
   const { data, error } = await supabase
@@ -2429,7 +2429,7 @@ export function eventsToKanban(
       normalizedExternalId: normalizeExternalConversationId(channelType.type, event.external_conversation_id),
       externalConversationId: event.external_conversation_id,
       title: resolveConversationDisplayName(identityEvent, `Contato ${channelType.label}`),
-      subtitle: activityEvent.message_text || activityEvent.service || 'Mensagem recente',
+      subtitle: salesFinancingSummary(salesLead, tenantSlug) || activityEvent.message_text || activityEvent.service || 'Mensagem recente',
       channel: channelType.label,
       channelType: channelType.type,
       stage: normalizeStage(salesLead?.stage_key || event.stage),
@@ -2711,17 +2711,19 @@ function mergeAppointmentCard(appointmentCard, eventCard) {
 }
 
 function addFollowUpCards(columns, followUpJobs, latestByChat, tenantSlug) {
-  if (tenantSlug !== 'clinica_nubia_oficial') return;
+  if (tenantSlug !== 'clinica_nubia_oficial' && !isGenesisSalesTenant(tenantSlug)) return;
   const column = findKanbanColumn(columns, 'follow_ups');
   if (!column) return;
 
   const nextJobByConversation = new Map();
   for (const job of followUpJobs) {
+    if (!['pending', 'processing'].includes(job.status)) continue;
     const key = canonicalConversationKey(job.channel_type || 'whatsapp', job.external_conversation_id, job.id);
     if (!job.external_conversation_id) continue;
     const current = nextJobByConversation.get(key);
     // A claimed job is the active execution; otherwise show the earliest pending step.
-    if (!current || (job.status === 'processing' && current.status !== 'processing')) {
+    if (!current || (job.status === 'processing' && current.status !== 'processing')
+      || (job.status === current.status && Date.parse(job.due_at) < Date.parse(current.due_at))) {
       nextJobByConversation.set(key, job);
     }
   }
@@ -2776,6 +2778,18 @@ async function loadSalesLeads(tenantId) {
 function isKnownKanbanTestArtifact(event) {
   return String(event?.contact_name || '').trim() === 'Test'
     && String(event?.message_text || '').trim() === 'Test kanban move';
+}
+
+export function salesFinancingSummary(lead, tenantSlug) {
+  if (!isGenesisSalesTenant(tenantSlug)) return '';
+  const q = lead?.state?.financing_qualification;
+  if (q?.rule !== 'deposit_30_and_financing_documents_v1') return '';
+  const labels = { ready: 'Entrada e documentos recebidos', documents_pending: 'Documentação pendente',
+    deposit_insufficient: 'Entrada abaixo de 30%', deposit_unknown: 'Entrada não informada', vehicle_pending: 'Veículo a definir' };
+  const money = cents => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const amount = Number.isSafeInteger(q.deposit_cents) ? `Entrada: ${money(q.deposit_cents)}` : '';
+  const minimum = Number.isSafeInteger(q.minimum_deposit_cents) ? `Mínimo: ${money(q.minimum_deposit_cents)}` : '';
+  return [labels[q.status], amount, minimum].filter(Boolean).join(' | ');
 }
 
 function buildSalesLeadIndex(salesLeads = []) {

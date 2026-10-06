@@ -9,3 +9,4 @@ tmp-*.sql
 localtunnel-*.log
 tools/*.exe
 .local/
+/clients/wesley_automoveis/contacts.vcf
