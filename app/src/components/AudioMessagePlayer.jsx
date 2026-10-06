@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, Mic, AlertCircle, Loader2 } from 'lucide-react';
-import { formatAudioTime, calculateAudioProgress } from '../audioUtils.js';
+import { formatAudioTime, calculateAudioProgress, mediaSourceChanged } from '../audioUtils.js';
 
 export { formatAudioTime, calculateAudioProgress };
 
@@ -33,6 +33,7 @@ export function AudioMessagePlayer({
   const [seekTime, setSeekTime] = useState(0);
 
   const src = media?.url || '';
+  const previousSrcRef = useRef(src);
   const isPtt = Boolean(
     media?.ptt ||
     media?.category === 'ptt' ||
@@ -48,6 +49,15 @@ export function AudioMessagePlayer({
       setDuration((prev) => (prev > 0 ? prev : raw));
     }
   }, [media?.duration, media?.seconds]);
+
+  // Uma URL assinada renovada representa uma nova tentativa de carregamento.
+  // Preservamos duração/progresso, mas não deixamos o erro da URL anterior travar o player.
+  useEffect(() => {
+    if (!mediaSourceChanged(previousSrcRef.current, src)) return;
+    previousSrcRef.current = src;
+    setHasError(false);
+    setIsLoading(false);
+  }, [src]);
 
   // Sincroniza elemento de áudio real e eventos do ciclo de vida
   useEffect(() => {

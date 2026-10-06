@@ -9,10 +9,13 @@ import {
   formatCoordinates,
   formatFileSize,
   formatFriendlyMimeType,
+  mediaSourceChanged,
   REAL_MEDIA_KINDS,
+  unavailableMediaLabel,
 } from './audioUtils.js';
 import {
   hasStoredMediaNeedingUrl,
+  enrichMediaUrls,
   enrichSingleMediaEvent,
   resolveEventMessagePreview,
   applyIncomingEventToConversations,
@@ -468,6 +471,153 @@ test('TEST 17: Falha em createSignedUrl executa fallback gracioso para download 
   const enriched = await enrichSingleMediaEvent(event, mockSupabase);
   assert.equal(downloadCalled, true, 'Deve ter chamado download() em caso de falha de createSignedUrl');
   assert.ok(enriched.raw_payload.media.url, 'Deve possuir URL do fallback');
+});
+
+test('media recovery TEST 1: URL nova do áudio libera nova tentativa após falha anterior', () => {
+  assert.equal(mediaSourceChanged('https://signed.example/audio-a', 'https://signed.example/audio-b'), true);
+  assert.equal(mediaSourceChanged('https://signed.example/audio-b', 'https://signed.example/audio-b'), false);
+});
+
+test('media recovery TEST 2: URL ou thumbnail nova da imagem libera novo carregamento', () => {
+  const imageA = 'https://signed.example/thumb-a\u0000https://signed.example/image-a';
+  const imageB = 'https://signed.example/thumb-b\u0000https://signed.example/image-b';
+  assert.equal(mediaSourceChanged(imageA, imageB), true);
+});
+
+test('media recovery TEST 3: signed URL bem-sucedida não faz retry', async () => {
+  clearMediaUrlCache();
+  let calls = 0;
+  const event = {
+    raw_payload: { media: { status: 'stored', kind: 'audio', bucket: 'channel-media', storagePath: 'retry/first.ogg' } },
+  };
+  const client = {
+    storage: { from: () => ({
+      createSignedUrl: async () => {
+        calls += 1;
+        return { data: { signedUrl: 'https://signed.example/first.ogg' }, error: null };
+      },
+    }) },
+  };
+
+  const result = await enrichSingleMediaEvent(event, client);
+  assert.equal(calls, 1);
+  assert.equal(result.raw_payload.media.url, 'https://signed.example/first.ogg');
+});
+
+test('media recovery TEST 4: falha transitória faz exatamente um retry de signed URL', async () => {
+  clearMediaUrlCache();
+  let calls = 0;
+  const event = {
+    raw_payload: { media: { status: 'stored', kind: 'audio', bucket: 'channel-media', storagePath: 'retry/transient.ogg' } },
+  };
+  const client = {
+    storage: { from: () => ({
+      createSignedUrl: async () => {
+        calls += 1;
+        if (calls === 1) return { data: null, error: { status: 503, message: 'service unavailable' } };
+        return { data: { signedUrl: 'https://signed.example/transient.ogg' }, error: null };
+      },
+    }) },
+  };
+
+  const result = await enrichSingleMediaEvent(event, client);
+  assert.equal(calls, 2);
+  assert.equal(result.raw_payload.media.url, 'https://signed.example/transient.ogg');
+});
+
+test('media recovery TEST 5: falha permanente não entra em loop de retry', async () => {
+  clearMediaUrlCache();
+  let calls = 0;
+  const event = {
+    raw_payload: { media: { status: 'stored', kind: 'image', bucket: 'channel-media', storagePath: 'retry/missing.jpg' } },
+  };
+  const client = {
+    storage: { from: () => ({
+      createSignedUrl: async () => {
+        calls += 1;
+        return { data: null, error: { status: 404, message: 'not found' } };
+      },
+    }) },
+  };
+
+  const result = await enrichSingleMediaEvent(event, client);
+  assert.equal(calls, 1);
+  assert.equal(result.raw_payload.media.url, undefined);
+});
+
+test('media recovery TEST 6: store_failed sem storagePath não tenta assinar URL', async () => {
+  clearMediaUrlCache();
+  let calls = 0;
+  const event = {
+    raw_payload: { media: { status: 'store_failed', kind: 'audio', bucket: 'channel-media', storagePath: null } },
+  };
+  const client = {
+    storage: { from: () => ({
+      createSignedUrl: async () => {
+        calls += 1;
+        return { data: { signedUrl: 'https://signed.example/should-not-run.ogg' }, error: null };
+      },
+    }) },
+  };
+
+  const result = await enrichSingleMediaEvent(event, client);
+  assert.equal(calls, 0);
+  assert.equal(result, event);
+  assert.equal(unavailableMediaLabel('audio'), 'Áudio não disponível');
+  assert.equal(unavailableMediaLabel('image'), 'Imagem não disponível');
+});
+
+test('media recovery TEST 7: fila de assinatura mantém no máximo quatro operações simultâneas', async () => {
+  clearMediaUrlCache();
+  let active = 0;
+  let peak = 0;
+  const events = Array.from({ length: 8 }, (_, index) => ({
+    id: `concurrency-${index}`,
+    raw_payload: { media: { status: 'stored', kind: 'image', bucket: 'channel-media', storagePath: `concurrency/${index}.jpg` } },
+  }));
+  const client = {
+    storage: { from: () => ({
+      createSignedUrl: async (path) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        active -= 1;
+        return { data: { signedUrl: `https://signed.example/${path}` }, error: null };
+      },
+    }) },
+  };
+
+  const enriched = await enrichMediaUrls(events, client);
+  assert.equal(peak <= 4, true);
+  assert.equal(enriched.every((event) => Boolean(event.raw_payload.media.url)), true);
+});
+
+test('media recovery TEST 8 a 10: mídia stored válida e Realtime com URL renovada continuam recuperáveis', async () => {
+  clearMediaUrlCache();
+  const event = {
+    id: 'stored-verified-audio',
+    channel_type: 'whatsapp',
+    external_conversation_id: '5511999999999@s.whatsapp.net',
+    direction: 'inbound',
+    sender_type: 'contact',
+    message_text: '[audio]',
+    raw_payload: {
+      media: {
+        status: 'stored', verified: true, kind: 'audio', bucket: 'channel-media', storagePath: 'stored/verified.ogg', mimeType: 'audio/ogg; codecs=opus',
+      },
+    },
+  };
+  const client = {
+    storage: { from: () => ({
+      createSignedUrl: async () => ({ data: { signedUrl: 'https://signed.example/verified.ogg' }, error: null }),
+    }) },
+  };
+
+  const enriched = await enrichSingleMediaEvent(event, client);
+  assert.equal(enriched.raw_payload.media.url, 'https://signed.example/verified.ogg');
+  assert.equal(mediaSourceChanged('https://signed.example/expired.ogg', enriched.raw_payload.media.url), true);
+  assert.equal(unavailableMediaLabel('video'), 'Vídeo não disponível');
+  assert.equal(unavailableMediaLabel('document'), 'Documento não disponível');
 });
 
 // ============================================================================
