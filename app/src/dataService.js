@@ -1302,6 +1302,8 @@ export function resolveConversationOwnerDetails(paramsOrOwner = {}, activeAgents
   const aiStages = new Set([
     'sales_new',
     'sales_qualifying',
+    'sales_warm',
+    'sales_cold',
     'sales_hot',
     'novas_conversas',
     'conversas_ia',
@@ -2199,6 +2201,8 @@ const GENESIS_SALES_STAGES = [
   { key: 'sales_new', navigationLabel: 'Novos contatos' },
   { key: 'sales_qualifying', navigationLabel: 'Qualificação IA' },
   { key: 'sales_hot', navigationLabel: 'Leads quentes' },
+  { key: 'sales_warm', navigationLabel: 'Leads Mornos' },
+  { key: 'sales_cold', navigationLabel: 'Leads Frios' },
   { key: 'sales_human', navigationLabel: 'Atendimento humano' },
   { key: 'sales_appraisal', navigationLabel: 'Avaliação de retoma' },
   { key: 'sales_financing', navigationLabel: 'Financiamento' },
@@ -2783,9 +2787,10 @@ function isKnownKanbanTestArtifact(event) {
 export function salesFinancingSummary(lead, tenantSlug) {
   if (!isGenesisSalesTenant(tenantSlug)) return '';
   const q = lead?.state?.financing_qualification;
-  if (q?.rule !== 'deposit_30_and_financing_documents_v1') return '';
+  if (!['deposit_30_and_financing_documents_v1','deposit_20_and_financing_documents_v2'].includes(q?.rule)) return '';
+  const percent = q.rule === 'deposit_20_and_financing_documents_v2' ? 20 : 30;
   const labels = { ready: 'Entrada e documentos recebidos', documents_pending: 'Documentação pendente',
-    deposit_insufficient: 'Entrada abaixo de 30%', deposit_unknown: 'Entrada não informada', vehicle_pending: 'Veículo a definir' };
+    deposit_insufficient: q.deposit_cents === 0 ? 'Sem entrada' : `Entrada abaixo de ${percent}%`, deposit_unknown: 'Entrada não informada', vehicle_pending: 'Veículo a definir' };
   const money = cents => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const amount = Number.isSafeInteger(q.deposit_cents) ? `Entrada: ${money(q.deposit_cents)}` : '';
   const minimum = Number.isSafeInteger(q.minimum_deposit_cents) ? `Mínimo: ${money(q.minimum_deposit_cents)}` : '';
@@ -2807,7 +2812,7 @@ export function resolveSalesControlMode(salesLead) {
   if (!salesLead) return null;
   const stage = canonicalKanbanKey(salesLead.stage_key);
   if (salesLead.ai_locked === true || stage === 'sales_human') return 'human';
-  if (salesLead.ai_locked === false && ['sales_new', 'sales_qualifying', 'sales_hot'].includes(stage)) return 'ai';
+  if (salesLead.ai_locked === false && ['sales_new', 'sales_qualifying', 'sales_hot', 'sales_warm', 'sales_cold'].includes(stage)) return 'ai';
   return 'none';
 }
 
