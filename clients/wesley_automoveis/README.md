@@ -38,6 +38,6 @@ Nubia. Para pausar apenas Wesley: [06_pausar_sales.sql](06_pausar_sales.sql).
 levantamento/testes, nao codigo a colar no n8n. Regenerar apos editar fontes:
 
 ```powershell
-node scripts/build_whatsapp_core_workflow.cjs
-node scripts/build_wesley_sales_sql.cjs
+node scripts/build/n8n/build_whatsapp_core_workflow.cjs
+node scripts/build/sql/build_wesley_sales_sql.cjs
 ```

@@ -1,0 +1,44 @@
+{
+  "tables": [
+    "appointments",
+    "broadcast_campaign_recipients",
+    "broadcast_campaigns",
+    "broadcast_contacts",
+    "channel_events",
+    "channels",
+    "contacts",
+    "conversation_reads",
+    "follow_up_jobs",
+    "kanban_boards",
+    "kanban_columns",
+    "sales_leads",
+    "team_agents",
+    "tenant_service_catalog",
+    "tenant_settings",
+    "tenants",
+    "whatsapp_catalog_products"
+  ],
+  "rpcs": [
+    "magia_appointment_availability",
+    "magia_reserve_appointment",
+    "magia_sales_move",
+    "mark_conversation_read"
+  ],
+  "realtimeSubscriptions": [
+    {
+      "type": "channel",
+      "name": "`tenant-events:${activeTenantSlug}`",
+      "line": 85
+    },
+    {
+      "type": "channel",
+      "name": "`conversation-reads:${userId}`",
+      "line": 153
+    },
+    {
+      "type": "channel",
+      "name": "`tenant-contacts:${tenantId}`",
+      "line": 1550
+    }
+  ]
+}

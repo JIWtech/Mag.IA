@@ -49,7 +49,7 @@ magia/
   docs/                   Documentacao oficial do produto
   infra/                  Infra local e arquivos de hospedagem
   n8n/workflows/          Workflows oficiais exportados
-  scripts/                Scripts de apoio operacional
+  scripts/                Scripts organizados (build/, tests/, ops/, dev/, legacy/)
   supabase/               Migrations e seeds
   archive/                Historico e material legado preservado
 ```

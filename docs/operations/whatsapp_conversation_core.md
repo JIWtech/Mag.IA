@@ -30,13 +30,13 @@ humana; nao foram enviados avisos retroativos automaticos.
 
 ## Fontes e build
 
-scripts/build_whatsapp_core.cjs extrai funcoes do Telegram V4.8.0 versionado
+scripts/build/n8n/build_whatsapp_core.cjs extrai funcoes do Telegram V4.8.0 versionado
 com AST TypeScript, aplica adaptadores de contexto/transporte e incorpora
 n8n/code/whatsapp_core_runtime.js. Nao editar o generated diretamente.
 Personalidade vem das settings, nunca de condicional por nome de cliente.
 
-Executar node scripts/build_whatsapp_core_workflow.cjs para gerar motor e JSON.
-Executar node scripts/build_command_router_workflow.js para gerar o roteador.
+Executar node scripts/build/n8n/build_whatsapp_core_workflow.cjs para gerar motor e JSON.
+Executar node scripts/build/n8n/build_command_router_workflow.js para gerar o roteador.
 O trecho whatsapp_confirm_signal.js deve permanecer identico ao incorporado
 em command_router.js. O teste de confirmacao executa o roteador completo.
 
@@ -75,7 +75,7 @@ evidencias e estados antes de qualquer alteracao. Nao criar reset automatico.
 ## Testes e limites
 
 ```powershell
-node --test app/src/tenantAccess.test.js app/src/conversationLifecycle.test.js scripts/test_whatsapp_media.cjs scripts/test_whatsapp_core.cjs scripts/test_confirm_payment_core.cjs scripts/test_whatsapp_turn_queue.cjs
+node --test app/tests/features/tenantAccess.test.js app/tests/features/conversationLifecycle.test.js scripts/tests/test_whatsapp_media.cjs scripts/tests/test_whatsapp_core.cjs scripts/tests/test_confirm_payment_core.cjs scripts/tests/test_whatsapp_turn_queue.cjs
 ```
 
 Teste SQL requer @electric-sql/pglite em TEMP/magia-diag-tools/node_modules.

@@ -70,7 +70,7 @@ nao e uma transacao atomica com a Evolution.
 Na raiz do projeto:
 
 ```powershell
-node --test app/src/conversationEvents.test.js app/src/conversationLifecycle.test.js scripts/test_whatsapp_media.cjs
+node --test app/tests/features/conversationEvents.test.js app/tests/features/conversationLifecycle.test.js scripts/tests/test_whatsapp_media.cjs
 npm --prefix app run build
 ```
 

@@ -20,10 +20,20 @@ function referralText(value, max = 500) {
 }
 
 function referralFromEvolution(raw = {}) {
-  const message = extractEvolutionMessage(raw);
-  const wrappers = [message.extendedTextMessage, message.imageMessage, message.videoMessage, message.documentMessage, message.audioMessage]
-    .filter(value => value && typeof value === 'object');
-  const adReply = wrappers.map(value => value.contextInfo?.externalAdReply).find(value => value && typeof value === 'object');
+  // Evolution has emitted externalAdReply in distinct wrapper shapes. Keep the
+  // traversal bounded so a provider envelope cannot turn into unbounded work.
+  const queue = [{ value: raw, depth: 0 }];
+  const seen = new Set();
+  const wrappers = ['data', 'message', 'contextInfo', 'messageContextInfo', 'quotedMessage', 'ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage', 'extendedTextMessage', 'imageMessage', 'videoMessage', 'documentMessage', 'audioMessage', 'buttonsResponseMessage', 'templateButtonReplyMessage', 'interactiveResponseMessage'];
+  let adReply = null;
+  while (queue.length && !adReply) {
+    const { value, depth } = queue.shift();
+    if (!value || typeof value !== 'object' || seen.has(value) || depth > 6) continue;
+    seen.add(value);
+    adReply = value.externalAdReply || value.contextInfo?.externalAdReply || value.messageContextInfo?.externalAdReply || null;
+    if (adReply && typeof adReply !== 'object') adReply = null;
+    for (const key of wrappers) if (value[key] && typeof value[key] === 'object') queue.push({ value: value[key], depth: depth + 1 });
+  }
   if (!adReply) return null;
   const referral = { source: 'external_ad_reply' };
   const fields = [['title', 'title'], ['body', 'body'], ['sourceId', 'source_id'], ['sourceUrl', 'source_url'], ['mediaType', 'media_type']];
@@ -34,7 +44,31 @@ function referralFromEvolution(raw = {}) {
   return Object.keys(referral).length > 1 ? referral : null;
 }
 
+// A catalog selection can be present in a product message, a reference, or a
+// quoted message. This is an identity reference only: pricing and media remain
+// the responsibility of the current catalog, never an inferred inventory row.
+function catalogReferenceFromEvolution(raw = {}) {
+  const queue = [{ value: raw, depth: 0 }];
+  const seen = new Set();
+  const wrappers = ['data', 'message', 'contextInfo', 'messageContextInfo', 'quotedMessage', 'extendedTextMessage', 'productMessage', 'ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'interactiveResponseMessage', 'imageMessage'];
+  while (queue.length) {
+    const { value, depth } = queue.shift();
+    if (!value || typeof value !== 'object' || seen.has(value) || depth > 7) continue;
+    seen.add(value);
+    const ref = value.productMessage?.product || value.productMessage?.productSnapshot || value.referencedProduct || value.contextInfo?.referencedProduct || value.messageContextInfo?.referencedProduct;
+    if (ref && typeof ref === 'object') {
+      const productId = referralText(ref.productId || ref.product_id || ref.id, 220);
+      const retailerId = referralText(ref.retailerId || ref.retailer_id || ref.sku, 220);
+      const title = referralText(ref.title || ref.name, 500);
+      if (productId || retailerId || title) return { source: 'whatsapp_catalog_product', product_id: productId, retailer_id: retailerId, title };
+    }
+    for (const key of wrappers) if (value[key] && typeof value[key] === 'object') queue.push({ value: value[key], depth: depth + 1 });
+  }
+  return null;
+}
+
 const referral = referralFromEvolution(input.raw_payload);
+const catalogReferral = catalogReferenceFromEvolution(input.raw_payload);
 
 let contentType = String(input.contentType || 'text').toLowerCase();
 let sourceMedia = null;
@@ -141,12 +175,17 @@ const queued = await this.helpers.httpRequest({
       raw: {
         channel_type: 'whatsapp',
         content_type: contentType,
-        core_revision: 'conversation_core_v1',
+        core_revision: 'conversation_core_v2_1_9_2026_10_07',
+        // Non-sensitive routing identity used only for tenant-scoped catalog
+        // cache lookup in the panel; never an Evolution credential.
+        ...(input.instance ? { provider_instance: String(input.instance).slice(0, 180) } : {}),
+        ...(input.exclusionPhone ? { exclusion_phone: input.exclusionPhone } : {}),
         ...(sourceMedia ? { source_media: sourceMedia } : {}),
         ...(pendingMedia ? { media: pendingMedia } : {}),
         ...(salesMedia ? { sales_media_type: salesMedia } : {}),
         ...(audioMetadata ? { audio_metadata: audioMetadata } : {}),
-        ...(referral ? { referral } : {})
+        ...(referral ? { referral } : {}),
+        ...(catalogReferral ? { catalog_referral: catalogReferral } : {})
       }
     }
   },

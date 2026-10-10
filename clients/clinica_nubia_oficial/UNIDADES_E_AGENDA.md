@@ -26,7 +26,7 @@ O titulo Movvy do documento nao altera a identidade comercial da Clinica da Nubi
 `prompt_canonico_v2.txt` continua sendo o arquivo do unico prompt; revisao nova
 `nubia-2026-09-25-movvy-v3`. O nome do arquivo foi preservado para evitar segunda fonte.
 `business_facts_v2.json`, `scheduling.json`, `payment_update.json` e
-`catalog_document_update.json` alimentam `node scripts/build_nubia_scheduling_sql.cjs`.
+`catalog_document_update.json` alimentam `node scripts/build/sql/build_nubia_scheduling_sql.cjs`.
 O resultado e `05_unidades_agenda_pagamento.sql`. Nao editar o SQL gerado isoladamente.
 
 ## Ativacao

@@ -50,6 +50,8 @@ create or replace function public.magia_sales_save(
 ) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
 declare cfg jsonb; lead public.sales_leads%rowtype; q public.conversation_turn_queue%rowtype;
   stage text; deposit bigint; price bigint; threshold numeric; hot boolean := false; doc jsonb;
+  hot_rule text; required_docs jsonb; docs_complete boolean := false;
+  have_cpf boolean := false; have_cnh boolean := false; have_birth_date boolean := false;
 begin
   select settings into cfg from public.tenant_settings where tenant_id=p_tenant;
   if cfg->>'conversation_capability' is distinct from 'sales_v1' or cfg->>'ai_enabled' is distinct from 'true'
@@ -71,15 +73,36 @@ begin
   deposit := nullif(p_state->>'deposit_cents','')::bigint;
   price := nullif(p_product->>'price_cents','')::bigint;
   if deposit<0 or (price is not null and deposit>price) then raise exception 'INVALID_DEPOSIT'; end if;
-  threshold := coalesce((cfg->'sdr_rules'->>'hot_lead_percent')::numeric,30);
-  if threshold<0 or threshold>100 then raise exception 'INVALID_HOT_LEAD_THRESHOLD'; end if;
-  hot := coalesce(price>0 and deposit::numeric*100>=price::numeric*threshold,false);
+  hot_rule := cfg->'sales'->>'hot_lead_rule';
+  threshold := nullif(cfg->'sdr_rules'->>'hot_lead_percent','')::numeric;
+  required_docs := coalesce(cfg->'sales'->'required_financing_documents','[]'::jsonb);
+  if hot_rule='deposit_and_financing_documents_v2' then
+    if threshold is null or threshold<=0 or threshold>100 then raise exception 'INVALID_HOT_LEAD_THRESHOLD'; end if;
+    if cfg->'sales'->>'collect_documents' is distinct from 'true'
+      or jsonb_typeof(required_docs)<>'array' or jsonb_array_length(required_docs)=0
+      or exists(select 1 from jsonb_array_elements_text(required_docs) as required(value)
+        where required.value not in ('cpf','cnh','birth_date'))
+      then raise exception 'INVALID_FINANCING_DOCUMENT_POLICY'; end if;
+    select
+      coalesce(bool_or(length(regexp_replace(coalesce(x->>'cpf',''),'\D','','g'))=11),false),
+      coalesce(bool_or(length(regexp_replace(coalesce(x->>'cnh',''),'\D','','g'))=11),false),
+      coalesce(bool_or(coalesce(x->>'birth_date','')~'^\d{4}-\d{2}-\d{2}$'),false)
+      into have_cpf,have_cnh,have_birth_date
+    from (
+      select extracted x from public.sales_documents where lead_id=lead.id
+      union all select value->'extracted' from jsonb_array_elements(p_documents)
+    ) docs;
+    docs_complete := (not (required_docs ? 'cpf') or have_cpf)
+      and (not (required_docs ? 'cnh') or have_cnh)
+      and (not (required_docs ? 'birth_date') or have_birth_date);
+    hot := coalesce(price>0 and deposit is not null and deposit::numeric*100>=price::numeric*threshold and docs_complete,false);
+  end if;
   stage := p_stage;
   if p_register then
     if nullif(p_state->>'customer_name','') is null then raise exception 'CUSTOMER_NAME_REQUIRED'; end if;
     if p_state->>'intent'='buy' then
       if nullif(p_product->>'id','') is null or price is null then raise exception 'PRODUCT_REQUIRED'; end if;
-      stage := cfg->'sales'->'stage_keys'->>(case when hot then 'hot' else 'human' end);
+      stage := cfg->'sales'->'stage_keys'->>(case when hot then 'hot' else 'qualifying' end);
     elsif p_state->>'intent'='sell' then
       stage := cfg->'sales'->'stage_keys'->>'appraisal';
     else raise exception 'INVALID_INTEREST'; end if;

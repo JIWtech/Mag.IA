@@ -1,0 +1,1394 @@
+{
+  "isConversationClosed": {
+    "exportInfo": {
+      "name": "isConversationClosed",
+      "local": "isConversationClosed",
+      "kind": "specifier",
+      "line": 6
+    },
+    "consumers": [
+      "chatTimelineHelpers.js",
+      "closedConversationsTab.test.js",
+      "features/conversations/components/Conversations.jsx"
+    ]
+  },
+  "SIGNED_URL_EXPIRES_IN": {
+    "exportInfo": {
+      "name": "SIGNED_URL_EXPIRES_IN",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 15,
+      "endLine": 15
+    },
+    "consumers": []
+  },
+  "clearMediaUrlCache": {
+    "exportInfo": {
+      "name": "clearMediaUrlCache",
+      "kind": "function",
+      "isAsync": false,
+      "params": "",
+      "line": 25,
+      "endLine": 28
+    },
+    "consumers": [
+      "audioPlayer.test.js"
+    ]
+  },
+  "getMediaUrlFromCache": {
+    "exportInfo": {
+      "name": "getMediaUrlFromCache",
+      "kind": "function",
+      "isAsync": false,
+      "params": "key",
+      "line": 30,
+      "endLine": 34
+    },
+    "consumers": []
+  },
+  "hasSupabaseConfig": {
+    "exportInfo": {
+      "name": "hasSupabaseConfig",
+      "kind": "function",
+      "isAsync": false,
+      "params": "",
+      "line": 56,
+      "endLine": 58
+    },
+    "consumers": [
+      "app/App.jsx",
+      "app/appStorage.js"
+    ]
+  },
+  "getInitialTenantSlug": {
+    "exportInfo": {
+      "name": "getInitialTenantSlug",
+      "kind": "function",
+      "isAsync": false,
+      "params": "",
+      "line": 65,
+      "endLine": 68
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "persistTenantSlug": {
+    "exportInfo": {
+      "name": "persistTenantSlug",
+      "kind": "function",
+      "isAsync": false,
+      "params": "slug",
+      "line": 70,
+      "endLine": 73
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "loadAvailableTenants": {
+    "exportInfo": {
+      "name": "loadAvailableTenants",
+      "kind": "function",
+      "isAsync": true,
+      "params": "fallbackTenants = []",
+      "line": 75,
+      "endLine": 79
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "subscribeToClientEvents": {
+    "exportInfo": {
+      "name": "subscribeToClientEvents",
+      "kind": "function",
+      "isAsync": false,
+      "params": "onChange, activeTenantSlug = defaultTenantSlug",
+      "line": 81,
+      "endLine": 125
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "shouldRefreshConversationState": {
+    "exportInfo": {
+      "name": "shouldRefreshConversationState",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}",
+      "line": 127,
+      "endLine": 131
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "createDebouncedRealtimeRefresh": {
+    "exportInfo": {
+      "name": "createDebouncedRealtimeRefresh",
+      "kind": "function",
+      "isAsync": false,
+      "params": "refresh, delay = 800",
+      "line": 133,
+      "endLine": 147
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "subscribeToConversationReads": {
+    "exportInfo": {
+      "name": "subscribeToConversationReads",
+      "kind": "function",
+      "isAsync": false,
+      "params": "onChange, userId",
+      "line": 149,
+      "endLine": 174
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "loadClientData": {
+    "exportInfo": {
+      "name": "loadClientData",
+      "kind": "function",
+      "isAsync": true,
+      "params": "fallback, activeTenantSlug = defaultTenantSlug, userId = null",
+      "line": 176,
+      "endLine": 278
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "loadConversationReads": {
+    "exportInfo": {
+      "name": "loadConversationReads",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantId, userId",
+      "line": 303,
+      "endLine": 317
+    },
+    "consumers": []
+  },
+  "markConversationRead": {
+    "exportInfo": {
+      "name": "markConversationRead",
+      "kind": "function",
+      "isAsync": true,
+      "params": "{ tenantId, channelType, externalConversationId, lastReadEventId }",
+      "line": 319,
+      "endLine": 330
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "loadAppointmentScheduling": {
+    "exportInfo": {
+      "name": "loadAppointmentScheduling",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug",
+      "line": 434,
+      "endLine": 447
+    },
+    "consumers": [
+      "features/appointments/components/Appointments.jsx"
+    ]
+  },
+  "loadAppointmentAvailability": {
+    "exportInfo": {
+      "name": "loadAppointmentAvailability",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantId, unitId, serviceId, date",
+      "line": 449,
+      "endLine": 460
+    },
+    "consumers": [
+      "features/appointments/components/Appointments.jsx"
+    ]
+  },
+  "saveAppointment": {
+    "exportInfo": {
+      "name": "saveAppointment",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug, appointment",
+      "line": 462,
+      "endLine": 520
+    },
+    "consumers": [
+      "features/appointments/components/Appointments.jsx"
+    ]
+  },
+  "upsertBroadcastContacts": {
+    "exportInfo": {
+      "name": "upsertBroadcastContacts",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug, contacts",
+      "line": 522,
+      "endLine": 547
+    },
+    "consumers": [
+      "features/broadcasts/components/Broadcasts.jsx"
+    ]
+  },
+  "createBroadcastCampaign": {
+    "exportInfo": {
+      "name": "createBroadcastCampaign",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug, campaign, recipients",
+      "line": 549,
+      "endLine": 588
+    },
+    "consumers": [
+      "features/broadcasts/components/Broadcasts.jsx"
+    ]
+  },
+  "updateBroadcastCampaign": {
+    "exportInfo": {
+      "name": "updateBroadcastCampaign",
+      "kind": "function",
+      "isAsync": true,
+      "params": "campaignId, patch",
+      "line": 590,
+      "endLine": 601
+    },
+    "consumers": [
+      "features/broadcasts/components/Broadcasts.jsx"
+    ]
+  },
+  "updateBroadcastRecipient": {
+    "exportInfo": {
+      "name": "updateBroadcastRecipient",
+      "kind": "function",
+      "isAsync": true,
+      "params": "campaignId, externalConversationId, patch",
+      "line": 603,
+      "endLine": 612
+    },
+    "consumers": [
+      "features/broadcasts/components/Broadcasts.jsx"
+    ]
+  },
+  "GENESIS_SALES_STAGE_DEFAULT_NAMES": {
+    "exportInfo": {
+      "name": "GENESIS_SALES_STAGE_DEFAULT_NAMES",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 614,
+      "endLine": 623
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "getStageTone": {
+    "exportInfo": {
+      "name": "getStageTone",
+      "kind": "function",
+      "isAsync": false,
+      "params": "stageKeyOrName",
+      "line": 627,
+      "endLine": 635
+    },
+    "consumers": [
+      "dataService.test.js",
+      "features/conversations/components/Conversations.jsx",
+      "features/kanban/components/Kanban.jsx"
+    ]
+  },
+  "getStageLabel": {
+    "exportInfo": {
+      "name": "getStageLabel",
+      "kind": "function",
+      "isAsync": false,
+      "params": "stageKeyOrName, context = {}",
+      "line": 726,
+      "endLine": 814
+    },
+    "consumers": [
+      "app/App.jsx",
+      "chatTimelineHelpers.js",
+      "dataService.test.js",
+      "features/conversations/components/Conversations.jsx",
+      "features/dashboard/components/Dashboard.jsx",
+      "features/kanban/components/Kanban.jsx"
+    ]
+  },
+  "normalizeStage": {
+    "exportInfo": {
+      "name": "normalizeStage",
+      "kind": "function",
+      "isAsync": false,
+      "params": "stage",
+      "line": 816,
+      "endLine": 839
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "isTransientStorageError": {
+    "exportInfo": {
+      "name": "isTransientStorageError",
+      "kind": "function",
+      "isAsync": false,
+      "params": "error",
+      "line": 856,
+      "endLine": 862
+    },
+    "consumers": []
+  },
+  "enrichMediaUrls": {
+    "exportInfo": {
+      "name": "enrichMediaUrls",
+      "kind": "function",
+      "isAsync": true,
+      "params": "events, supabase",
+      "line": 948,
+      "endLine": 1012
+    },
+    "consumers": [
+      "audioPlayer.test.js"
+    ]
+  },
+  "hasStoredMediaNeedingUrl": {
+    "exportInfo": {
+      "name": "hasStoredMediaNeedingUrl",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event",
+      "line": 1014,
+      "endLine": 1024
+    },
+    "consumers": [
+      "app/App.jsx",
+      "audioPlayer.test.js"
+    ]
+  },
+  "enrichSingleMediaEvent": {
+    "exportInfo": {
+      "name": "enrichSingleMediaEvent",
+      "kind": "function",
+      "isAsync": true,
+      "params": "event, client, { force = false } = {}",
+      "line": 1026,
+      "endLine": 1044
+    },
+    "consumers": [
+      "app/App.jsx",
+      "audioPlayer.test.js"
+    ]
+  },
+  "normalizeLocation": {
+    "exportInfo": {
+      "name": "normalizeLocation",
+      "kind": "function",
+      "isAsync": false,
+      "params": "rawPayload, event = null",
+      "line": 1048,
+      "endLine": 1108
+    },
+    "consumers": [
+      "audioPlayer.test.js"
+    ]
+  },
+  "normalizeMedia": {
+    "exportInfo": {
+      "name": "normalizeMedia",
+      "kind": "function",
+      "isAsync": false,
+      "params": "rawPayload, event = null",
+      "line": 1185,
+      "endLine": 1357
+    },
+    "consumers": [
+      "audioPlayer.test.js",
+      "chatTimeline.test.js",
+      "dataService.test.js"
+    ]
+  },
+  "normalizeAudioTranscription": {
+    "exportInfo": {
+      "name": "normalizeAudioTranscription",
+      "kind": "function",
+      "isAsync": false,
+      "params": "rawPayload, event = null",
+      "line": 1359,
+      "endLine": 1399
+    },
+    "consumers": [
+      "audioPlayer.test.js"
+    ]
+  },
+  "shouldHideGenericLeadInquiry": {
+    "exportInfo": {
+      "name": "shouldHideGenericLeadInquiry",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}, laterEvents = []",
+      "line": 1442,
+      "endLine": 1447
+    },
+    "consumers": []
+  },
+  "getConversationActivityEpoch": {
+    "exportInfo": {
+      "name": "getConversationActivityEpoch",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversation",
+      "line": 1467,
+      "endLine": 1476
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "sortConversationsByRecentActivity": {
+    "exportInfo": {
+      "name": "sortConversationsByRecentActivity",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversations = []",
+      "line": 1478,
+      "endLine": 1485
+    },
+    "consumers": [
+      "dataService.test.js",
+      "features/dashboard/components/Dashboard.jsx"
+    ]
+  },
+  "normalizeExternalConversationId": {
+    "exportInfo": {
+      "name": "normalizeExternalConversationId",
+      "kind": "function",
+      "isAsync": false,
+      "params": "channelType, externalId, fallbackHandle = ''",
+      "line": 1487,
+      "endLine": 1509
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "canonicalConversationKey": {
+    "exportInfo": {
+      "name": "canonicalConversationKey",
+      "kind": "function",
+      "isAsync": false,
+      "params": "channelType, externalConversationId, fallbackId = '', tenantSlug = ''",
+      "line": 1511,
+      "endLine": 1517
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "getTrustedContactName": {
+    "exportInfo": {
+      "name": "getTrustedContactName",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}",
+      "line": 1522,
+      "endLine": 1526
+    },
+    "consumers": []
+  },
+  "isUsefulContactName": {
+    "exportInfo": {
+      "name": "isUsefulContactName",
+      "kind": "function",
+      "isAsync": false,
+      "params": "value, phone = ''",
+      "line": 1528,
+      "endLine": 1545
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "subscribeToContacts": {
+    "exportInfo": {
+      "name": "subscribeToContacts",
+      "kind": "function",
+      "isAsync": false,
+      "params": "onChange, tenantId",
+      "line": 1547,
+      "endLine": 1561
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "getUsefulTrustedContactName": {
+    "exportInfo": {
+      "name": "getUsefulTrustedContactName",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}",
+      "line": 1563,
+      "endLine": 1567
+    },
+    "consumers": []
+  },
+  "conversationPhoneFallback": {
+    "exportInfo": {
+      "name": "conversationPhoneFallback",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}",
+      "line": 1569,
+      "endLine": 1590
+    },
+    "consumers": []
+  },
+  "formatWhatsAppPhone": {
+    "exportInfo": {
+      "name": "formatWhatsAppPhone",
+      "kind": "function",
+      "isAsync": false,
+      "params": "value = ''",
+      "line": 1592,
+      "endLine": 1602
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "resolveConversationDisplayName": {
+    "exportInfo": {
+      "name": "resolveConversationDisplayName",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}, fallbackName = ''",
+      "line": 1604,
+      "endLine": 1626
+    },
+    "consumers": [
+      "chatTimeline.test.js"
+    ]
+  },
+  "conversationReadKey": {
+    "exportInfo": {
+      "name": "conversationReadKey",
+      "kind": "function",
+      "isAsync": false,
+      "params": "tenantId, userId, channelType, externalConversationId",
+      "line": 1628,
+      "endLine": 1634
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "isUnreadInboundEvent": {
+    "exportInfo": {
+      "name": "isUnreadInboundEvent",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}, { eventAlreadyPresent = false, markIncomingAsRead = false } = {}",
+      "line": 1636,
+      "endLine": 1642
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "getLatestReadableEvent": {
+    "exportInfo": {
+      "name": "getLatestReadableEvent",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversation = {}",
+      "line": 1644,
+      "endLine": 1658
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "shouldAdvanceConversationRead": {
+    "exportInfo": {
+      "name": "shouldAdvanceConversationRead",
+      "kind": "function",
+      "isAsync": false,
+      "params": "marker, latestEvent",
+      "line": 1660,
+      "endLine": 1668
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "upsertConversationReadMarker": {
+    "exportInfo": {
+      "name": "upsertConversationReadMarker",
+      "kind": "function",
+      "isAsync": false,
+      "params": "markers = [], marker",
+      "line": 1683,
+      "endLine": 1710
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "applyConversationReadState": {
+    "exportInfo": {
+      "name": "applyConversationReadState",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversations = [], markers = [], tenantId = '', userId = ''",
+      "line": 1712,
+      "endLine": 1735
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "extractPayloadAvatar": {
+    "exportInfo": {
+      "name": "extractPayloadAvatar",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event",
+      "line": 1737,
+      "endLine": 1750
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "extractAvatarUrlFromEvent": {
+    "exportInfo": {
+      "name": "extractAvatarUrlFromEvent",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event",
+      "line": 1752,
+      "endLine": 1755
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "cleanAgentName": {
+    "exportInfo": {
+      "name": "cleanAgentName",
+      "kind": "function",
+      "isAsync": false,
+      "params": "name",
+      "line": 1757,
+      "endLine": 1805
+    },
+    "consumers": [
+      "chatTimelineHelpers.js",
+      "dataService.test.js"
+    ]
+  },
+  "resolveConversationOwnerDetails": {
+    "exportInfo": {
+      "name": "resolveConversationOwnerDetails",
+      "kind": "function",
+      "isAsync": false,
+      "params": "paramsOrOwner = {}, activeAgentsList = [], isHumanControlledParam = null",
+      "line": 1807,
+      "endLine": 1955
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "resolveConversationOwner": {
+    "exportInfo": {
+      "name": "resolveConversationOwner",
+      "kind": "function",
+      "isAsync": false,
+      "params": "paramsOrOwner = {}, activeAgentsList = [], isHumanControlledParam = null",
+      "line": 1957,
+      "endLine": 1960
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "resolveConversationHeaderOwner": {
+    "exportInfo": {
+      "name": "resolveConversationHeaderOwner",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversation, matchingCard = null, activeAgents = []",
+      "line": 1962,
+      "endLine": 1999
+    },
+    "consumers": [
+      "chatTimelineHelpers.js",
+      "dataService.test.js",
+      "features/conversations/components/Conversations.jsx"
+    ]
+  },
+  "resolveMessageSender": {
+    "exportInfo": {
+      "name": "resolveMessageSender",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}, fallbackOwner = ''",
+      "line": 2001,
+      "endLine": 2061
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "resolveEventMessagePreview": {
+    "exportInfo": {
+      "name": "resolveEventMessagePreview",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event, fallbackOwner = ''",
+      "line": 2063,
+      "endLine": 2154
+    },
+    "consumers": [
+      "audioPlayer.test.js",
+      "dataService.test.js"
+    ]
+  },
+  "isCustomerInboundEvent": {
+    "exportInfo": {
+      "name": "isCustomerInboundEvent",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}",
+      "line": 2156,
+      "endLine": 2161
+    },
+    "consumers": []
+  },
+  "isFollowUpOutboundEvent": {
+    "exportInfo": {
+      "name": "isFollowUpOutboundEvent",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}",
+      "line": 2163,
+      "endLine": 2168
+    },
+    "consumers": []
+  },
+  "isConversationWaitingForFollowUp": {
+    "exportInfo": {
+      "name": "isConversationWaitingForFollowUp",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conv = {}",
+      "line": 2170,
+      "endLine": 2191
+    },
+    "consumers": [
+      "followUpConversations.test.js"
+    ]
+  },
+  "formatWaitingDuration": {
+    "exportInfo": {
+      "name": "formatWaitingDuration",
+      "kind": "function",
+      "isAsync": false,
+      "params": "isoString, now = Date.now()",
+      "line": 2193,
+      "endLine": 2205
+    },
+    "consumers": [
+      "features/conversations/components/Conversations.jsx",
+      "followUpConversations.test.js"
+    ]
+  },
+  "matchesResponsibleFilter": {
+    "exportInfo": {
+      "name": "matchesResponsibleFilter",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversation = {}, filter = 'todos'",
+      "line": 2207,
+      "endLine": 2232
+    },
+    "consumers": [
+      "closedConversationsTab.test.js",
+      "features/conversations/components/Conversations.jsx",
+      "followUpConversations.test.js"
+    ]
+  },
+  "matchesConversationTab": {
+    "exportInfo": {
+      "name": "matchesConversationTab",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversation, tab = 'ativas'",
+      "line": 2234,
+      "endLine": 2260
+    },
+    "consumers": [
+      "closedConversationsTab.test.js",
+      "features/conversations/components/Conversations.jsx"
+    ]
+  },
+  "sortConversationsForTab": {
+    "exportInfo": {
+      "name": "sortConversationsForTab",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversations = [], tab = 'ativas'",
+      "line": 2262,
+      "endLine": 2279
+    },
+    "consumers": [
+      "closedConversationsTab.test.js",
+      "features/conversations/components/Conversations.jsx",
+      "followUpConversations.test.js"
+    ]
+  },
+  "getConversationTabCounts": {
+    "exportInfo": {
+      "name": "getConversationTabCounts",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversations = []",
+      "line": 2281,
+      "endLine": 2315
+    },
+    "consumers": [
+      "closedConversationsTab.test.js",
+      "features/conversations/components/Conversations.jsx",
+      "followUpConversations.test.js"
+    ]
+  },
+  "formatConversationCardOrigin": {
+    "exportInfo": {
+      "name": "formatConversationCardOrigin",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversation = {}",
+      "line": 2317,
+      "endLine": 2335
+    },
+    "consumers": [
+      "features/conversations/components/Conversations.jsx",
+      "followUpConversations.test.js"
+    ]
+  },
+  "formatMediaPreviewWithIcon": {
+    "exportInfo": {
+      "name": "formatMediaPreviewWithIcon",
+      "kind": "function",
+      "isAsync": false,
+      "params": "previewText",
+      "line": 2337,
+      "endLine": 2363
+    },
+    "consumers": [
+      "features/conversations/components/Conversations.jsx",
+      "followUpConversations.test.js"
+    ]
+  },
+  "eventsToConversations": {
+    "exportInfo": {
+      "name": "eventsToConversations",
+      "kind": "function",
+      "isAsync": false,
+      "params": "events = [], tenantSlug = '', teamAgents = [], kanbanColumns = []",
+      "line": 2365,
+      "endLine": 2632
+    },
+    "consumers": [
+      "audioPlayer.test.js",
+      "chatTimeline.test.js",
+      "closedConversationsTab.test.js",
+      "dataService.test.js",
+      "followUpConversations.test.js",
+      "senderIdentity.test.js"
+    ]
+  },
+  "applyIncomingEventToConversations": {
+    "exportInfo": {
+      "name": "applyIncomingEventToConversations",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversations = [], event, tenantSlug = '', { markIncomingAsRead = false, kanbanColumns = [], tenantSettings = null } = {}",
+      "line": 2634,
+      "endLine": 2858
+    },
+    "consumers": [
+      "app/App.jsx",
+      "audioPlayer.test.js",
+      "closedConversationsTab.test.js",
+      "dataService.test.js",
+      "followUpConversations.test.js"
+    ]
+  },
+  "applyIncomingEventToKanban": {
+    "exportInfo": {
+      "name": "applyIncomingEventToKanban",
+      "kind": "function",
+      "isAsync": false,
+      "params": "columns = [], event, tenantSlug = '', teamAgents = []",
+      "line": 2860,
+      "endLine": 2990
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "TENANT_SCHEDULING_LINKS": {
+    "exportInfo": {
+      "name": "TENANT_SCHEDULING_LINKS",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 2992,
+      "endLine": 2994
+    },
+    "consumers": []
+  },
+  "getTenantSchedulingLink": {
+    "exportInfo": {
+      "name": "getTenantSchedulingLink",
+      "kind": "function",
+      "isAsync": false,
+      "params": "tenantSlug",
+      "line": 2996,
+      "endLine": 2998
+    },
+    "consumers": [
+      "features/kanban/components/Kanban.jsx"
+    ]
+  },
+  "isGenesisSalesTenant": {
+    "exportInfo": {
+      "name": "isGenesisSalesTenant",
+      "kind": "function",
+      "isAsync": false,
+      "params": "tenantSlug",
+      "line": 3089,
+      "endLine": 3091
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "buildGenesisSalesMovePayload": {
+    "exportInfo": {
+      "name": "buildGenesisSalesMovePayload",
+      "kind": "function",
+      "isAsync": false,
+      "params": "leadId, stageKey, revision",
+      "line": 3093,
+      "endLine": 3099
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "orderKanbanColumnsForTenant": {
+    "exportInfo": {
+      "name": "orderKanbanColumnsForTenant",
+      "kind": "function",
+      "isAsync": false,
+      "params": "columns = [], tenantSlug = ''",
+      "line": 3101,
+      "endLine": 3110
+    },
+    "consumers": [
+      "dataService.test.js",
+      "features/kanban/components/Kanban.jsx"
+    ]
+  },
+  "emptyKanban": {
+    "exportInfo": {
+      "name": "emptyKanban",
+      "kind": "function",
+      "isAsync": false,
+      "params": "",
+      "line": 3112,
+      "endLine": 3114
+    },
+    "consumers": [
+      "app/appStorage.js"
+    ]
+  },
+  "getKanbanColumnKind": {
+    "exportInfo": {
+      "name": "getKanbanColumnKind",
+      "kind": "function",
+      "isAsync": false,
+      "params": "column = {}",
+      "line": 3116,
+      "endLine": 3120
+    },
+    "consumers": [
+      "features/kanban/components/Kanban.jsx"
+    ]
+  },
+  "validateKanbanOrderProposal": {
+    "exportInfo": {
+      "name": "validateKanbanOrderProposal",
+      "kind": "function",
+      "isAsync": false,
+      "params": "columns = [], proposal = {}",
+      "line": 3124,
+      "endLine": 3143
+    },
+    "consumers": [
+      "dataService.test.js",
+      "features/kanban/components/Kanban.jsx"
+    ]
+  },
+  "eventsToKanban": {
+    "exportInfo": {
+      "name": "eventsToKanban",
+      "kind": "function",
+      "isAsync": false,
+      "params": "events, tenantSlug = 'clinica_nubia', appointments = [], kanbanConfig = null, followUpJobs = [], salesLeads = [], teamAgents = []",
+      "line": 3145,
+      "endLine": 3430
+    },
+    "consumers": [
+      "chatTimeline.test.js",
+      "dataService.test.js"
+    ]
+  },
+  "sortKanbanCardsByConversationActivity": {
+    "exportInfo": {
+      "name": "sortKanbanCardsByConversationActivity",
+      "kind": "function",
+      "isAsync": false,
+      "params": "cards = []",
+      "line": 3442,
+      "endLine": 3450
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "loadRelevantContacts": {
+    "exportInfo": {
+      "name": "loadRelevantContacts",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantId, events = [], broadcastContacts = []",
+      "line": 3452,
+      "endLine": 3484
+    },
+    "consumers": []
+  },
+  "loadContactAvatars": {
+    "exportInfo": {
+      "name": "loadContactAvatars",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantId",
+      "line": 3487,
+      "endLine": 3508
+    },
+    "consumers": []
+  },
+  "contactAvatarKey": {
+    "exportInfo": {
+      "name": "contactAvatarKey",
+      "kind": "function",
+      "isAsync": false,
+      "params": "channel, externalHandle, tenantId = ''",
+      "line": 3510,
+      "endLine": 3515
+    },
+    "consumers": []
+  },
+  "normalizeAvatarUrl": {
+    "exportInfo": {
+      "name": "normalizeAvatarUrl",
+      "kind": "function",
+      "isAsync": false,
+      "params": "value",
+      "line": 3517,
+      "endLine": 3528
+    },
+    "consumers": [
+      "components/ui/ContactAvatar.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "buildContactDirectory": {
+    "exportInfo": {
+      "name": "buildContactDirectory",
+      "kind": "function",
+      "isAsync": false,
+      "params": "contacts = [], tenantId = ''",
+      "line": 3530,
+      "endLine": 3553
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "buildContactAvatarIndex": {
+    "exportInfo": {
+      "name": "buildContactAvatarIndex",
+      "kind": "function",
+      "isAsync": false,
+      "params": "contacts = [], tenantId = ''",
+      "line": 3555,
+      "endLine": 3562
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "applyContactDirectory": {
+    "exportInfo": {
+      "name": "applyContactDirectory",
+      "kind": "function",
+      "isAsync": false,
+      "params": "events = [], contactIndex, tenantId = ''",
+      "line": 3570,
+      "endLine": 3583
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "applyContactAvatars": {
+    "exportInfo": {
+      "name": "applyContactAvatars",
+      "kind": "function",
+      "isAsync": false,
+      "params": "events = [], avatarIndex, tenantId = ''",
+      "line": 3585,
+      "endLine": 3587
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "applyContactAvatarsToBroadcastContacts": {
+    "exportInfo": {
+      "name": "applyContactAvatarsToBroadcastContacts",
+      "kind": "function",
+      "isAsync": false,
+      "params": "contacts = [], contactIndex, tenantId = ''",
+      "line": 3589,
+      "endLine": 3602
+    },
+    "consumers": []
+  },
+  "applyContactUpdateToConversations": {
+    "exportInfo": {
+      "name": "applyContactUpdateToConversations",
+      "kind": "function",
+      "isAsync": false,
+      "params": "conversations = [], contact = {}, tenantId = ''",
+      "line": 3604,
+      "endLine": 3633
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "resolveContactAvatarState": {
+    "exportInfo": {
+      "name": "resolveContactAvatarState",
+      "kind": "function",
+      "isAsync": false,
+      "params": "{ currentFailed = false, prevUrl = null, nextUrl = null } = {}",
+      "line": 3635,
+      "endLine": 3644
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "resolveSalesControlMode": {
+    "exportInfo": {
+      "name": "resolveSalesControlMode",
+      "kind": "function",
+      "isAsync": false,
+      "params": "salesLead",
+      "line": 3764,
+      "endLine": 3770
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "resolveTenantKanbanStage": {
+    "exportInfo": {
+      "name": "resolveTenantKanbanStage",
+      "kind": "function",
+      "isAsync": false,
+      "params": "{ tenantSlug, salesLead, event, conversationState, context = {} }",
+      "line": 3772,
+      "endLine": 3801
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "emptyFunnel": {
+    "exportInfo": {
+      "name": "emptyFunnel",
+      "kind": "function",
+      "isAsync": false,
+      "params": "",
+      "line": 3859,
+      "endLine": 3867
+    },
+    "consumers": [
+      "app/appStorage.js"
+    ]
+  },
+  "ownerMetadataFromKanbanEvent": {
+    "exportInfo": {
+      "name": "ownerMetadataFromKanbanEvent",
+      "kind": "function",
+      "isAsync": false,
+      "params": "target, event, activeAgents = []",
+      "line": 3952,
+      "endLine": 3963
+    },
+    "consumers": []
+  },
+  "formatCurrency": {
+    "exportInfo": {
+      "name": "formatCurrency",
+      "kind": "function",
+      "isAsync": false,
+      "params": "value",
+      "line": 4062,
+      "endLine": 4068
+    },
+    "consumers": [
+      "features/kanban/components/Funnel.jsx"
+    ]
+  },
+  "loadTeamAgents": {
+    "exportInfo": {
+      "name": "loadTeamAgents",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantSlug",
+      "line": 4070,
+      "endLine": 4100
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "saveTeamAgent": {
+    "exportInfo": {
+      "name": "saveTeamAgent",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantSlug, agent",
+      "line": 4102,
+      "endLine": 4134
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "updateTeamAgentStatus": {
+    "exportInfo": {
+      "name": "updateTeamAgentStatus",
+      "kind": "function",
+      "isAsync": true,
+      "params": "agentId, newStatus, tenantSlug",
+      "line": 4136,
+      "endLine": 4157
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "removeTeamAgent": {
+    "exportInfo": {
+      "name": "removeTeamAgent",
+      "kind": "function",
+      "isAsync": true,
+      "params": "agentId, tenantSlug",
+      "line": 4159,
+      "endLine": 4180
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "loadTenantSettings": {
+    "exportInfo": {
+      "name": "loadTenantSettings",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantSlug",
+      "line": 4182,
+      "endLine": 4207
+    },
+    "consumers": [
+      "app/App.jsx"
+    ]
+  },
+  "moveKanbanCard": {
+    "exportInfo": {
+      "name": "moveKanbanCard",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug, card, targetColumnKey, agentName = null, targetColObj = null",
+      "line": 4343,
+      "endLine": 4463
+    },
+    "consumers": [
+      "app/App.jsx",
+      "dataService.test.js"
+    ]
+  },
+  "isEligibleForExternalOutbound": {
+    "exportInfo": {
+      "name": "isEligibleForExternalOutbound",
+      "local": "isEligibleForExternalOutbound",
+      "kind": "specifier",
+      "line": 4465
+    },
+    "consumers": [
+      "dataService.test.js"
+    ]
+  },
+  "isInternalOperationalEvent": {
+    "exportInfo": {
+      "name": "isInternalOperationalEvent",
+      "local": "isInternalOperationalEvent",
+      "kind": "specifier",
+      "line": 4465
+    },
+    "consumers": []
+  }
+}

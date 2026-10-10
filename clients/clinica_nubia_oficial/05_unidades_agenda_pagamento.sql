@@ -1,4 +1,4 @@
--- Generated: node scripts/build_nubia_scheduling_sql.cjs
+-- Generated: node scripts/build/sql/build_nubia_scheduling_sql.cjs
 -- ORDEM: publicar core compativel, executar migration 018, executar este arquivo.
 -- Nao altera outros tenants, historico, usuarios ou reservas existentes.
 begin;

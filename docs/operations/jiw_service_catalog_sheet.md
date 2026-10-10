@@ -18,7 +18,7 @@ Esse mesmo padrao sera usado para bases por cliente, como estoque de veiculos da
 - Seed:
   - `magia/supabase/seeds/jiw_service_catalog_seed.sql`
 - Script gerador:
-  - `magia/scripts/generate_jiw_service_catalog_seed.js`
+  - `magia/scripts/legacy/generate_jiw_service_catalog_seed.js`
 
 ## Tabela
 

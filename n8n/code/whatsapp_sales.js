@@ -8,8 +8,9 @@ function salesMoney(value) {
 
 function salesAmount(text) {
   const value = normalizeText(text);
-  const match = value.match(/(?:r\$\s*|entrada(?:\s+de)?\s*|tenho\s+|dar\s+)(\d[\d.,]*)(\s*mil)?/)
-    || value.match(/^(\d[\d.,]*)(\s*mil)?(?:\s+(?:de entrada|reais))?[.!]?$/);
+  const match = value.match(/(?:r\$\s*|entrada(?:\s+de)?\s*|tenho\s+|dar\s+)(\d[\d.,]*)(\s*(?:mil|k))?/)
+    || value.match(/\b(\d[\d.,]*)(\s*(?:mil|k))\s+de\s+entrada\b/)
+    || value.match(/^(\d[\d.,]*)(\s*(?:mil|k))?(?:\s+(?:de entrada|reais))?[.!]?$/);
   if (!match) return null;
   if (value.includes('%')) return null;
   const number = match[1];
@@ -17,6 +18,73 @@ function salesAmount(text) {
   const cents = Math.round(Number(number.replace(/\./g,'').replace(',','.')) * (match[2] ? 100000 : 100));
   if (/-\s*\d|nao (?:tenho|posso|vou)|sem entrada|talvez|ou\s+\d/.test(value)) return null;
   return Number.isSafeInteger(cents) && cents >= 0 ? cents : null;
+}
+
+function salesBirthDate(value) {
+  const text=String(value||'').trim();
+  const iso=text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const br=text.match(/^(\d{2})[/.\-](\d{2})[/.\-](\d{4})$/);
+  if (!iso&&!br) return '';
+  const [year,month,day]=iso ? iso.slice(1).map(Number) : [Number(br[3]),Number(br[2]),Number(br[1])];
+  const date=new Date(Date.UTC(year,month-1,day));
+  if (year<1900 || date.getTime()>Date.now() || date.getUTCFullYear()!==year
+    || date.getUTCMonth()!==month-1 || date.getUTCDate()!==day) return '';
+  return date.toISOString().slice(0,10);
+}
+
+function salesFinancingPolicy(context = {}) {
+  const settings=settingsFor(context),sales=settings.sales||{},rules=settings.sdr_rules||{};
+  const enabled=sales.hot_lead_rule==='deposit_and_financing_documents_v2';
+  if (!enabled) return {enabled:false,rule:sales.hot_lead_rule||'',percent:null,requiredDocuments:[]};
+  if (sales.collect_documents!==true) throw new Error('INVALID_FINANCING_DOCUMENT_POLICY');
+  const percent=Number(rules.hot_lead_percent);
+  if (!Number.isFinite(percent)||percent<=0||percent>100) throw new Error('INVALID_HOT_LEAD_PERCENT');
+  const configured=Array.isArray(sales.required_financing_documents)?sales.required_financing_documents:[];
+  if (!configured.length||configured.some(value=>!['cpf','cnh','birth_date'].includes(value))) throw new Error('INVALID_FINANCING_DOCUMENT_POLICY');
+  const requiredDocuments=[...new Set(configured)];
+  return {enabled:true,rule:sales.hot_lead_rule,percent,requiredDocuments};
+}
+
+function salesFinancingTemperature(state = {}, product = null, documentStatus = {}, context = {}) {
+  const policy=salesFinancingPolicy(context);
+  const deposit=state.deposit_cents;
+  if (!policy.enabled||!product||deposit===null) return {temperature:'cold',threshold_cents:null,documents_complete:false,...policy};
+  const threshold=Math.ceil(Number(product.price_cents)*policy.percent/100);
+  const documentsComplete=policy.requiredDocuments.every(key=>documentStatus[key+'_received']===true);
+  return {temperature:deposit>=threshold&&documentsComplete?'hot':'warm',threshold_cents:threshold,
+    documents_complete:documentsComplete,...policy};
+}
+
+function salesCashPurchase(text = '') {
+  const value=normalizeText(text);
+  return /\b(?:a vista|pagamento a vista|pagar a vista|compra a vista|sem financiamento)\b/.test(value);
+}
+
+function salesFinancingInterest(text = '') {
+  return /\b(?:entrada|financiar|financiamento|parcelar|parcela|credito|crédito)\b/i.test(String(text||''));
+}
+
+function salesDemonstrativeVehicleReference(value = '') {
+  const text=normalizeText(value).replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+  return /^(?:isso|isto|aquilo|esse|essa|este|esta|esse carro|essa moto|esse ai|essa ai|aquele|aquela)$/.test(text);
+}
+
+function salesRedactPersonalData(value = '') {
+  return String(value||'')
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g,'[documento informado]')
+    .replace(/\b\d{2}[/.\-]\d{2}[/.\-]\d{4}\b/g,'[data pessoal informada]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,'[email informado]')
+    .replace(/(?:\+?55\s*)?\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}\b/g,'[telefone informado]');
+}
+
+function salesMediaCapability(messages = []) {
+  const markers=(Array.isArray(messages)?messages:[]).map(message=>String(message?.text||'').trim().match(/^\[([a-z_]+)\](?:\n|$)/i)?.[1]?.toLowerCase()).filter(Boolean);
+  if (markers.includes('video')) return {supported:false,kind:'video',reply:'Recebi seu vídeo, mas ainda não consigo analisar o conteúdo dele com segurança. Se quiser avaliar o veículo, envie fotos ou descreva o que devo considerar.'};
+  if (markers.includes('sticker')) return {supported:false,kind:'sticker',reply:'Recebi a figurinha, mas não consigo usá-la para identificar um veículo. Pode me dizer em texto como posso ajudar?'};
+  if (markers.includes('contact')) return {supported:false,kind:'contact',reply:'Recebi o contato, mas não uso esse arquivo como informação comercial. Pode me dizer em texto como posso ajudar?'};
+  const unknown=markers.find(kind=>!['image','document','audio'].includes(kind));
+  if (unknown) return {supported:false,kind:'unknown',reply:'Recebi o arquivo, mas não consigo interpretar esse formato com segurança. Pode enviar em texto, imagem ou PDF?'};
+  return {supported:true,kind:''};
 }
 
 function salesParseInventory(text) {
@@ -79,8 +147,9 @@ function salesSchema() {
     brand:str,model:str,year:{type:'INTEGER',nullable:true},raw_mention:str,description_summary:str,
     reported_facts:strList,concerns:strList,maintenance_history:strList,evidence_ids:strList,
     maintenance_reported:{type:'BOOLEAN'},maintenance_evidence_ids:strList,
-    condition_reported:{type:'BOOLEAN'},condition_evidence_ids:strList
-  },required:['brand','model','year','raw_mention','description_summary','reported_facts','concerns','maintenance_history','evidence_ids','maintenance_reported','maintenance_evidence_ids','condition_reported','condition_evidence_ids']};
+    condition_reported:{type:'BOOLEAN'},condition_evidence_ids:strList,
+    eligibility:{type:'STRING',enum:['unknown','eligible','rejected']},rejection_reason:str,rejection_evidence_ids:strList,rejected_at:str
+  },required:['brand','model','year','raw_mention','description_summary','reported_facts','concerns','maintenance_history','evidence_ids','maintenance_reported','maintenance_evidence_ids','condition_reported','condition_evidence_ids','eligibility','rejection_reason','rejection_evidence_ids','rejected_at']};
   const buyInterest = {type:'OBJECT',properties:{
     brand:str,model:str,year:{type:'INTEGER',nullable:true},raw_mention:str,product_id:str,evidence_ids:strList
   },required:['brand','model','year','raw_mention','product_id','evidence_ids']};
@@ -116,7 +185,8 @@ function salesEmptyState() {
   return {intent:'unknown',transaction_mode:'unknown',customer_name:'',name_evidence:'',product_id:'',product_evidence:'',product_variant_evidence:'',
     deposit_cents:null,deposit_evidence:'',intent_evidence_id:'',sell_brand:'',sell_model:'',sell_year:null,sell_brand_evidence:'',sell_model_evidence:'',sell_year_evidence:'',
     sell_vehicle:{brand:'',model:'',year:null,raw_mention:'',description_summary:'',reported_facts:[],concerns:[],maintenance_history:[],evidence_ids:[],
-      maintenance_reported:false,maintenance_evidence_ids:[],condition_reported:false,condition_evidence_ids:[]},
+      maintenance_reported:false,maintenance_evidence_ids:[],condition_reported:false,condition_evidence_ids:[],
+      eligibility:'unknown',rejection_reason:'',rejection_evidence_ids:[],rejected_at:''},
     buy_interest:{brand:'',model:'',year:null,raw_mention:'',product_id:'',evidence_ids:[]}};
 }
 
@@ -282,7 +352,11 @@ function salesMergeState(previous = {}, candidate = {}, currentMessageIds = []) 
     maintenance_reported:oldValue.maintenance_reported===true || newValue.maintenance_reported===true,
     maintenance_evidence_ids:[...new Set([...(Array.isArray(oldValue.maintenance_evidence_ids)?oldValue.maintenance_evidence_ids:[]),...(Array.isArray(newValue.maintenance_evidence_ids)?newValue.maintenance_evidence_ids:[])])].slice(-30),
     condition_reported:oldValue.condition_reported===true || newValue.condition_reported===true,
-    condition_evidence_ids:[...new Set([...(Array.isArray(oldValue.condition_evidence_ids)?oldValue.condition_evidence_ids:[]),...(Array.isArray(newValue.condition_evidence_ids)?newValue.condition_evidence_ids:[])])].slice(-30)
+    condition_evidence_ids:[...new Set([...(Array.isArray(oldValue.condition_evidence_ids)?oldValue.condition_evidence_ids:[]),...(Array.isArray(newValue.condition_evidence_ids)?newValue.condition_evidence_ids:[])])].slice(-30),
+    eligibility:['eligible','rejected'].includes(newValue.eligibility)?newValue.eligibility:(['eligible','rejected'].includes(oldValue.eligibility)?oldValue.eligibility:'unknown'),
+    rejection_reason:mergeText(oldValue.rejection_reason,newValue.rejection_reason),
+    rejection_evidence_ids:[...new Set([...(Array.isArray(oldValue.rejection_evidence_ids)?oldValue.rejection_evidence_ids:[]),...(Array.isArray(newValue.rejection_evidence_ids)?newValue.rejection_evidence_ids:[])])].slice(-30),
+    rejected_at:mergeText(oldValue.rejected_at,newValue.rejected_at)
   });
   const priorSellModel=salesText(prior.sell_vehicle?.model)||salesText(prior.sell_model);
   const nextSellModel=salesText(next.sell_vehicle?.model)||salesText(next.sell_model);
@@ -302,6 +376,7 @@ function salesMergeState(previous = {}, candidate = {}, currentMessageIds = []) 
     if (!sellVehicle.maintenance_reported&&!sellVehicle.condition_reported) Object.assign(sellVehicle,{
       description_summary:'',reported_facts:[],concerns:[],maintenance_history:[]
     });
+    Object.assign(sellVehicle,{eligibility:'unknown',rejection_reason:'',rejection_evidence_ids:[],rejected_at:''});
   }
   const buyInterest = {...prior.buy_interest,...next.buy_interest,
     brand:mergeText(prior.buy_interest?.brand,next.buy_interest?.brand),model:mergeText(prior.buy_interest?.model,next.buy_interest?.model),
@@ -348,6 +423,9 @@ function salesSanitizeSemanticState(state, messages) {
   const byId = new Map();
   for (const message of messages) if (!byId.has(message.id)) byId.set(message.id,message);
   const s = salesMergeState({}, state);
+  // Eligibility is deterministic policy output. The model may describe facts,
+  // but it cannot reject or approve a vehicle by emitting state fields.
+  Object.assign(s.sell_vehicle,{eligibility:'unknown',rejection_reason:'',rejection_evidence_ids:[],rejected_at:''});
   const hasLiteral = (value, evidence) => {
     const text = normalizeText(byId.get(evidence)?.text);
     return Boolean(value && text && text.includes(normalizeText(value)));
@@ -380,6 +458,10 @@ function salesSanitizeSemanticState(state, messages) {
   if (s.buy_interest.model&&!buyNestedEvidence) {
     s.buy_interest.model='';s.buy_interest.year=null;s.buy_interest.product_id='';s.buy_interest.raw_mention='';
   } else if (buyNestedEvidence&&!s.buy_interest.evidence_ids.includes(buyNestedEvidence)) s.buy_interest.evidence_ids.push(buyNestedEvidence);
+  if (salesDemonstrativeVehicleReference(s.buy_interest.model)||salesDemonstrativeVehicleReference(s.buy_interest.raw_mention)) {
+    s.buy_interest={...salesEmptyState().buy_interest};
+    s.product_id='';s.product_evidence='';s.product_variant_evidence='';
+  }
   if (s.buy_interest.year!==null) {
     const year=String(s.buy_interest.year);
     const literal=new RegExp('\\b'+year+'\\b');
@@ -403,6 +485,7 @@ function salesSanitizeSemanticState(state, messages) {
   }
   s.sell_vehicle.maintenance_evidence_ids=customerEvidence(s.sell_vehicle.maintenance_evidence_ids);
   s.sell_vehicle.condition_evidence_ids=customerEvidence(s.sell_vehicle.condition_evidence_ids);
+  s.sell_vehicle.rejection_evidence_ids=customerEvidence(s.sell_vehicle.rejection_evidence_ids);
   // The model supplies semantic meaning; code only accepts a reported fact with client evidence.
   s.sell_vehicle.maintenance_reported=s.sell_vehicle.maintenance_reported===true && s.sell_vehicle.maintenance_evidence_ids.length>0;
   s.sell_vehicle.condition_reported=s.sell_vehicle.condition_reported===true && s.sell_vehicle.condition_evidence_ids.length>0;
@@ -584,11 +667,12 @@ function salesReferralForTurn(history = [], messages = []) {
   const ids=new Set((messages||[]).map(message=>message?.event_id).filter(Boolean));
   for (const event of [...history].reverse()) {
     if (!ids.has(event?.id)) continue;
-    const raw=event?.raw_payload?.referral;
+    const raw=event?.raw_payload?.catalog_referral||event?.raw_payload?.referral;
     if (!raw || typeof raw!=='object') continue;
     const referral={source:salesText(raw.source,60),title:salesText(raw.title,500),body:salesText(raw.body,500),
-      source_id:salesText(raw.source_id,220),source_url:salesText(raw.source_url,500),media_type:salesText(raw.media_type,60)};
-    if (referral.title||referral.body) return referral;
+      source_id:salesText(raw.source_id,220),source_url:salesText(raw.source_url,500),media_type:salesText(raw.media_type,60),
+      product_id:salesText(raw.product_id,220),retailer_id:salesText(raw.retailer_id,220)};
+    if (referral.title||referral.body||referral.product_id||referral.retailer_id) return referral;
   }
   return null;
 }
@@ -625,6 +709,12 @@ function salesReferralReply(text = '', referral = null, inventory = []) {
       : 'Não encontrei esse veículo no estoque atual. Posso te mostrar outras opções disponíveis?';
   }
   const label=salesCatalogLabel(match.product,false),value=normalizeText(text);
+  // A WhatsApp catalog reference identifies the clicked product, not live
+  // availability or a provider-confirmed price. The spreadsheet may help
+  // resolve the title, but is never proof for either commercial fact.
+  if (referral.source==='whatsapp_catalog_product' && (/\bquanto\b|\bvalor\b|\bpreco\b|\bdisponivel\b/.test(value))) {
+    return 'Entendi! Você está perguntando sobre '+(referral.title||label)+'. Ainda não tenho confirmação de disponibilidade ou preço no momento. Quer que eu chame o Wesley para conferir?';
+  }
   if (/\bquanto\b|\bvalor\b|\bpreco\b/.test(value)) {
     return 'Claro! O '+label+' está anunciado por '+salesMoney(match.product.price_cents)+'. Quer saber mais algum detalhe ou falar sobre a negociação?';
   }
@@ -639,7 +729,7 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
   if (!/^gemini-[a-z0-9.-]+$/.test(model || '') || !settings.system_prompt) throw new Error('SALES_MODEL_MISSING');
   const messages=groundingHistory(history);
   // Document text is not sent to the commercial model; OCR has a separate private store.
-  const safeMessages=messages.map(m=>({...m,text:m.text.replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g,'[documento informado]')}));
+  const safeMessages=messages.map(m=>({...m,text:salesRedactPersonalData(m.text)}));
   const referral=salesReferralForTurn(history,turn.messages);
   const referralMatch=referral?salesReferralProduct(referral,inventory):null;
   const referralFacts=referral?{context:{source:referral.source,title:referral.title,body:referral.body,media_type:referral.media_type},
@@ -650,7 +740,8 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
   const body=await httpJson('POST','https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent',
     {'Content-Type':'application/json','x-goog-api-key':env('GEMINI_API_KEY')},
     {system_instruction:{parts:[{text:settings.system_prompt}]},contents:[{role:'user',parts:[{text:JSON.stringify({
-      official_facts:{business:settings.business_facts,inventory,date:buildDateContext(context),rules:settings.sdr_rules,referral:referralFacts},
+      official_facts:{business:settings.business_facts,inventory,date:buildDateContext(context),rules:settings.sdr_rules,
+        sales_policy:{hot_lead_rule:settings.sales?.hot_lead_rule||'',required_financing_documents:settings.sales?.required_financing_documents||[]},referral:referralFacts},
       current_lead_state:lead?.state || salesEmptyState(),
       customer_messages:safeMessages,current_message_ids:turn.messages.map(m=>m.event_id),
       recent_assistant_messages:history.filter(m=>m.direction==='outbound'&&m.ai_provider==='sales_core').slice(-10).map(m=>m.message_text),
@@ -870,7 +961,7 @@ function salesCustomerDisposition(text = '') {
   if (/\b(?:nao\s+(?:tenho\s+)?interesse|sem\s+interesse|nao\s+quero(?:\s+mais)?|nao\s+precisa|deixa\s+pra\s+la|deixa\s+pra\s+pr[oó]xima|ent[aã]o\s+deixa|nao\s+vai\s+dar|desisti(?:do)?)\b/.test(norm)) {
     return 'declined';
   }
-  if (/\b(?:vou\s+pensar|qualquer\s+coisa(?:\s+eu)?\s+(?:chamo|aviso)|depois(?:\s+eu)?\s+(?:vejo|chamo|falo)|outro\s+dia(?:\s+eu\s+vejo)?|mais\s+tarde|vou\s+ver)\b/.test(norm)) {
+  if (/\b(?:vou\s+pensar|qualquer\s+coisa(?:\s+eu)?\s+(?:chamo|aviso)|depois(?:\s+eu)?\s+(?:vejo|chamo|falo)|outro\s+dia(?:\s+eu\s+vejo)?|mais\s+tarde|vou\s+ver|quando\s+(?:eu\s+)?chegar(?:\s+em\s+casa)?|so\s+consigo\s+enviar.{0,35}quando)\b/.test(norm)) {
     return 'deferred_by_customer';
   }
   if (/\b(?:valeu(?:\s+obrigad[oa])?|obrigad[oa]|era\s+s[oó]\s+isso|beleza[,\s]+obrigad[oa]|ok[,\s]+valeu|ok[,\s]+obrigad[oa]|tchau|ate\s+mais|ate\s+logo|por\s+hoje\s+(?:e|eh)\s+s[oó]|s[oó]\s+isso(?:\s+mesmo)?)\b/.test(norm)) {
@@ -920,6 +1011,63 @@ function salesCatalogRequested(text) {
     /\btem\s+quais\s+(?:carros|veiculos|modelos)\b/,
     /\bquero\s+ver\s+(?:os\s+)?(?:disponiveis|carros|veiculos)\b/
   ].some(pattern=>pattern.test(v));
+}
+
+function salesUnlistedExternalReference(state = {}, text = '', inventory = []) {
+  const model=salesText(state.buy_interest?.model);
+  if (!model||state.product_id) return false;
+  const wanted=normalizeText(model);
+  if ((inventory||[]).some(row=>{
+    const candidate=normalizeText(row.model||'');
+    return candidate===wanted||candidate.includes(wanted)||wanted.includes(candidate);
+  })) return false;
+  return /\b(?:anuncio|link|olx|marketplace|grupo|video|localizacao)\b/.test(normalizeText(text));
+}
+
+function salesEvaluateEligibility(state = {}, rules = {}, messages = []) {
+  const vehicle=state.sell_vehicle||{};
+  const model=salesText(vehicle.model)||salesText(state.sell_model);
+  if (!model) return {status:'unknown',reason:''};
+  if (vehicle.eligibility==='rejected'&&vehicle.rejection_reason) return {status:'rejected',reason:vehicle.rejection_reason};
+  const rejectedBrands=(rules.rejected_purchase_brands||[]).map(normalizeText);
+  const brand=salesText(vehicle.brand)||salesText(state.sell_brand);
+  const year=Number.isInteger(vehicle.year)?vehicle.year:(Number.isInteger(state.sell_year)?state.sell_year:null);
+  let reason='';
+  if (brand&&rejectedBrands.includes(normalizeText(brand))) reason='rejected_brand';
+  else if (year&&Number.isFinite(Number(rules.minimum_purchase_year))&&year<Number(rules.minimum_purchase_year)) reason='year_below_minimum';
+  if (!reason) {
+    if (brand&&year) vehicle.eligibility='eligible';
+    return {status:vehicle.eligibility||'unknown',reason:''};
+  }
+  const evidence=[state.sell_brand_evidence,state.sell_year_evidence,...(vehicle.evidence_ids||[])]
+    .filter(id=>messages.some(message=>message?.id===id&&message?.direction!=='outbound'));
+  vehicle.eligibility='rejected';
+  vehicle.rejection_reason=reason;
+  vehicle.rejection_evidence_ids=[...new Set(evidence)].slice(-10);
+  vehicle.rejected_at=vehicle.rejected_at||new Date().toISOString();
+  state.sell_vehicle=vehicle;
+  return {status:'rejected',reason};
+}
+
+function salesComparableReply(text = '') {
+  return normalizeText(text).replace(/\s+([,.;!?])/g,'$1').replace(/[.!?]+$/,'').trim();
+}
+
+function salesDuplicateReplyDecision(reply = '', history = [], pendingRequirement = '', catalogRequested = false) {
+  if (!reply||catalogRequested) return {duplicate:false,escalate:false,level:0,reply};
+  const outbounds=salesCurrentSessionHistory(history).filter(row=>row.direction==='outbound'&&row.ai_provider==='sales_core');
+  const last=outbounds.at(-1);
+  if (!last||salesComparableReply(last.message_text||last.response_text||'')!==salesComparableReply(reply)) {
+    return {duplicate:false,escalate:false,level:0,reply};
+  }
+  let level=1;
+  for (let index=outbounds.length-1;index>=0;index--) {
+    if (outbounds[index]?.raw_payload?.duplicate_reply_guard) level=Math.max(level,Number(outbounds[index].raw_payload.duplicate_reply_guard)+1);
+    else break;
+  }
+  if (level>=2) return {duplicate:true,escalate:true,level,reply:'Vou passar seu atendimento para a equipe continuar por aqui.'};
+  const reorientation=salesPendingRequirementReorientation(pendingRequirement);
+  return {duplicate:true,escalate:false,level,reply:reorientation||'Para eu seguir sem repetir a mesma pergunta, pode me dizer qual parte do atendimento você quer continuar?'};
 }
 
 function salesAppraisalDecision(state, history, media, rules = {}) {
@@ -1024,29 +1172,51 @@ async function runSalesTurn(context, history, event, control) {
     await saveEvent(event);await complete('done');return {ok:true,skipped:true,human_lock:event.handoff};
   }
   const inboundMediaShape=salesInboundMediaShape(turn.messages);
-  let generated,documents=[],inventory=[],documentStatus={cpf_received:false,cnh_received:false};
+  let generated,documents=[],inventory=[],documentStatus={cpf_received:false,cnh_received:false,birth_date_received:false},resolvedReferralProduct=null;
   try {
     await transcribeTurnAudio(context);
-    if (turn.messages.some(m=>/^\[(?:video|sticker|contact|audio)\]$/i.test(m.text.trim()))) throw new Error('SALES_UNSUPPORTED_MEDIA');
+    const mediaCapability=salesMediaCapability(turn.messages);
     if (turn.history_overflow || JSON.stringify(groundingHistory(history)).length>65000) throw new Error('SALES_HISTORY_LIMIT');
     if (!usageGate(context).allowed) throw new Error('SALES_USAGE_LIMIT');
-    documents=await salesReadMedia(context, history);
+    documents=mediaCapability.supported?await salesReadMedia(context, history):[];
     const previousDocs=lead ? await supabaseGet('/rest/v1/sales_documents?select=extracted&tenant_id=eq.'+encodeFilter(context.tenant.id)+'&lead_id=eq.'+encodeFilter(lead.id)) : [];
     const extracted=[...previousDocs.map(d=>d.extracted),...documents.map(d=>d.extracted)];
-    documentStatus={cpf_received:extracted.some(d=>!!d?.cpf),cnh_received:extracted.some(d=>!!d?.cnh)};
+    documentStatus={cpf_received:extracted.some(d=>!!salesValidCpf(d?.cpf)),
+      cnh_received:extracted.some(d=>/^\d{11}$/.test(String(d?.cnh||'').replace(/\D/g,''))),
+      birth_date_received:extracted.some(d=>!!salesBirthDate(d?.birth_date))};
     if (!usageGate(context).allowed) throw new Error('SALES_USAGE_LIMIT');
     inventory=await salesInventory(context);
-    generated=await salesGenerate(context,history,inventory,documents,documentStatus,lead);
-    const referralReply=salesReferralReply(turn.messages.map(message=>message.text||'').join(' '),salesReferralForTurn(history,turn.messages),inventory);
-    if (referralReply) generated={...generated,action:'reply',reason:'none',reply:referralReply,state:salesMergeState(lead?.state||{}, {})};
+    if (mediaCapability.supported) {
+      generated=await salesGenerate(context,history,inventory,documents,documentStatus,lead);
+      const referral=salesReferralForTurn(history,turn.messages);
+      const referralReply=salesReferralReply(turn.messages.map(message=>message.text||'').join(' '),referral,inventory);
+      resolvedReferralProduct=referral?salesReferralProduct(referral,inventory).product:null;
+      if (referralReply&&(referral||(!generated.product&&!lead?.product&&!generated.state?.product_id))) {
+        generated={...generated,action:'reply',reason:'none',reply:referralReply,state:salesMergeState(lead?.state||{}, {})};
+      }
+    } else {
+      generated={action:'reply',reason:'none',reply:mediaCapability.reply,state:salesMergeState(lead?.state||{},{}),
+        product:lead?.product||null,media_notice:mediaCapability.kind};
+    }
   } catch (error) {
-    generated={action:'handoff',reason:'human',
-      reply:'Só um momento, vou chamar a equipe para conferir e continuar seu atendimento.',
-      state:salesMergeState(lead?.state||{},{}),product:lead?.product||null};
-    event.ai_error=/^[A-Z_]{3,80}$/.test(error.message)?error.message:'SALES_PROCESSING_FAILED';
+    const code=/^[A-Z_]{3,80}$/.test(String(error.message||''))?String(error.message):'SALES_PROCESSING_FAILED';
+    const mediaError=/^(?:SALES_MEDIA_|DOCUMENT_)/.test(code);
+    generated={action:'reply',reason:'none',
+      reply:mediaError?'Recebi o arquivo, mas não consegui interpretar esse formato com segurança. Pode enviar uma imagem ou PDF legível, ou escrever a informação?'
+        :'Tive uma falha temporária para consultar os dados do atendimento. Pode tentar novamente em alguns instantes?',
+      state:salesMergeState(lead?.state||{},{}),product:lead?.product||null,technical_error:code};
+    event.ai_error=code;
   }
   const intentDecision=salesApplyIntentEvidence(lead?.state||{},generated.state||{},history,turn.messages);
   generated.state=intentDecision.state;
+  if (resolvedReferralProduct) {
+    const evidenceId=turn.messages.at(-1)?.event_id||'';
+    generated.product=resolvedReferralProduct;
+    generated.state={...generated.state,intent:'buy',transaction_mode:'buy',intent_evidence_id:evidenceId,
+      product_id:resolvedReferralProduct.id,product_evidence:evidenceId,product_variant_evidence:evidenceId,
+      buy_interest:{...generated.state.buy_interest,brand:resolvedReferralProduct.brand,model:resolvedReferralProduct.model,
+        year:resolvedReferralProduct.year,raw_mention:resolvedReferralProduct.name,product_id:resolvedReferralProduct.id,evidence_ids:[evidenceId]}};
+  }
   const neutralMediaReply=salesNeutralMediaStartReply(lead?.state||{},intentDecision.evidence,inboundMediaShape);
   if (neutralMediaReply) generated={...generated,action:'reply',reason:'none',reply:neutralMediaReply,state:intentDecision.state};
   const catalogChoice=salesCatalogChoice(history,turn.messages,inventory);
@@ -1061,6 +1231,9 @@ async function runSalesTurn(context, history, event, control) {
   }
   const s=generated.state;
   const mode=salesModeFor(s);
+  const evidenceMessages=groundingHistory(history).map(message=>({id:message.id,direction:message.direction,text:message.text}))
+    .concat(turn.messages.map(message=>({id:message.event_id,direction:'inbound',text:message.text})));
+  const eligibility=salesEvaluateEligibility(s,rules,evidenceMessages);
   let stage=!lead&&mode==='unknown'?cfg.stage_keys.initial:cfg.stage_keys.qualifying,register=false;
   let reply=generated.reply;
   let pendingRequirement='';
@@ -1075,8 +1248,13 @@ async function runSalesTurn(context, history, event, control) {
   const locationIntent = salesLocationIntent(turnText);
   const isLocationRequest = !!(locationIntent || generated.action === 'location' || groundingLocationRequested(turnText));
   const catalogRequested=generated.action==='catalog'||salesCatalogRequested(rawText);
+  const unlistedExternalReference=salesUnlistedExternalReference(s,turnText,inventory);
   const afterSales=generated.reason==='after_sales'||mode==='after_sales'
     || /(?:comprei|comprei com voces|carro que comprei).{0,100}(?:defeito|problema|quebrou|parou|garantia)/.test(normalizeText(rawText));
+  const cashPurchase=mode==='buy'&&salesCashPurchase(turnText);
+  const financing=mode==='buy'&&generated.product?salesFinancingTemperature(s,generated.product,documentStatus,context):null;
+  if (financing) s.financing={temperature:financing.temperature,hot_lead_rule:financing.rule,
+    threshold_cents:financing.threshold_cents,documents_complete:financing.documents_complete};
 
   if (acceptedHumanOffer) {
     stage = cfg.stage_keys.human;
@@ -1141,7 +1319,22 @@ async function runSalesTurn(context, history, event, control) {
       followUpDisposition = 'not_applicable';
     }
   } else if (afterSales) {stage=cfg.stage_keys.after_sales;reply='';followUpDisposition='resolved';}
-  else if (generated.action==='handoff' && generated.reason!=='appraisal') {
+  else if (unlistedExternalReference) {
+    stage=cfg.stage_keys.qualifying;
+    reply='Não encontrei esse veículo no estoque oficial atual. Posso mostrar as opções disponíveis?';
+    followUpDisposition='awaiting_customer';
+  }
+  else if (cashPurchase) {
+    stage=cfg.stage_keys.human;
+    reply='Entendi, você pretende comprar à vista. Vou passar para a equipe continuar a negociação por aqui.';
+    followUpDisposition='resolved';
+  } else if (generated.action==='handoff'&&generated.reason==='unknown') {
+    stage=cfg.stage_keys.qualifying;
+    reply=mode==='unknown'?'Você quer comprar um veículo, vender o seu ou tratar de um pós-venda?'
+      :'Não consegui identificar esse detalhe com segurança. Pode explicar em uma frase o que você precisa?';
+    event.raw_payload={...(event.raw_payload||{}),model_uncertain:true};
+    followUpDisposition='awaiting_customer';
+  } else if (generated.action==='handoff' && generated.reason!=='appraisal') {
     stage=cfg.stage_keys.human;
     followUpDisposition='resolved';
   } else if (catalogChoice.invalid) {
@@ -1158,8 +1351,7 @@ async function runSalesTurn(context, history, event, control) {
       : 'Não encontrei veículos listados agora. Vou pedir para a equipe verificar.';
     if (!catalogItems.length) { stage=cfg.stage_keys.human; followUpDisposition='resolved'; }
     else pendingRequirement='purchase_product';
-  } else if (['sell','buy_and_sell'].includes(mode) && ((rules.rejected_purchase_brands||[]).map(normalizeText).includes(normalizeText(s.sell_brand))
-    || (s.sell_year&&s.sell_year<Number(rules.minimum_purchase_year)))) {
+  } else if (['sell','buy_and_sell'].includes(mode) && eligibility.status==='rejected') {
     const buyModel=salesText(s.buy_interest?.model);
     reply=mode==='buy_and_sell'
       ? (buyModel
@@ -1167,6 +1359,7 @@ async function runSalesTurn(context, history, event, control) {
         : 'No momento, o veículo que você quer vender não se enquadra nos critérios de compra da loja. Mas podemos seguir com a compra: qual modelo de veículo você procura?')
       : 'No momento, esse veículo não se enquadra nos critérios de compra da loja.';
     if (mode==='buy_and_sell'&&!buyModel) pendingRequirement='buy_model';
+    followUpDisposition=pendingRequirement?'awaiting_customer':'resolved';
   } else if (mode==='buy_and_sell') {
     const sellModel=salesText(s.sell_vehicle?.model)||salesText(s.sell_model);
     const buyModel=salesText(s.buy_interest?.model);
@@ -1205,6 +1398,23 @@ async function runSalesTurn(context, history, event, control) {
     if (!appraisal.ready) pendingRequirement=(salesText(s.sell_vehicle?.model)||salesText(s.sell_model))
       ? (appraisal.described?'vehicle_photo':'vehicle_description') : 'sell_model';
     if (appraisal.ready) { stage=cfg.stage_keys.appraisal; followUpDisposition='resolved'; }
+  } else if (mode==='buy'&&generated.product&&financing?.enabled
+    &&(salesFinancingInterest(turnText)||generated.action==='register_interest'||salesLastPendingRequirement(history)==='documents')) {
+    if (!s.customer_name) {reply='Qual é o seu nome, por favor?';pendingRequirement='customer_name';}
+    else if (s.deposit_cents===null) {reply='Qual valor você pretende dar de entrada, ou seria uma compra à vista?';pendingRequirement='deposit';}
+    else if (!financing.documents_complete) {
+      const missing=financing.requiredDocuments.filter(key=>documentStatus[key+'_received']!==true);
+      if (missing.includes('cnh')) reply='Para seguir com a simulação de financiamento, pode enviar uma foto legível da CNH?';
+      else if (missing.includes('cpf')) reply='Para seguir com a simulação, pode informar seu CPF?';
+      else reply='Para seguir com a simulação, qual é a sua data de nascimento?';
+      pendingRequirement='documents';
+    } else {
+      register=true;
+      followUpDisposition='resolved';
+      reply=financing.temperature==='hot'
+        ? 'Recebi os dados necessários para a simulação. Vou passar para a equipe continuar seu atendimento.'
+        : 'Recebi os dados para a simulação. Seu atendimento continua em análise, sem promessa de aprovação.';
+    }
   } else if (generated.action==='handoff') {
     stage=cfg.stage_keys[generated.reason==='appraisal'?'appraisal':'human'];
     followUpDisposition='resolved';
@@ -1229,6 +1439,9 @@ async function runSalesTurn(context, history, event, control) {
     if (strictPendingReply) reply=strictPendingReply;
   }
 
+  const duplicateDecision=salesDuplicateReplyDecision(reply,history,pendingRequirement,catalogRequested);
+  if (duplicateDecision.duplicate) reply=duplicateDecision.reply;
+
   const isFrustrated = turn.messages.some(m => salesFrustrationDetected(m.text));
   const requirementAttempts = pendingRequirement ? salesPendingRequirementAttempts(history, pendingRequirement) : 0;
   const previousRequirement = salesLastPendingRequirement(history);
@@ -1239,13 +1452,14 @@ async function runSalesTurn(context, history, event, control) {
 
   let handoffReason = '';
   let defaultAssignee = null;
-  const shouldEscalate = acceptedHumanOffer || isFrustrated || (pendingRequirement && requirementAttempts >= 2);
+  const shouldEscalate = acceptedHumanOffer || isFrustrated || duplicateDecision.escalate || (pendingRequirement && requirementAttempts >= 2);
 
   if (shouldEscalate) {
     stage = cfg.stage_keys.human;
     register = false;
     defaultAssignee = await salesResolveDefaultAssignee(context);
-    handoffReason = acceptedHumanOffer ? 'accepted_human_offer' : isFrustrated ? 'frustration' : 'anti_loop_escalation';
+    handoffReason = acceptedHumanOffer ? 'accepted_human_offer' : isFrustrated ? 'frustration'
+      : duplicateDecision.escalate ? 'duplicate_reply_guard' : 'anti_loop_escalation';
     reply = salesHandoffMessage(defaultAssignee, isFrustrated && !acceptedHumanOffer);
     pendingRequirement = '';
     followUpDisposition = 'resolved';
@@ -1270,6 +1484,11 @@ async function runSalesTurn(context, history, event, control) {
     }
   }
 
+  const appraisalInvariant=['sell','buy_and_sell'].includes(mode)?salesAppraisalDecision(s,history,documents,rules):null;
+  if (stage===cfg.stage_keys.appraisal&&!appraisalInvariant?.ready) {
+    stage=cfg.stage_keys.qualifying;
+    register=false;
+  }
   if (!await commit()) return {ok:true,skipped:true,reason:'superseded'};
   // Re-read the source before registering. A price/status change requires a fresh confirmation.
   if (register && generated.product) {
@@ -1278,7 +1497,8 @@ async function runSalesTurn(context, history, event, control) {
       if (!fresh || fresh.price_cents!==generated.product.price_cents) throw new Error('PRODUCT_CHANGED');
       generated.product=fresh;
     } catch {
-      register=false;stage=cfg.stage_keys.human;
+      register=false;stage=cfg.stage_keys.qualifying;
+      event.ai_error='PRODUCT_CHANGED';
       reply='Vou pedir para a equipe conferir o veículo e o valor atual antes de continuar a negociação.';
     }
   }
@@ -1292,21 +1512,32 @@ async function runSalesTurn(context, history, event, control) {
       p_state:s,p_product:generated.product||null,p_stage:stage,p_register:register,
       p_documents:documents.filter(d=>d.kind==='document'&&d.readable).map(d=>({event_id:d.event_id,extracted:d.extracted}))});
   } catch (error) {
-    // Never overwrite a human transition with a technical error event.
-    await complete('cancelled');return {ok:false,skipped:true,reason:'sales_save_failed'};
+    // A concurrent human transition remains authoritative and must stay silent.
+    if (/SALES_CONTROL_CHANGED|STALE_SALES_/.test(String(error.message||''))) {
+      await complete('cancelled');return {ok:false,skipped:true,reason:'sales_control_changed'};
+    }
+    throw error;
   }
   if (catalogChoice.product&&!catalogChoiceAcknowledged) reply='Perfeito, você escolheu o '+salesCatalogLabel(catalogChoice.product)+'. '+reply;
   if (!saved?.id) {await complete('failed');return {ok:false,reason:'sales_not_persisted'};}
+  if (financing&&saved.hot===true&&saved.stage_key===cfg.stage_keys.hot) {
+    reply='Recebi os dados necessários para a simulação. Vou passar para a equipe continuar seu atendimento.';
+  }
   Object.assign(event,{ai_provider:'sales_core',ai_model:generated.model||null,ai_usage:generated.usage||{},
     service:register?'sales_interest':'sales_qualification',stage:cfg.stages[saved.stage_key]?.name||saved.stage_key,
     handoff:saved.ai_locked,
-    raw_payload:{sales_lead_id:saved.id,sales_revision:saved.revision,sales_stage:saved.stage_key,
+    raw_payload:{...(event.raw_payload||{}),sales_lead_id:saved.id,sales_revision:saved.revision,sales_stage:saved.stage_key,
       interest_registered:saved.interest_registered,document_count:documents.filter(d=>d.kind==='document').length,
       sales_media:documents.map(d=>({event_id:d.event_id,kind:d.kind,readable:d.readable})),
       ...(catalogItems.length?{catalog_item_ids:catalogItems.map(item=>item.id)}:{}),
       ...(pendingRequirement?{pending_requirement:pendingRequirement}:{}),
       ...(optionalHumanOffer?{optional_human_offer:optionalHumanOffer}:{}),
       ...(followUpDisposition?{follow_up_disposition:followUpDisposition}:{}),
+      ...(duplicateDecision.duplicate?{duplicate_reply_guard:duplicateDecision.level}:{}),
+      ...(s.sell_vehicle?.eligibility&&s.sell_vehicle.eligibility!=='unknown'?{sell_vehicle_eligibility:s.sell_vehicle.eligibility}:{}),
+      ...(financing?{lead_temperature:financing.temperature,financing_threshold_cents:financing.threshold_cents}:{}),
+      ...(generated.technical_error?{technical_error_code:generated.technical_error}:{}),
+      ...(generated.media_notice?{media_notice:generated.media_notice}:{}),
       ...(handoffReason?{handoff_reason:handoffReason}:{})}});
   await saveEvent(event);
   const sent=reply ? await sendChannelMessage(context,cleanReplyText(reply),event) : {sent:false,silent:true};
@@ -1386,11 +1617,14 @@ async function salesClassifyImages(context, rows, history = []) {
 async function salesReadMedia(context, history = []) {
   const results=[];
   for (const m of turn.messages) {
-    const match=m.text.match(/(?:cpf\D{0,12}|^\s*)(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/i);
-    if (match) {
-      const cpf=salesValidCpf(match[1]);
-      if (!cpf) throw new Error('DOCUMENT_REQUIRES_REVIEW');
-      results.push({event_id:m.event_id,kind:'document',readable:true,extracted:{kind:'document',cpf,name:'',cnh:'',birth_date:''}});
+    const cpfMatch=m.text.match(/(?:cpf\D{0,12}|^\s*)(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/i);
+    const birthMatch=m.text.match(/\b(\d{2}[/.\-]\d{2}[/.\-]\d{4})\b/);
+    if (cpfMatch||birthMatch) {
+      const cpf=cpfMatch?salesValidCpf(cpfMatch[1]):'';
+      const birthDate=birthMatch?salesBirthDate(birthMatch[1]):'';
+      if (cpfMatch&&!cpf) throw new Error('DOCUMENT_REQUIRES_REVIEW');
+      if (birthMatch&&!birthDate) throw new Error('DOCUMENT_REQUIRES_REVIEW');
+      results.push({event_id:m.event_id,kind:'document',readable:true,extracted:{kind:'document',cpf,name:'',cnh:'',birth_date:birthDate}});
     }
   }
   const imageRows=turn.messages.filter(m=>/^\[image\](?:\n|$)/i.test(m.text.trim()));
@@ -1436,6 +1670,7 @@ async function salesReadMedia(context, history = []) {
     if (value.kind==='document') {
       if (value.cpf) {value.cpf=salesValidCpf(value.cpf);if (!value.cpf) throw new Error('DOCUMENT_REQUIRES_REVIEW');}
       if (value.cnh&&!/^\d{11}$/.test(value.cnh.replace(/\D/g,''))) throw new Error('DOCUMENT_REQUIRES_REVIEW');
+      if (value.birth_date) {value.birth_date=salesBirthDate(value.birth_date);if (!value.birth_date) throw new Error('DOCUMENT_REQUIRES_REVIEW');}
       if (!value.name&&!value.cpf&&!value.cnh) throw new Error('DOCUMENT_REQUIRES_REVIEW');
     } else {value.name='';value.cpf='';value.cnh='';value.birth_date='';}
     results.push({event_id:row.event_id,kind:value.kind,readable:value.kind==='document',

@@ -1,0 +1,985 @@
+{
+  "totalFunctions": 165,
+  "cycles": [],
+  "graph": {
+    "clearMediaUrlCache": [
+      "mediaObjectUrlCache",
+      "mediaUrlRequestCache"
+    ],
+    "getMediaUrlFromCache": [
+      "mediaObjectUrlCache",
+      "url"
+    ],
+    "blobToDataUrl": [
+      "type",
+      "result"
+    ],
+    "hasSupabaseConfig": [
+      "supabaseUrl",
+      "supabaseAnonKey"
+    ],
+    "getClient": [
+      "hasSupabaseConfig",
+      "supabaseUrl",
+      "supabaseAnonKey"
+    ],
+    "getInitialTenantSlug": [
+      "location",
+      "tenantStorageKey",
+      "defaultTenantSlug"
+    ],
+    "persistTenantSlug": [
+      "tenantStorageKey"
+    ],
+    "loadAvailableTenants": [
+      "getClient"
+    ],
+    "subscribeToClientEvents": [
+      "defaultTenantSlug",
+      "getClient",
+      "event"
+    ],
+    "shouldRefreshConversationState": [
+      "handoff",
+      "service"
+    ],
+    "createDebouncedRealtimeRefresh": [],
+    "schedule": [],
+    "subscribeToConversationReads": [
+      "getClient",
+      "event"
+    ],
+    "loadClientData": [
+      "defaultTenantSlug",
+      "getClient",
+      "status",
+      "buildStatus",
+      "tenantSlug",
+      "loadTenant",
+      "loadAppointments",
+      "loadBroadcastContacts",
+      "loadBroadcastCampaigns",
+      "loadKanbanConfig",
+      "loadFollowUpJobs",
+      "isGenesisSalesTenant",
+      "loadSalesLeads",
+      "loadConversationReads",
+      "loadTeamAgents",
+      "eventsToKanban",
+      "emptyFunnel",
+      "loadRelevantContacts",
+      "enrichCatalogReferrals",
+      "asObject",
+      "enrichMediaUrls",
+      "buildContactDirectory",
+      "applyContactDirectory",
+      "applyContactAvatarsToBroadcastContacts",
+      "applyConversationReadState",
+      "eventsToConversations",
+      "eventsToFunnel",
+      "tenantSettings"
+    ],
+    "loadTenant": [
+      "getClient",
+      "message"
+    ],
+    "currentUserId": [
+      "getClient",
+      "user"
+    ],
+    "loadConversationReads": [
+      "getClient",
+      "message"
+    ],
+    "markConversationRead": [
+      "getClient",
+      "normalizeChannel",
+      "type",
+      "normalizeExternalConversationId"
+    ],
+    "loadAppointments": [
+      "getClient",
+      "message",
+      "mapAppointment"
+    ],
+    "loadBroadcastContacts": [
+      "getClient",
+      "message"
+    ],
+    "loadBroadcastCampaigns": [
+      "getClient",
+      "message"
+    ],
+    "loadKanbanConfig": [
+      "getClient",
+      "message"
+    ],
+    "loadFollowUpJobs": [
+      "getClient",
+      "message"
+    ],
+    "loadAppointmentScheduling": [
+      "getClient",
+      "loadTenant"
+    ],
+    "loadAppointmentAvailability": [
+      "getClient",
+      "message"
+    ],
+    "saveAppointment": [
+      "getClient",
+      "loadTenant",
+      "currentUserId",
+      "contactName",
+      "channelType",
+      "message",
+      "title",
+      "status",
+      "mapAppointment",
+      "startsAt"
+    ],
+    "upsertBroadcastContacts": [
+      "getClient",
+      "loadTenant",
+      "name",
+      "channelType",
+      "phone"
+    ],
+    "createBroadcastCampaign": [
+      "getClient",
+      "loadTenant",
+      "currentUserId",
+      "name",
+      "channelType",
+      "status"
+    ],
+    "updateBroadcastCampaign": [
+      "getClient"
+    ],
+    "updateBroadcastRecipient": [
+      "getClient"
+    ],
+    "getStageTone": [
+      "canonicalKanbanKey"
+    ],
+    "catalogProductKey": [],
+    "catalogReferralFromEvent": [
+      "asObject"
+    ],
+    "enrichCatalogReferrals": [
+      "defaultTenantSlug",
+      "catalogReferralFromEvent",
+      "instanceName",
+      "catalogProductKey",
+      "productId",
+      "config",
+      "catalogProductCache",
+      "CATALOG_PRODUCT_CACHE_TTL_MS",
+      "value",
+      "catalogRefreshRequestedAt",
+      "CATALOG_REFRESH_COOLDOWN_MS"
+    ],
+    "getStageLabel": [
+      "findKanbanColumn",
+      "title",
+      "name",
+      "stages",
+      "canonicalKanbanKey",
+      "isGenesisSalesTenant",
+      "GENESIS_SALES_STAGE_DEFAULT_NAMES",
+      "split"
+    ],
+    "normalizeStage": [],
+    "asObject": [],
+    "waitForMediaRetry": [
+      "SIGNED_URL_RETRY_DELAY_MS"
+    ],
+    "isTransientStorageError": [],
+    "createSignedUrlWithRetry": [
+      "SIGNED_URL_EXPIRES_IN",
+      "isTransientStorageError",
+      "waitForMediaRetry",
+      "message"
+    ],
+    "mapWithConcurrency": [],
+    "resolveStoredMediaUrl": [
+      "createSignedUrlWithRetry",
+      "message",
+      "text",
+      "kind",
+      "type",
+      "blobToDataUrl"
+    ],
+    "enrichMediaUrls": [
+      "asObject",
+      "normalizeMedia",
+      "status",
+      "url",
+      "direction",
+      "isExplicitOutboundMedia",
+      "mapWithConcurrency",
+      "MEDIA_SIGNING_CONCURRENCY",
+      "mediaObjectUrlCache",
+      "expiresAt",
+      "now",
+      "mediaUrlRequestCache",
+      "resolveStoredMediaUrl",
+      "SIGNED_URL_EXPIRES_IN"
+    ],
+    "hasStoredMediaNeedingUrl": [
+      "asObject",
+      "normalizeMedia",
+      "direction",
+      "isExplicitOutboundMedia",
+      "status",
+      "url"
+    ],
+    "enrichSingleMediaEvent": [
+      "asObject",
+      "status",
+      "url",
+      "hasStoredMediaNeedingUrl",
+      "mediaObjectUrlCache",
+      "mediaUrlRequestCache",
+      "getClient",
+      "enrichMediaUrls"
+    ],
+    "normalizeLocation": [
+      "asObject",
+      "message",
+      "location",
+      "locationDetailsCache",
+      "messageType",
+      "service",
+      "url"
+    ],
+    "isExplicitOutboundMedia": [
+      "direction",
+      "eventId",
+      "messageId",
+      "key"
+    ],
+    "safeProductImageUrl": [],
+    "safeProductThumbnail": [],
+    "productSnapshotMedia": [
+      "asObject",
+      "name",
+      "safeProductImageUrl",
+      "url",
+      "safeProductThumbnail",
+      "kind"
+    ],
+    "toCents": [],
+    "validCents": [],
+    "normalizeMedia": [
+      "asObject",
+      "direction",
+      "media",
+      "kind",
+      "status",
+      "message",
+      "productSnapshotMedia",
+      "photo",
+      "video",
+      "caption",
+      "url",
+      "isExplicitOutboundMedia",
+      "thumbnailUrl",
+      "readable",
+      "key"
+    ],
+    "normalizeAudioTranscription": [
+      "asObject"
+    ],
+    "normalizeLeadInquiryText": [],
+    "isGenericLeadInquiry": [
+      "normalizeLeadInquiryText",
+      "genericLeadInquiryText"
+    ],
+    "isSubstantiveInboundFollowUp": [
+      "isGenericLeadInquiry",
+      "normalizeLeadInquiryText"
+    ],
+    "isShortlyAfter": [
+      "genericLeadInquiryWindowMs"
+    ],
+    "isSameInboundConversation": [
+      "direction"
+    ],
+    "shouldHideGenericLeadInquiry": [
+      "direction",
+      "isGenericLeadInquiry",
+      "isSameInboundConversation",
+      "isShortlyAfter",
+      "isSubstantiveInboundFollowUp"
+    ],
+    "mediaPreview": [
+      "photo",
+      "video",
+      "product",
+      "caption",
+      "kind"
+    ],
+    "isGeneratedMediaLabel": [],
+    "getConversationActivityEpoch": [
+      "createdAt"
+    ],
+    "sortConversationsByRecentActivity": [
+      "getConversationActivityEpoch"
+    ],
+    "normalizeExternalConversationId": [
+      "normalizeChannel",
+      "type"
+    ],
+    "canonicalConversationKey": [
+      "normalizeChannel",
+      "type",
+      "normalizeExternalConversationId"
+    ],
+    "getTrustedContactName": [
+      "direction"
+    ],
+    "isUsefulContactName": [],
+    "subscribeToContacts": [
+      "getClient",
+      "event"
+    ],
+    "getUsefulTrustedContactName": [
+      "getTrustedContactName",
+      "isUsefulContactName"
+    ],
+    "conversationPhoneFallback": [
+      "normalizeChannel",
+      "type",
+      "normalizeExternalConversationId",
+      "split"
+    ],
+    "formatWhatsAppPhone": [],
+    "resolveConversationDisplayName": [
+      "contact",
+      "name",
+      "conversationPhoneFallback",
+      "isUsefulContactName",
+      "getUsefulTrustedContactName",
+      "formatWhatsAppPhone"
+    ],
+    "conversationReadKey": [
+      "normalizeChannel",
+      "type",
+      "normalizeExternalConversationId"
+    ],
+    "isUnreadInboundEvent": [
+      "direction"
+    ],
+    "getLatestReadableEvent": [
+      "eventId",
+      "createdAt"
+    ],
+    "shouldAdvanceConversationRead": [
+      "eventId",
+      "createdAt"
+    ],
+    "isUnreadInboundMessage": [
+      "eventId",
+      "createdAt"
+    ],
+    "upsertConversationReadMarker": [
+      "conversationReadKey",
+      "shouldAdvanceConversationRead",
+      "eventId",
+      "createdAt"
+    ],
+    "applyConversationReadState": [
+      "conversationReadKey",
+      "channelType",
+      "channel",
+      "isUnreadInboundMessage"
+    ],
+    "extractPayloadAvatar": [
+      "asObject",
+      "normalizeAvatarUrl"
+    ],
+    "extractAvatarUrlFromEvent": [
+      "extractPayloadAvatar",
+      "normalizeAvatarUrl"
+    ],
+    "cleanAgentName": [],
+    "resolveConversationOwnerDetails": [
+      "salesLead",
+      "resolveSalesControlMode",
+      "name",
+      "kind",
+      "cleanAgentName",
+      "canonicalKanbanKey",
+      "status"
+    ],
+    "resolveConversationOwner": [
+      "resolveConversationOwnerDetails",
+      "name"
+    ],
+    "resolveConversationHeaderOwner": [
+      "name",
+      "kind",
+      "status",
+      "handoff",
+      "resolveSalesControlMode",
+      "resolveConversationOwnerDetails",
+      "cleanAgentName",
+      "normalizeStage",
+      "stage",
+      "explicitOwner",
+      "explicitOwnerId",
+      "isAiControlled"
+    ],
+    "resolveMessageSender": [
+      "asObject",
+      "type",
+      "label",
+      "key",
+      "cleanAgentName",
+      "assignee",
+      "name"
+    ],
+    "resolveEventMessagePreview": [
+      "asObject",
+      "direction",
+      "messageType",
+      "text",
+      "sender",
+      "senderType",
+      "normalizeLocation",
+      "name",
+      "address",
+      "normalizeMedia",
+      "isGeneratedMediaLabel",
+      "normalizeAudioTranscription",
+      "mediaPreview",
+      "resolveMessageSender",
+      "label",
+      "type"
+    ],
+    "isCustomerInboundEvent": [],
+    "isFollowUpOutboundEvent": [],
+    "isConversationWaitingForFollowUp": [],
+    "formatWaitingDuration": [],
+    "matchesResponsibleFilter": [
+      "status",
+      "owner"
+    ],
+    "matchesConversationTab": [],
+    "sortConversationsForTab": [],
+    "getConversationTabCounts": [],
+    "formatConversationCardOrigin": [],
+    "formatMediaPreviewWithIcon": [],
+    "eventsToConversations": [
+      "shouldHideGenericLeadInquiry",
+      "normalizeChannel",
+      "getStageLabel",
+      "stage",
+      "canonicalConversationKey",
+      "type",
+      "normalizeExternalConversationId",
+      "handoff",
+      "normalizeStage",
+      "service",
+      "asObject",
+      "assignee",
+      "name",
+      "label",
+      "getUsefulTrustedContactName",
+      "contact",
+      "isUsefulContactName",
+      "conversationPhoneFallback",
+      "resolveConversationDisplayName",
+      "extractAvatarUrlFromEvent",
+      "resolveEventMessagePreview",
+      "canonicalKey",
+      "channel",
+      "status",
+      "owner",
+      "ownerId",
+      "mediaPreview",
+      "normalizeMedia",
+      "sender",
+      "senderType",
+      "lastAt",
+      "formatDate",
+      "sentimentFromEvent",
+      "value",
+      "estimatedValue",
+      "extractPayloadAvatar",
+      "normalizeAvatarUrl",
+      "normalizeAudioTranscription",
+      "normalizeLocation",
+      "caption",
+      "isGeneratedMediaLabel",
+      "isCustomerInboundEvent",
+      "isFollowUpOutboundEvent",
+      "direction",
+      "at",
+      "eventId",
+      "createdAt",
+      "resolveSalesControlMode",
+      "findKanbanColumn",
+      "targetColumnId",
+      "title",
+      "resolveConversationOwnerDetails",
+      "explicitOwner",
+      "explicitOwnerId",
+      "activeAgents",
+      "isAiControlled",
+      "kind",
+      "isConversationWaitingForFollowUp",
+      "sortConversationsByRecentActivity"
+    ],
+    "applyIncomingEventToConversations": [
+      "getStageLabel",
+      "stage",
+      "normalizeChannel",
+      "canonicalConversationKey",
+      "type",
+      "normalizeExternalConversationId",
+      "canonicalKey",
+      "normalizeMedia",
+      "normalizeAudioTranscription",
+      "normalizeLocation",
+      "caption",
+      "isGeneratedMediaLabel",
+      "formatDate",
+      "asObject",
+      "eventId",
+      "direction",
+      "isSubstantiveInboundFollowUp",
+      "isGenericLeadInquiry",
+      "isShortlyAfter",
+      "createdAt",
+      "status",
+      "resolveEventMessagePreview",
+      "owner",
+      "getUsefulTrustedContactName",
+      "resolveConversationDisplayName",
+      "label",
+      "isUsefulContactName",
+      "contact",
+      "name",
+      "conversationPhoneFallback",
+      "extractPayloadAvatar",
+      "normalizeAvatarUrl",
+      "isUnreadInboundEvent",
+      "isCustomerInboundEvent",
+      "isFollowUpOutboundEvent",
+      "sender",
+      "senderType",
+      "lastAt",
+      "isConversationWaitingForFollowUp",
+      "sortConversationsByRecentActivity",
+      "eventsToConversations"
+    ],
+    "applyIncomingEventToKanban": [
+      "normalizeChannel",
+      "canonicalConversationKey",
+      "type",
+      "normalizeExternalConversationId",
+      "asObject",
+      "messageType",
+      "normalizeLocation",
+      "normalizeMedia",
+      "name",
+      "address",
+      "isGeneratedMediaLabel",
+      "formatDate",
+      "extractPayloadAvatar",
+      "normalizeAvatarUrl",
+      "cleanAgentName",
+      "handoff",
+      "normalizeStage",
+      "stage",
+      "owner",
+      "ownerId",
+      "resolveConversationOwnerDetails",
+      "explicitOwner",
+      "isHumanControlled",
+      "kind",
+      "mediaPreview",
+      "sortKanbanCardsByConversationActivity"
+    ],
+    "getTenantSchedulingLink": [
+      "TENANT_SCHEDULING_LINKS"
+    ],
+    "isGenesisSalesTenant": [
+      "GENESIS_TENANT_SLUG"
+    ],
+    "buildGenesisSalesMovePayload": [
+      "canonicalKanbanKey"
+    ],
+    "orderKanbanColumnsForTenant": [
+      "isGenesisSalesTenant",
+      "GENESIS_SALES_STAGE_BY_KEY",
+      "canonicalKanbanKey",
+      "index"
+    ],
+    "emptyKanban": [
+      "OFFICIAL_KANBAN_COLUMNS"
+    ],
+    "getKanbanColumnKind": [
+      "canonicalKanbanKey"
+    ],
+    "validateKanbanOrderProposal": [
+      "canonicalKanbanKey"
+    ],
+    "eventsToKanban": [
+      "buildKanbanColumns",
+      "buildSalesLeadIndex",
+      "isGenesisSalesTenant",
+      "isKnownKanbanTestArtifact",
+      "canonicalConversationKey",
+      "status",
+      "normalizeStage",
+      "stage",
+      "compareDateLabel",
+      "isMoreRecentRecord",
+      "asObject",
+      "service",
+      "cleanAgentName",
+      "name",
+      "isKanbanOperationalEvent",
+      "getUsefulTrustedContactName",
+      "getTenantSchedulingLink",
+      "normalizeChannel",
+      "resolveTenantKanbanStage",
+      "direction",
+      "findKanbanColumn",
+      "appointment",
+      "resolveSalesControlMode",
+      "handoff",
+      "isKanbanAssignedToHuman",
+      "assignee",
+      "resolveConversationOwnerDetails",
+      "explicitOwner",
+      "explicitOwnerId",
+      "isAiControlled",
+      "aiLocked",
+      "targetColumnId",
+      "canonicalKey",
+      "normalizeExternalConversationId",
+      "type",
+      "title",
+      "resolveConversationDisplayName",
+      "label",
+      "channel",
+      "getStageLabel",
+      "kanbanColumns",
+      "value",
+      "formatCurrency",
+      "estimatedValue",
+      "owner",
+      "ownerId",
+      "kind",
+      "revision",
+      "intent",
+      "hasSchedulingSignal",
+      "lastAt",
+      "formatDate",
+      "extractAvatarUrlFromEvent",
+      "channelType",
+      "startsAt",
+      "contactName",
+      "raw",
+      "aiReason",
+      "column",
+      "mergeAppointmentCard",
+      "card",
+      "appointmentTimestamp",
+      "enrichCardWithAppointment",
+      "addFollowUpCards",
+      "sortKanbanCardsByConversationActivity"
+    ],
+    "isKanbanOperationalEvent": [
+      "service"
+    ],
+    "sortKanbanCardsByConversationActivity": [],
+    "loadRelevantContacts": [
+      "getClient",
+      "channelType",
+      "normalizeChannel",
+      "type",
+      "normalizeExternalConversationId",
+      "message"
+    ],
+    "loadContactAvatars": [
+      "getClient",
+      "message"
+    ],
+    "contactAvatarKey": [
+      "normalizeChannel",
+      "type",
+      "normalizeExternalConversationId"
+    ],
+    "normalizeAvatarUrl": [],
+    "buildContactDirectory": [
+      "name",
+      "normalizeAvatarUrl",
+      "contactAvatarKey"
+    ],
+    "buildContactAvatarIndex": [
+      "buildContactDirectory"
+    ],
+    "contactEntryFor": [
+      "contactAvatarKey",
+      "name"
+    ],
+    "applyContactDirectory": [
+      "contactEntryFor",
+      "name"
+    ],
+    "applyContactAvatars": [
+      "applyContactDirectory"
+    ],
+    "applyContactAvatarsToBroadcastContacts": [
+      "channelType",
+      "contactEntryFor",
+      "name"
+    ],
+    "applyContactUpdateToConversations": [
+      "contactAvatarKey",
+      "name",
+      "normalizeAvatarUrl",
+      "channelType",
+      "isUsefulContactName",
+      "conversationPhoneFallback"
+    ],
+    "resolveContactAvatarState": [
+      "normalizeAvatarUrl",
+      "url"
+    ],
+    "appointmentTimestamp": [
+      "createdAt"
+    ],
+    "isMoreRecentRecord": [
+      "appointmentTimestamp"
+    ],
+    "enrichCardWithAppointment": [
+      "targetColumnId"
+    ],
+    "mergeAppointmentCard": [
+      "title",
+      "channel",
+      "channelType",
+      "owner",
+      "ownerId",
+      "targetColumnId"
+    ],
+    "addFollowUpCards": [
+      "findKanbanColumn",
+      "canonicalConversationKey",
+      "status",
+      "normalizeChannel",
+      "followUpLabel",
+      "title",
+      "channel",
+      "type",
+      "stage",
+      "targetColumnId",
+      "owner",
+      "aiReason",
+      "lastAt",
+      "formatDate"
+    ],
+    "followUpLabel": [],
+    "loadSalesLeads": [
+      "getClient",
+      "message"
+    ],
+    "isKnownKanbanTestArtifact": [],
+    "buildSalesLeadIndex": [
+      "canonicalConversationKey",
+      "isMoreRecentRecord"
+    ],
+    "resolveSalesControlMode": [
+      "canonicalKanbanKey"
+    ],
+    "resolveTenantKanbanStage": [
+      "canonicalKanbanKey",
+      "isGenesisSalesTenant",
+      "status",
+      "pickColumn",
+      "stage",
+      "handoff",
+      "GENESIS_SALES_STAGE_KEYS",
+      "isKanbanWaitingHuman",
+      "direction"
+    ],
+    "buildKanbanColumns": [
+      "emptyKanban",
+      "canonicalKanbanKey",
+      "name",
+      "OFFICIAL_KANBAN_COLUMNS",
+      "normalizeKey",
+      "GENESIS_SALES_STAGE_BY_KEY",
+      "title",
+      "orderKanbanColumnsForTenant"
+    ],
+    "findKanbanColumn": [
+      "canonicalKanbanKey",
+      "normalizeKey",
+      "title",
+      "name"
+    ],
+    "emptyFunnel": [
+      "name",
+      "value"
+    ],
+    "eventsToFunnel": [
+      "emptyFunnel",
+      "normalizeStage",
+      "stage",
+      "estimatedValue"
+    ],
+    "pickColumn": [
+      "normalizeStage",
+      "canonicalKanbanKey",
+      "isKanbanClosed",
+      "isKanbanPaymentSignal",
+      "isKanbanAssignedToHuman",
+      "isKanbanWaitingHuman",
+      "isKanbanAbandoned",
+      "direction"
+    ],
+    "isKanbanClosed": [
+      "normalizeStage",
+      "stage",
+      "service"
+    ],
+    "isKanbanAssignedToHuman": [
+      "service",
+      "assignee"
+    ],
+    "isKanbanPaymentSignal": [
+      "normalizeStage",
+      "stage",
+      "service"
+    ],
+    "isKanbanWaitingHuman": [
+      "normalizeStage",
+      "stage"
+    ],
+    "isKanbanAbandoned": [
+      "direction",
+      "now"
+    ],
+    "ownerMetadataFromKanbanEvent": [
+      "asObject",
+      "name",
+      "isKanbanAssignedToHuman",
+      "resolveConversationOwnerDetails",
+      "explicitOwner",
+      "explicitOwnerId"
+    ],
+    "canonicalKanbanKey": [
+      "normalizeKey",
+      "KANBAN_KEY_ALIASES"
+    ],
+    "normalizeKey": [],
+    "hasSchedulingSignal": [],
+    "statusFromEvent": [
+      "handoff",
+      "normalizeStage",
+      "stage"
+    ],
+    "sentimentFromEvent": [
+      "normalizeStage",
+      "stage",
+      "handoff"
+    ],
+    "estimatedValue": [
+      "stage",
+      "service"
+    ],
+    "buildStatus": [
+      "handoff",
+      "normalizeChannel",
+      "label",
+      "raw",
+      "result",
+      "channel",
+      "supabase",
+      "latestAt",
+      "formatDate"
+    ],
+    "normalizeChannel": [
+      "label"
+    ],
+    "formatDate": [],
+    "compareDateLabel": [],
+    "formatCurrency": [],
+    "loadTeamAgents": [
+      "getClient"
+    ],
+    "saveTeamAgent": [
+      "name",
+      "status",
+      "getClient",
+      "now"
+    ],
+    "updateTeamAgentStatus": [
+      "getClient",
+      "status"
+    ],
+    "removeTeamAgent": [
+      "getClient"
+    ],
+    "loadTenantSettings": [
+      "getClient",
+      "loadTenant",
+      "message"
+    ],
+    "mapAppointment": [
+      "title",
+      "contactName",
+      "startsAt",
+      "formatDate",
+      "status",
+      "statusAppointmentLabel",
+      "channelType",
+      "normalizeChannel",
+      "label",
+      "raw"
+    ],
+    "statusAppointmentLabel": [],
+    "moveGenesisSalesCard": [
+      "canonicalKanbanKey",
+      "targetColumnId",
+      "GENESIS_SALES_STAGE_KEYS",
+      "normalizeChannel",
+      "channel",
+      "type",
+      "owner",
+      "title",
+      "getStageLabel",
+      "now",
+      "direction",
+      "contactName",
+      "service",
+      "handoff",
+      "ownerId",
+      "assignee",
+      "name",
+      "getClient",
+      "loadTenant",
+      "buildGenesisSalesMovePayload"
+    ],
+    "moveKanbanCard": [
+      "isGenesisSalesTenant",
+      "moveGenesisSalesCard",
+      "canonicalKanbanKey",
+      "title",
+      "name",
+      "targetColumnId",
+      "channel",
+      "now",
+      "direction",
+      "getClient",
+      "loadTenant"
+    ]
+  }
+}

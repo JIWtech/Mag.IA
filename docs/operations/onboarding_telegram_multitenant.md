@@ -316,7 +316,7 @@ docker compose -p setup-avvento-local --env-file .env -f docker-compose.yml rest
 Gerar workflow Telegram:
 
 ```powershell
-node scripts\build_telegram_multitenant_workflow.js
+node scripts\build\n8n\build_telegram_multitenant_workflow.js
 ```
 
 Importar no n8n local:

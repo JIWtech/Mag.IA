@@ -1,0 +1,111 @@
+export async function findTenantBySlug(supabase, activeTenantSlug) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('tenants')
+    .select('id, slug, name')
+    .eq('slug', activeTenantSlug)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn('Tenant lookup:', error.message);
+    return null;
+  }
+  return data;
+}
+
+export async function loadAppointments(supabase, tenantId, mapAppointment) {
+  const { data, error } = await supabase
+    .from('appointments')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('starts_at', { ascending: true })
+    .limit(200);
+  if (error) {
+    console.warn('Appointments fallback:', error.message);
+    return [];
+  }
+  return (data || []).map(mapAppointment);
+}
+
+export async function loadBroadcastContacts(supabase, tenantId) {
+  const { data, error } = await supabase
+    .from('broadcast_contacts')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (error) {
+    console.warn('Broadcast contacts fallback:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+export async function loadBroadcastCampaigns(supabase, tenantId) {
+  const { data, error } = await supabase
+    .from('broadcast_campaigns')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) {
+    console.warn('Broadcast campaigns fallback:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+export async function loadKanbanConfig(supabase, tenantId) {
+  const { data: board, error: boardError } = await supabase
+    .from('kanban_boards')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('is_default', true)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (boardError) {
+    console.warn('Kanban board fallback:', boardError.message);
+    return null;
+  }
+
+  if (!board) return null;
+
+  const { data: columns, error: columnsError } = await supabase
+    .from('kanban_columns')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('board_id', board.id)
+    .order('position', { ascending: true });
+
+  if (columnsError) {
+    console.warn('Kanban columns fallback:', columnsError.message);
+    return null;
+  }
+
+  return {
+    board,
+    columns: columns || [],
+  };
+}
+
+export async function loadFollowUpJobs(supabase, tenantId, tenantSlug) {
+  // This operational view is deliberately enabled only for the Nubia board.
+  if (tenantSlug !== 'clinica_nubia_oficial') return [];
+
+  const { data, error } = await supabase
+    .from('follow_up_jobs')
+    .select('id, channel_type, external_conversation_id, contact_name, step_key, objective, due_at, status, created_at')
+    .eq('tenant_id', tenantId)
+    .in('status', ['pending', 'processing'])
+    .order('due_at', { ascending: true })
+    .limit(200);
+
+  if (error) {
+    // The dashboard remains available until migration 019/020 is published.
+    console.warn('Follow-up jobs unavailable:', error.message);
+    return [];
+  }
+  return data || [];
+}

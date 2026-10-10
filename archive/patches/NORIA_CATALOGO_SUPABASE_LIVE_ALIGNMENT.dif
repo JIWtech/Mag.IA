@@ -1,0 +1,75 @@
+diff --git a/app/src/dataService.js b/app/src/dataService.js
+--- a/app/src/dataService.js
++++ b/app/src/dataService.js
+@@ Catálogo WhatsApp — contrato de leitura do frontend @@
++// A leitura do cache usa SOMENTE colunas liberadas pela migration LIVE
++// noria_catalog_auth_read_isolation_20261008.
++supabase.from('whatsapp_catalog_products')
++  .select('product_id,title,currency,regular_price_cents,sale_price_cents,effective_price_cents,price_source,price_evidence_source,price_observed_at,image_url,image_urls,synced_at,active')
++  .eq('tenant_id', tenantId)
++  .eq('instance_name', instanceName)
++  .eq('active', true)
++  .in('product_id', productIds);
++
++// A chave de cache é tenant + instância + produto. Falhas são cacheadas por
++// curto período; um refresh autenticado é solicitado no máximo a cada 5 min.
++const catalogProductKey = (tenantId, instanceName, productId) =>
++  [tenantId, instanceName, productId].map(String).join('::');
++
++// Preços aparecem somente com price_source whatsapp_catalog_*; URL da imagem
++// precisa ser HTTPS, sem credenciais ou faixas privadas.
+
+diff --git a/app/src/integration.js b/app/src/integration.js
+--- a/app/src/integration.js
++++ b/app/src/integration.js
+@@
++export async function requestCatalogProductRefresh(payload, activeTenantSlug = env.tenantSlug) {
++  return sendCommand('refresh_whatsapp_catalog_products', payload, activeTenantSlug, { external: false });
++}
+
+diff --git a/n8n/code/command_router.js b/n8n/code/command_router.js
+--- a/n8n/code/command_router.js
++++ b/n8n/code/command_router.js
+@@ refresh_whatsapp_catalog_products @@
++// Autentica usuário, exige membership owner/admin/manager e valida que
++// instance_name pertence ao tenant antes de acessar Evolution.
++// Credenciais continuam somente no runtime n8n.
++try {
++  response = await httpJson('POST', base + '/business/getCatalog/' + instance, headers, { number, limit: 50 });
++} catch (error) {
++  primaryError = error;
++}
++const payload = response?.data && typeof response.data === 'object' ? response.data : response;
++let products = Array.isArray(payload?.catalog) ? payload.catalog : payload?.products || [];
++if (!products.length) {
++  // Compatibilidade com versões Evolution que retornam produtos por coleção.
++  const collections = await httpJson('POST', base + '/business/getCollections/' + instance, headers, { number, limit: 20 });
++  products = flattenCollections(collections?.data || collections);
++}
++// Persistir apenas produto solicitado, preço vindo do provedor e imagem HTTPS segura.
+
+diff --git a/scripts/build_whatsapp_core.cjs b/scripts/build_whatsapp_core.cjs
+--- a/scripts/build_whatsapp_core.cjs
++++ b/scripts/build_whatsapp_core.cjs
+@@
++// Evita regressão para select=* quando o Core Hotfix12 for regenerado.
++code = code
++  .replace('/rest/v1/whatsapp_catalog_products?select=*',
++    '/rest/v1/whatsapp_catalog_products?select=tenant_id,instance_name,product_id,retailer_id,title,description,currency,regular_price_cents,sale_price_cents,effective_price_cents,price_source,availability,visibility,image_url,image_urls,collection_id,matched_inventory_id,match_status,active,price_evidence_source,price_observed_at,synced_at,updated_at')
++  .replace('/rest/v1/whatsapp_catalog_sync_state?select=*',
++    '/rest/v1/whatsapp_catalog_sync_state?select=tenant_id,instance_name,status,last_attempt_at,last_success_at,product_count,reported_count,truncated,error_code,endpoint,updated_at');
+
+diff --git a/supabase/migrations/028_whatsapp_catalog_cache.sql b/supabase/migrations/028_whatsapp_catalog_cache.sql
+--- a/supabase/migrations/028_whatsapp_catalog_cache.sql
++++ b/supabase/migrations/028_whatsapp_catalog_cache.sql
+@@
++-- NO-OP: superseded by the already applied LIVE migration
++-- noria_catalog_auth_read_isolation_20261008.
++-- Intentionally creates no schema, grant, or policy locally.
+
+diff --git a/app/src/dataService.test.js b/app/src/dataService.test.js
+--- a/app/src/dataService.test.js
++++ b/app/src/dataService.test.js
+@@ catálogo @@
++// Testes cobrem enriquecimento tenant/instância/produto, preço promocional
++// verificado, fallback seguro e rejeição de URL privada/credenciada.

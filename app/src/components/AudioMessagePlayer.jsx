@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, Mic, AlertCircle, Loader2, Volume2, VolumeX } from 'lucide-react';
-import { formatAudioTime, calculateAudioProgress, mediaSourceChanged } from '../audioUtils.js';
+import { formatAudioTime, calculateAudioProgress, mediaSourceChanged } from '../utils/audioUtils.js';
 
 export { formatAudioTime, calculateAudioProgress };
 

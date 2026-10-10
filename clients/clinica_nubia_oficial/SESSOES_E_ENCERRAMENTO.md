@@ -50,7 +50,7 @@ producao foi executado por esta entrega; nao considerar o ambiente remoto atuali
    desde que a IA esteja disponivel e haja cota diaria.
 
 O SQL 06 e gerado de `prompt_canonico_v2.txt` por
-`node scripts/build_nubia_session_sql.cjs`. Nao manter outro prompt manual.
+`node scripts/build/sql/build_nubia_session_sql.cjs`. Nao manter outro prompt manual.
 
 ## Validacao
 

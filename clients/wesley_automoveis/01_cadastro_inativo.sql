@@ -51,7 +51,7 @@ begin
         'appointment_scheduling',jsonb_build_object('enabled',false),
         'vehicle_sheet_id','1VgUrslSLNWmouutDww7iws2kVJUiiSiV9iAgwfyFWhE',
         'sdr_rules',jsonb_build_object(
-          'hot_lead_percent',30,
+          'hot_lead_percent',20,
           'minimum_purchase_year',1995,
           'rejected_purchase_brands',jsonb_build_array('Peugeot','Citroen'),
           'preferred_purchase_models',jsonb_build_array('Uno','Palio','Gol','Corsa','Celta'),

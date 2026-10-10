@@ -252,10 +252,142 @@ async function main(helpers) {
     return { provider: 'evolution_api', raw: body, messageId: body?.key?.id || body?.message?.key?.id || body?.id || '' };
   }
 
+  function safeCatalogImage(value) {
+    try {
+      const url = new URL(String(value || ''));
+      if (url.protocol !== 'https:' || url.username || url.password || !url.hostname) return '';
+      if (/^(?:10\.|127\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/.test(url.hostname)) return '';
+      return url.href.slice(0, 1500);
+    } catch (_) { return ''; }
+  }
+
+  function unwrapCatalogPayload(value) {
+    let current = value;
+    for (let depth = 0; depth < 4 && current && typeof current === 'object' && !Array.isArray(current); depth++) {
+      if (Array.isArray(current.catalog) || Array.isArray(current.products) || Array.isArray(current.data)) break;
+      if (current.data && typeof current.data === 'object') current = current.data;
+      else if (current.result && typeof current.result === 'object') current = current.result;
+      else break;
+    }
+    return current;
+  }
+
+  function productsFromPayload(value) {
+    const payload = unwrapCatalogPayload(value);
+    if (Array.isArray(payload)) return payload;
+    for (const key of ['catalog', 'products', 'items', 'data']) {
+      if (Array.isArray(payload?.[key])) return payload[key];
+    }
+    return [];
+  }
+
+  function evolutionFailure(error) {
+    const status = Number(error?.statusCode || error?.status || error?.response?.status || 0);
+    const message = String(error?.message || error?.description || error || 'Evolution request failed');
+    if (status === 401 || status === 403 || /unauthori[sz]ed|forbidden|invalid.?api.?key/i.test(message)) return 'CATALOG_PROVIDER_AUTH_FAILED';
+    if (status === 404 || /not.?found|route.*not/i.test(message)) return 'CATALOG_PROVIDER_ENDPOINT_UNSUPPORTED';
+    if (status === 408 || status === 429 || status >= 500 || /timeout|econn|network|unavailable/i.test(message)) return 'CATALOG_PROVIDER_UNAVAILABLE';
+    return 'CATALOG_PROVIDER_ERROR';
+  }
+
+  async function fetchCatalogPages(evolution, instance, headers, number, productIds) {
+    const base = evolution.baseUrl.replace(/\/$/, '');
+    const found = new Map();
+    let firstError = null;
+    // Different Evolution builds accept either page/offset.  The stable limit
+    // keeps a provider response bounded; never treat page one as exhaustive.
+    for (let page = 1; page <= 20 && found.size < productIds.length; page++) {
+      let response;
+      try {
+        response = await httpJson('POST', base + '/business/getCatalog/' + encodeURIComponent(instance), headers,
+          { number, limit: 50, page, offset: (page - 1) * 50 });
+      } catch (error) { firstError = firstError || error; break; }
+      const payload = unwrapCatalogPayload(response);
+      const products = productsFromPayload(payload);
+      for (const product of products) {
+        const id = String(product?.productId || product?.id || '');
+        if (productIds.includes(id)) found.set(id, product);
+      }
+      const hasMore = payload?.hasNext === true || payload?.has_more === true || payload?.nextPage || payload?.next_page;
+      if (!products.length || !hasMore && products.length < 50) break;
+    }
+    return { found, firstError };
+  }
+
+  async function refreshWhatsappCatalogProducts(tenant, tenantSlug, payload) {
+    const instance = required(payload.instance_name, 'payload.instance_name');
+    const productIds = [...new Set((Array.isArray(payload.product_ids) ? payload.product_ids : [])
+      .map((value) => String(value || '').trim()).filter((value) => value && value.length <= 220))].slice(0, 20);
+    if (!productIds.length) throw new Error('payload.product_ids obrigatorio');
+    const { supabaseUrl } = supabaseConfig();
+    const channels = await httpJson('GET', supabaseUrl + '/rest/v1/channels?select=external_id,config&tenant_id=eq.'
+      + encodeURIComponent(tenant.id) + '&type=eq.whatsapp&status=eq.active&limit=50', serviceHeaders());
+    const channel = (Array.isArray(channels) ? channels : []).find((row) => String(row.external_id || row.config?.instance_name || '') === instance);
+    if (!channel) throw new Error('Instancia nao pertence ao tenant');
+    const evolution = evolutionFor(tenantSlug);
+    if (!evolution.baseUrl || !evolution.apiKey || evolution.instance !== instance) throw new Error('Evolution nao configurada para a instancia do tenant');
+    const number = String(channel.config?.phone || '').replace(/\D/g, '');
+    if (!/^\d{10,15}$/.test(number)) throw new Error('Numero comercial da instancia indisponivel');
+    const headers = { 'Content-Type': 'application/json', apikey: evolution.apiKey };
+    const claim = await httpJson('POST', supabaseUrl + '/rest/v1/rpc/claim_whatsapp_catalog_sync', serviceHeaders(), {
+      p_tenant_id: tenant.id, p_instance_name: instance, p_cooldown_seconds: 120, p_lease_seconds: 180,
+    });
+    if (!claim?.claimed) return { ok: true, command: 'refresh_whatsapp_catalog_products', skipped: claim?.reason || 'cooldown' };
+    const leaseToken = String(claim.lease_token || '');
+    if (!leaseToken) throw new Error('CATALOG_SYNC_LEASE_INVALID');
+    let catalog;
+    try {
+      catalog = await fetchCatalogPages(evolution, instance, headers, number, productIds);
+      // getCollections is only a fallback: many versions return collection
+      // metadata, not products. It must never make a partial catalog look empty.
+      if (catalog.found.size < productIds.length) {
+        try {
+          const collectionsResponse = await httpJson('POST', evolution.baseUrl.replace(/\/$/, '') + '/business/getCollections/' + encodeURIComponent(instance), headers, { number, limit: 50 });
+          const collectionsPayload = unwrapCatalogPayload(collectionsResponse);
+          const collections = Array.isArray(collectionsPayload?.collections) ? collectionsPayload.collections : [];
+          for (const collection of collections) for (const product of (Array.isArray(collection?.products) ? collection.products : [])) {
+            const id = String(product?.productId || product?.id || '');
+          if (!productIds.includes(id)) continue;
+          const existing = catalog.found.get(id);
+          // Collections may be a reduced projection of a product already
+          // returned by getCatalog. Only fill gaps; never erase verified data.
+          catalog.found.set(id, existing
+            ? { ...product, ...existing, collection_id: existing.collection_id || collection.id || null,
+              productImage: existing.productImage?.url ? existing.productImage : (product.productImage || existing.productImage) }
+            : { ...product, collection_id: collection.id || null });
+          }
+        } catch (collectionsError) {
+          // A partial valid catalog is authoritative for the IDs it contains.
+          // Collection endpoints are version-dependent enrichment only.
+          if (!catalog.found.size && !catalog.firstError) throw collectionsError;
+        }
+      }
+      if (!catalog.found.size && catalog.firstError) throw catalog.firstError;
+    } catch (error) {
+      const errorCode = evolutionFailure(error);
+      await httpJson('POST', supabaseUrl + '/rest/v1/rpc/finish_whatsapp_catalog_sync', serviceHeaders(), { p_tenant_id: tenant.id, p_instance_name: instance, p_lease_token: leaseToken, p_products: [], p_status: 'error', p_error_code: errorCode, p_endpoint: 'business/getCatalog' });
+      throw new Error(errorCode);
+    }
+    const products = [...catalog.found.values()];
+    const now = new Date().toISOString();
+    const rows = products.filter((product) => productIds.includes(String(product?.productId || product?.id || ''))).map((product) => {
+      const regular = Number(product.priceAmount1000); const sale = Number(product.salePriceAmount1000);
+      const regularCents = Number.isSafeInteger(regular) && regular > 0 ? Math.round(regular / 10) : null;
+      const saleCents = Number.isSafeInteger(sale) && sale > 0 ? Math.round(sale / 10) : null;
+      const imageUrl = safeCatalogImage(product?.productImage?.url || product?.imageUrl || product?.image_url);
+      return { tenant_id: tenant.id, instance_name: instance, product_id: String(product.productId || product.id), retailer_id: String(product.retailerId || ''), title: String(product.title || product.name || '').slice(0, 500), currency: String(product.currencyCode || product.currency || 'BRL').slice(0, 10), regular_price_cents: regularCents, sale_price_cents: saleCents, effective_price_cents: saleCents || regularCents, price_source: saleCents ? 'whatsapp_catalog_sale' : (regularCents ? 'whatsapp_catalog_current' : 'none'), price_evidence_source: 'evolution_getCatalog', price_observed_at: now, image_url: imageUrl || null, image_urls: imageUrl ? [imageUrl] : [], active: true, synced_at: now, updated_at: now };
+    });
+    const finish = await httpJson('POST', supabaseUrl + '/rest/v1/rpc/finish_whatsapp_catalog_sync', serviceHeaders(), { p_tenant_id: tenant.id, p_instance_name: instance, p_lease_token: leaseToken, p_products: rows, p_status: 'ok', p_error_code: null, p_endpoint: 'business/getCatalog' });
+    if (finish?.ok !== true) throw new Error('CATALOG_SYNC_LEASE_LOST');
+    const missing = productIds.filter((id) => !catalog.found.has(id));
+    return { ok: true, command: 'refresh_whatsapp_catalog_products', found: rows.length, requested: productIds.length, missing,
+      outcome: rows.length ? 'products_found' : 'product_not_found' };
+  }
+
   const command = required(input.command, 'command');
   const tenantSlug = required(input.tenant_slug, 'tenant_slug').toLowerCase();
   const payload = input.payload || {};
-  if (!['manual_reply', 'broadcast_send', 'close_conversation', 'assign_conversation', 'confirm_payment_signal', 'suggest_kanban_flow_order', 'apply_kanban_flow_order'].includes(command)) throw new Error('command nao suportado: ' + command);
+  if (!['manual_reply', 'broadcast_send', 'close_conversation', 'assign_conversation', 'confirm_payment_signal', 'suggest_kanban_flow_order', 'apply_kanban_flow_order', 'refresh_whatsapp_catalog_products'].includes(command)) throw new Error('command nao suportado: ' + command);
 
   const user = await validateUserSession();
   const tenant = await loadTenant(tenantSlug);
@@ -263,6 +395,7 @@ async function main(helpers) {
 
   if (command === 'suggest_kanban_flow_order') return await suggestKanbanFlowOrder(tenant, payload);
   if (command === 'apply_kanban_flow_order') return await applyKanbanFlowOrder(tenant, payload);
+  if (command === 'refresh_whatsapp_catalog_products') return await refreshWhatsappCatalogProducts(tenant, tenantSlug, payload);
 
   const channelType = required(payload.channel_type, 'payload.channel_type').toLowerCase();
   const externalConversationId = required(payload.external_conversation_id, 'payload.external_conversation_id');

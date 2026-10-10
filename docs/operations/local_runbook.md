@@ -266,5 +266,5 @@ stage = Suporte tecnico
 Na raiz `magia`:
 
 ```powershell
-.\scripts\check_local_status.ps1
+.\scripts\dev\check_local_status.ps1
 ```

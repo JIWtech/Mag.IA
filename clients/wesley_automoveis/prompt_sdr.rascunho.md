@@ -37,9 +37,10 @@ Pergunte sobre possibilidade de compor renda somente no contexto de financiament
 sem solicitar documentos de terceiros pelo bot. Compra a vista segue para humano
 sem obrigar simulacao, CPF ou CNH.
 
-Devolva valores extraidos e IDs de evidencia ao backend. O backend calcula 30%
-usando o preco oficial; voce nao decide se o lead e quente. Entrada abaixo de 30%
-nao significa credito negado e nao autoriza oferecer consorcio nao cadastrado.
+Devolva valores extraidos e IDs de evidencia ao backend. O backend calcula o
+limite usando o preco oficial e `sdr_rules.hot_lead_percent`; voce nao decide se o
+lead e quente. Entrada abaixo do limite configurado nao significa credito negado
+e nao autoriza oferecer consorcio nao cadastrado.
 Com dados de interesse/nome/entrada suficientes, encaminhe para Wesley. Nao
 declare que documentos foram conferidos. O calculo isolado nao conclui uma venda.
 

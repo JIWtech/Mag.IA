@@ -222,9 +222,15 @@ try {
   if (turn?.claimed) {
     // Provider timeouts have unknown delivery state. Do not retry them blindly.
     const outcome = sendAttempted ? 'uncertain' : 'failed';
-    await saveEvent({ service: 'technical_error', stage: 'Atendimento humano', handoff: true,
-      ai_provider: 'core_error', ai_error: String(error.message || 'processing_failed').slice(0,300),
-      raw_payload: { delivery_uncertain: sendAttempted, provider_accepted: providerAccepted } }).catch(() => {});
+    const errorCode=String(error.message || 'processing_failed').slice(0,300);
+    await supabasePost('/rest/v1/channel_events', {
+      tenant_id:$json.tenant_id,tenant_slug:tenantSlug,channel_type:'whatsapp',external_conversation_id:chatId,
+      external_message_id:'technical_'+String(turn.token||Date.now()),direction:'outbound',sender_type:'system',
+      contact_name:turn.messages?.at(-1)?.name||firstName,message_text:'',service:'technical_error',stage:'Erro técnico',
+      handoff:false,ai_provider:'core_error',ai_model:null,ai_error:errorCode,ai_usage:{},delivery_status:'failed',
+      raw_payload:{delivery_uncertain:sendAttempted,provider_accepted:providerAccepted,
+        ...(deliveryAttemptId?{delivery_attempt_id:deliveryAttemptId}:{})}
+    }).catch(() => {});
     await complete(outcome).catch(() => {});
   }
   return { json: { ok: false, tenant_slug: tenantSlug, error: String(error.message || 'processing_failed').slice(0,300), delivery_uncertain: sendAttempted } };

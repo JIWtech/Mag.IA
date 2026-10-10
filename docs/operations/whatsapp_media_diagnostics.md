@@ -17,9 +17,9 @@
 ## Arquivos e aplicacao
 
 - Fontes: `n8n/code/whatsapp_prepare_context.js` e `whatsapp_prepare_sent.js`.
-- Gerar JSON: `node scripts/build_whatsapp_media_nodes.cjs`.
+- Gerar JSON: `node scripts/build/n8n/build_whatsapp_media_nodes.cjs`.
 - Testes sem Gemini, WhatsApp ou alteracoes no banco:
-  `node --test scripts/test_whatsapp_media.cjs`.
+  `node --test scripts/tests/test_whatsapp_media.cjs`.
 - Importar/publicar `n8n/workflows/magia_whatsapp_evolution_mvp.json` no n8n hospedado.
   Conferir as credenciais Supabase, Redis, Gemini e Evolution apos a importacao.
   Manter somente um workflow ativo para `/webhook/magia-whatsapp`.
@@ -146,8 +146,8 @@ Storage/egress consomem as franquias do Supabase; nao envolvem tokens Gemini.
 Script reutilizavel para catalogos de exemplo existentes no Wikimedia:
 
 ```powershell
-node --env-file=.env scripts/cache_catalog_media.cjs --tenant=universo_prata
-node --env-file=.env scripts/cache_catalog_media.cjs --tenant=universo_prata --apply
+node --env-file=.env scripts/ops/cache_catalog_media.cjs --tenant=universo_prata
+node --env-file=.env scripts/ops/cache_catalog_media.cjs --tenant=universo_prata --apply
 ```
 
 Sem --apply, apenas valida/download; nao grava. Valida HTTPS/hosts, tipo e

@@ -1,0 +1,560 @@
+/* ===========================================================================
+   Disparos — campanha, contatos e histórico
+   =========================================================================== */
+.broadcast-page {
+  grid-template-rows: auto auto;
+  align-content: start;
+  gap: 14px;
+}
+
+.broadcast-campaign-panel {
+  padding: 16px;
+}
+
+.broadcast-campaign-heading {
+  margin-bottom: 12px;
+}
+
+.broadcast-campaign-heading h2,
+.broadcast-selected-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.broadcast-campaign-heading p,
+.broadcast-section-description {
+  margin: 5px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  opacity: 0.76;
+}
+
+.broadcast-grid {
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 0.95fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.broadcast-contacts,
+.broadcast-composer {
+  min-width: 0;
+}
+
+.broadcast-section-heading,
+.broadcast-selected-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.broadcast-section-heading>div,
+.broadcast-selected-heading>div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.broadcast-section-heading svg,
+.broadcast-selected-heading svg {
+  color: var(--brand);
+  flex: 0 0 auto;
+}
+
+.broadcast-section-heading h3 {
+  position: relative;
+  margin: 0;
+  padding-bottom: 8px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.broadcast-section-heading h3::after,
+.broadcast-selected-heading h2::after,
+.broadcast-footer-grid>.panel:first-child .panel-title h2::after,
+.broadcast-field-label>span::after {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 42px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(0, 224, 255, 0.86), rgba(120, 97, 255, 0.66));
+  content: '';
+}
+
+.broadcast-select-all {
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 0 11px;
+  border: 1px solid rgba(0, 224, 255, 0.24);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.10), rgba(120, 97, 255, 0.07));
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.broadcast-select-all:hover:not(:disabled) {
+  border-color: rgba(0, 224, 255, 0.34);
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.16), rgba(120, 97, 255, 0.12));
+}
+
+.broadcast-select-all:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.broadcast-contact-search {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 13px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.broadcast-contact-search:focus-within {
+  border-color: color-mix(in srgb, var(--brand) 55%, var(--line));
+}
+
+.broadcast-contact-search svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.broadcast-contact-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.broadcast-contact-list {
+  height: auto;
+  min-height: 0;
+  max-height: 276px;
+  margin-top: 10px;
+  padding-right: 4px;
+  overflow-y: auto;
+  scrollbar-color: rgba(0, 224, 255, 0.22) rgba(255, 255, 255, 0.03);
+  scrollbar-width: thin;
+}
+
+.broadcast-contact-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.broadcast-contact-list::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.broadcast-contact-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(0, 224, 255, 0.22);
+}
+
+.broadcast-contact-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 224, 255, 0.34);
+}
+
+.broadcast-contact-list .contact-row {
+  min-height: 56px;
+  grid-template-columns: 16px 32px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.08) 0%, rgba(120, 97, 255, 0.05) 55%, rgba(15, 24, 43, 0) 100%), var(--surface);
+}
+
+.broadcast-contact-list .contact-row:hover {
+  border-color: var(--line-strong);
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.10) 0%, rgba(120, 97, 255, 0.06) 55%, rgba(15, 24, 43, 0) 100%), var(--surface);
+}
+
+.broadcast-contact-list .contact-row.is-selected {
+  border-color: color-mix(in srgb, var(--brand) 38%, var(--line));
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.13) 0%, rgba(120, 97, 255, 0.08) 55%, rgba(15, 24, 43, 0) 100%), var(--surface);
+}
+
+.broadcast-contact-list .contact-row input {
+  margin: 0;
+}
+
+.broadcast-contact-avatar {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--brand) 26%, var(--line));
+  border-radius: 50%;
+  background: rgba(0, 224, 255, 0.09);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.broadcast-contact-details {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.broadcast-contact-details strong,
+.broadcast-contact-details small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.broadcast-contact-details strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.broadcast-contact-details small {
+  color: var(--text);
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+.broadcast-channel-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.broadcast-channel-icon.channel-whatsapp {
+  color: #4ade80;
+  background: transparent;
+  border: 0;
+}
+
+.broadcast-channel-icon.channel-telegram {
+  color: #38bdf8;
+}
+
+.broadcast-channel-icon.channel-instagram {
+  color: #f472b6;
+}
+
+.broadcast-composer {
+  gap: 13px;
+}
+
+.broadcast-field-label {
+  gap: 9px;
+}
+
+.broadcast-field-label>span {
+  position: relative;
+  width: max-content;
+  padding-bottom: 8px;
+}
+
+.broadcast-composer textarea {
+  min-height: 178px;
+}
+
+.broadcast-send-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 36px;
+}
+
+.broadcast-send-row .primary-button {
+  min-height: 36px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border-color: rgba(0, 224, 255, 0.34);
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.88), rgba(72, 156, 255, 0.82) 58%, rgba(120, 97, 255, 0.78));
+  color: #06111f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.broadcast-send-row .primary-button:hover:not(:disabled) {
+  border-color: rgba(0, 224, 255, 0.48);
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.96), rgba(72, 156, 255, 0.90) 58%, rgba(120, 97, 255, 0.86));
+  color: #06111f;
+}
+
+.broadcast-send-row small {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  color: var(--text);
+  font-size: 12px;
+  opacity: 0.76;
+}
+
+.broadcast-footer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.broadcast-footer-grid .panel {
+  height: clamp(220px, 24vh, 260px);
+  min-height: 220px;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.campaign-list,
+.selected-contact-list {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 8px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.selected-contact-list {
+  align-content: start;
+  grid-auto-rows: minmax(54px, auto);
+}
+
+.campaign-list::-webkit-scrollbar,
+.selected-contact-list::-webkit-scrollbar {
+  display: none;
+}
+
+.campaign-card {
+  min-height: 58px;
+  padding: 10px 12px;
+  border-radius: 9px;
+}
+
+.campaign-card span {
+  margin-top: 3px;
+  font-size: 11px;
+  opacity: 0.76;
+}
+
+.broadcast-selected-heading {
+  margin-bottom: 12px;
+}
+
+.broadcast-selected-heading h2,
+.broadcast-footer-grid>.panel:first-child .panel-title h2 {
+  position: relative;
+  padding-bottom: 8px;
+}
+
+.broadcast-footer-grid>.panel:first-child .panel-title svg {
+  color: var(--brand);
+}
+
+.broadcast-selected-heading button {
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.broadcast-selected-heading button:hover {
+  color: var(--text);
+}
+
+.selected-contact-row {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 20px 28px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.08) 0%, rgba(120, 97, 255, 0.05) 55%, rgba(15, 24, 43, 0) 100%), var(--surface);
+}
+
+.selected-contact-row>button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.selected-contact-row>button:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.selected-contact-row:hover {
+  border-color: var(--line-strong);
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.10) 0%, rgba(120, 97, 255, 0.06) 55%, rgba(15, 24, 43, 0) 100%), var(--surface);
+}
+
+@media (max-width: 720px) {
+  .broadcast-campaign-panel {
+    padding: 14px;
+  }
+
+  .broadcast-grid,
+  .broadcast-footer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .broadcast-footer-grid>.panel:first-child {
+    order: 2;
+  }
+
+  .broadcast-footer-grid>.panel:last-child {
+    order: 1;
+  }
+
+  .broadcast-contact-list {
+    max-height: 250px;
+  }
+
+  .broadcast-send-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .broadcast-send-row .primary-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ==========================================================================
+   Disparos Responsivo (Fase 3)
+   ========================================================================== */
+@media (max-width: 960px) {
+  .broadcast-page {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-y: auto;
+    height: auto;
+    padding-bottom: 16px;
+  }
+
+  .broadcast-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .broadcast-import,
+  .broadcast-composer {
+    width: 100%;
+  }
+
+  .broadcast-import .file-drop {
+    width: 100%;
+  }
+
+  .broadcast-import .header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .broadcast-composer .textarea-label textarea {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .broadcast-import .file-drop {
+    min-height: 110px;
+    padding: 14px;
+  }
+
+  .broadcast-import .header-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .broadcast-import .header-actions .secondary-button,
+  .broadcast-import .header-actions .compact-select {
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .broadcast-composer .textarea-label textarea {
+    min-height: 110px;
+  }
+
+  .broadcast-composer .header-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .broadcast-composer .header-actions .primary-button {
+    width: 100%;
+    justify-content: center;
+    min-height: 42px;
+  }
+
+  .campaign-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .campaign-card>div {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .campaign-card .badge {
+    align-self: flex-start;
+  }
+
+  .contact-row div {
+    min-width: 0;
+  }
+
+  .contact-row span {
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+}

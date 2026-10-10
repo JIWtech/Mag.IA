@@ -126,7 +126,7 @@ try {
     method: 'POST',
     url: String($env[`EVOLUTION_API_URL_${suffix}`] || '').replace(/\/$/, '') + '/chat/getBase64FromMediaMessage/' + encodeURIComponent(String(input.instance || $env[`EVOLUTION_INSTANCE_${suffix}`] || '')),
     headers: { apikey: $env[`EVOLUTION_API_KEY_${suffix}`], 'Content-Type': 'application/json' },
-    body: { message: { key: { id: messageId, remoteJid: input.remoteJid, fromMe: false } }, convertToMp4: false },
+    body: { message: { key: { id: messageId, remoteJid: input.remoteJid, fromMe: Boolean(input.is_manual_whatsapp_outbound) } }, convertToMp4: false },
     json: true,
     timeout: 30000,
   });

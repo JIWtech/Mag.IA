@@ -1,0 +1,1068 @@
+/* ==========================================================================
+   Configurações Page — Design NORIA Refinado & Responsivo
+   ========================================================================== */
+.settings-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 32px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 1. KPIs Dinâmicos de Resumo com degradê NORIA sutil e base navy */
+.settings-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.settings-kpi-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 13px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  height: 154px;
+  min-height: 154px;
+  max-height: 154px;
+  box-sizing: border-box;
+  overflow: visible;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* 1.1 Cards com degradê sutil integrado ao navy e borda contextual */
+.settings-kpi-card.kpi-team {
+  background:
+    linear-gradient(135deg, rgba(0, 224, 255, 0.055) 0%, rgba(56, 189, 248, 0.025) 48%, transparent 80%),
+    var(--surface);
+  border-color: color-mix(in srgb, var(--line) 84%, #00e0ff);
+}
+
+.settings-kpi-card.kpi-team:hover {
+  border-color: color-mix(in srgb, var(--line) 60%, #00e0ff);
+  background:
+    linear-gradient(135deg, rgba(0, 224, 255, 0.085) 0%, rgba(56, 189, 248, 0.04) 48%, transparent 80%),
+    var(--surface-hover);
+}
+
+.settings-kpi-card.kpi-units {
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.055) 0%, rgba(72, 156, 255, 0.025) 48%, transparent 80%),
+    var(--surface);
+  border-color: color-mix(in srgb, var(--line) 84%, #3b82f6);
+}
+
+.settings-kpi-card.kpi-units:hover {
+  border-color: color-mix(in srgb, var(--line) 60%, #3b82f6);
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.085) 0%, rgba(72, 156, 255, 0.04) 48%, transparent 80%),
+    var(--surface-hover);
+}
+
+.settings-kpi-card.kpi-channels {
+  background:
+    linear-gradient(135deg, rgba(120, 97, 255, 0.055) 0%, rgba(139, 92, 246, 0.025) 48%, transparent 80%),
+    var(--surface);
+  border-color: color-mix(in srgb, var(--line) 84%, #7861ff);
+}
+
+.settings-kpi-card.kpi-channels:hover {
+  border-color: color-mix(in srgb, var(--line) 60%, #7861ff);
+  background:
+    linear-gradient(135deg, rgba(120, 97, 255, 0.085) 0%, rgba(139, 92, 246, 0.04) 48%, transparent 80%),
+    var(--surface-hover);
+}
+
+.settings-kpi-card.kpi-hours {
+  background:
+    linear-gradient(135deg, rgba(16, 185, 129, 0.055) 0%, rgba(0, 224, 255, 0.025) 48%, transparent 80%),
+    var(--surface);
+  border-color: color-mix(in srgb, var(--line) 84%, #10b981);
+}
+
+.settings-kpi-card.kpi-hours:hover {
+  border-color: color-mix(in srgb, var(--line) 60%, #10b981);
+  background:
+    linear-gradient(135deg, rgba(16, 185, 129, 0.085) 0%, rgba(0, 224, 255, 0.04) 48%, transparent 80%),
+    var(--surface-hover);
+}
+
+/* 1.2 Header Centralizado: Ícone + Título */
+.settings-kpi-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.settings-kpi-icon-wrap {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.settings-kpi-icon-wrap svg {
+  stroke-width: 2.2px;
+}
+
+.settings-kpi-icon-wrap.team-icon {
+  color: #00e0ff;
+  background: rgba(0, 224, 255, 0.12);
+  border: 1px solid rgba(0, 224, 255, 0.32);
+}
+
+.settings-kpi-icon-wrap.team-icon svg {
+  color: #00e0ff;
+  stroke: #00e0ff;
+}
+
+.settings-kpi-icon-wrap.unit-icon {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.32);
+}
+
+.settings-kpi-icon-wrap.unit-icon svg {
+  color: #38bdf8;
+  stroke: #38bdf8;
+}
+
+.settings-kpi-icon-wrap.channel-icon {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.32);
+}
+
+.settings-kpi-icon-wrap.channel-icon svg {
+  color: #a78bfa;
+  stroke: #a78bfa;
+}
+
+.settings-kpi-icon-wrap.hours-icon {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.32);
+}
+
+.settings-kpi-icon-wrap.hours-icon svg {
+  color: #34d399;
+  stroke: #34d399;
+}
+
+.settings-kpi-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 1.3 Métrica Principal Centralizada */
+.settings-kpi-metric-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  min-height: 38px;
+  max-height: 38px;
+  margin-top: 4px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.settings-kpi-number {
+  font-size: 26px;
+  font-weight: 780;
+  color: var(--text);
+  line-height: 1;
+  font-family: var(--font-display, inherit);
+}
+
+.settings-kpi-hours-center-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.settings-kpi-hours-days {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1.25;
+  text-align: center;
+  display: block;
+  margin: 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.settings-kpi-hours-time {
+  font-size: 14.5px;
+  font-weight: 750;
+  color: var(--text);
+  line-height: 1.25;
+  text-align: center;
+  display: block;
+  margin: 2px auto 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.settings-kpi-card.kpi-hours .settings-kpi-header {
+  margin-bottom: auto;
+}
+
+/* 1.4 Linha Divisória Fina */
+.settings-kpi-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--line);
+  margin: 7px 0;
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+/* 1.5 Área de Resumo Inferior (Footer dos KPIs) */
+.settings-kpi-footer {
+  width: 100%;
+  height: 48px;
+  min-height: 48px;
+  max-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: visible;
+  flex-shrink: 0;
+}
+
+/* Card 1: Pílulas de Ativos / Pausados */
+.settings-kpi-pill-group {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.settings-kpi-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 550;
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+
+.settings-kpi-pill.active {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.settings-kpi-pill.paused {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.settings-kpi-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.settings-kpi-dot.active {
+  background: #4ade80;
+}
+
+.settings-kpi-dot.paused {
+  background: #94a3b8;
+}
+
+/* Card 2: Resumo da Unidade + Popover Interativo */
+.settings-kpi-unit-summary {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-kpi-unit-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  line-height: 1.2;
+}
+
+.settings-kpi-unit-address-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  max-width: 100%;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.settings-kpi-pin-icon {
+  flex-shrink: 0;
+  color: #38bdf8;
+}
+
+.settings-kpi-address-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.settings-kpi-address-text.empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Card 3: Ícones Oficiais dos Canais */
+.settings-kpi-channels-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.settings-channel-icon-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  cursor: default;
+}
+
+.settings-channel-icon-badge:hover {
+  transform: scale(1.12);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.channel-whatsapp {
+  background: rgba(37, 211, 102, 0.14);
+  color: #25d366;
+  border: 1px solid rgba(37, 211, 102, 0.35);
+}
+
+.channel-whatsapp svg {
+  color: #25d366;
+}
+
+.channel-telegram {
+  background: rgba(34, 158, 217, 0.14);
+  color: #38bdf8;
+  border: 1px solid rgba(34, 158, 217, 0.35);
+}
+
+.channel-telegram svg {
+  color: #38bdf8;
+}
+
+.channel-instagram {
+  background: rgba(225, 48, 108, 0.14);
+  color: #f43f5e;
+  border: 1px solid rgba(225, 48, 108, 0.35);
+}
+
+.channel-instagram svg {
+  color: #f43f5e;
+}
+
+.settings-kpi-hours-extra {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.25;
+  text-align: center;
+  display: block;
+  margin: 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.settings-kpi-hours-spacer {
+  height: 14px;
+  width: 100%;
+  visibility: hidden;
+}
+
+.settings-kpi-empty-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Botão +N e Popover Flutuante */
+.settings-kpi-more-wrap {
+  position: relative;
+  display: inline-flex;
+  margin-top: 1px;
+}
+
+.settings-kpi-more-btn {
+  background: rgba(0, 224, 255, 0.1);
+  border: 1px solid rgba(0, 224, 255, 0.28);
+  color: #00e0ff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 12px;
+  cursor: pointer;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.settings-kpi-more-btn:hover {
+  background: rgba(0, 224, 255, 0.2);
+  border-color: #00e0ff;
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.settings-kpi-more-btn.channel-more-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-kpi-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #09121f;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 75%, var(--brand));
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(0, 224, 255, 0.15);
+  padding: 10px 12px;
+  min-width: 220px;
+  max-width: 290px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 1000;
+  text-align: left;
+  animation: fadeIn 0.15s ease;
+}
+
+.settings-kpi-popover-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-kpi-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-kpi-popover-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-kpi-popover-item-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-kpi-popover-item-addr {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.settings-kpi-popover-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-kpi-popover-channel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-kpi-popover-channel-name {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text);
+}
+
+/* 2. Grid Principal: 40% Formulário / 60% Lista de Atendentes */
+.settings-main-grid {
+  display: grid;
+  grid-template-columns: 2fr 3fr;
+  gap: 20px;
+  align-items: start;
+  min-height: 0;
+}
+
+/* 2.1 Painéis com acabamento visual NORIA (duplo gradiente sutil sobre navy) */
+.settings-form-panel {
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(135deg, rgba(0, 224, 255, 0.045), transparent 42%),
+    linear-gradient(315deg, rgba(120, 97, 255, 0.035), transparent 48%),
+    var(--surface);
+  border: 1px solid color-mix(in srgb, var(--line) 86%, var(--brand));
+  border-radius: 12px;
+  padding: 18px 20px;
+  min-height: 316px;
+  box-sizing: border-box;
+}
+
+.settings-team-panel {
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(135deg, rgba(0, 224, 255, 0.045), transparent 42%),
+    linear-gradient(315deg, rgba(120, 97, 255, 0.035), transparent 48%),
+    var(--surface);
+  border: 1px solid color-mix(in srgb, var(--line) 86%, var(--brand));
+  border-radius: 12px;
+  padding: 18px 20px;
+  height: 316px;
+  min-height: 316px;
+  max-height: 316px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* 2.2 Títulos de Painel com Underline NORIA ancorado DIRETAMENTE ao texto */
+.settings-panel-title {
+  margin-bottom: 10px;
+  padding-bottom: 0;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.settings-panel-title>div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-form-panel .settings-panel-title>div>svg {
+  color: var(--brand);
+  stroke: var(--brand);
+  flex-shrink: 0;
+}
+
+.settings-team-panel .settings-panel-title>div>svg {
+  color: var(--violet);
+  stroke: var(--violet);
+  flex-shrink: 0;
+}
+
+.settings-panel-title h2 {
+  position: relative;
+  display: inline-block;
+  width: fit-content;
+  color: var(--text);
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  padding-bottom: 6px;
+  margin: 0;
+}
+
+.settings-panel-title h2::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 38px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), #489cff 54%, var(--violet));
+}
+
+/* Desativa qualquer underline indesejado em containers externos ou labels/inputs */
+.settings-panel-title::after,
+.settings-field-label::after {
+  display: none !important;
+}
+
+.settings-panel-desc {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.35;
+  flex-shrink: 0;
+}
+
+.settings-agent-form {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.settings-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text);
+  min-width: 0;
+  position: static;
+}
+
+.settings-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 35px;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  font-size: 12.5px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(0, 224, 255, 0.15);
+}
+
+.settings-input::placeholder {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-field-label .noria-select-trigger {
+  width: 100%;
+  max-width: 100%;
+  height: 35px;
+  padding: 0 11px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--line-strong);
+}
+
+.settings-field-label .noria-select-trigger:focus-visible,
+.settings-field-label .noria-select-trigger[data-state="open"] {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(0, 224, 255, 0.15);
+  outline: none;
+}
+
+.settings-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-submit-btn {
+  margin-top: 4px;
+  align-self: flex-start;
+  width: auto;
+  min-width: 154px;
+  height: 36px;
+  padding: 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.92), rgba(72, 156, 255, 0.86) 58%, rgba(120, 97, 255, 0.84));
+  border-color: rgba(0, 224, 255, 0.48);
+  color: #06111f;
+  box-shadow: 0 4px 12px rgba(0, 224, 255, 0.14);
+}
+
+.settings-submit-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #00e0ff, #489cff 58%, #7861ff);
+  border-color: rgba(0, 224, 255, 0.7);
+  box-shadow: 0 6px 16px rgba(0, 224, 255, 0.2);
+}
+
+.settings-submit-btn:disabled {
+  background: var(--surface-elevated);
+  border-color: var(--line);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+/* 3. Painel da Equipe de Atendimento: Altura Fixa e Rolagem Invisível */
+.settings-team-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 0;
+  /* Rolagem funcional com scrollbar visualmente invisível */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.settings-team-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Card do Atendente com degradê NORIA sutil */
+.settings-agent-card {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 13px;
+  border-radius: 8px;
+  background: linear-gradient(105deg, rgba(0, 224, 255, 0.05), rgba(72, 156, 255, 0.025) 46%, rgba(120, 97, 255, 0.035)), var(--surface-soft);
+  border: 1px solid var(--line);
+  transition: border-color 160ms ease, background 160ms ease;
+  flex-shrink: 0;
+}
+
+.settings-agent-card:hover {
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--violet));
+  background: linear-gradient(105deg, rgba(0, 224, 255, 0.08), rgba(72, 156, 255, 0.04) 46%, rgba(120, 97, 255, 0.05)), var(--surface-soft);
+}
+
+.settings-agent-avatar-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-agent-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #00e0ff;
+  background: rgba(0, 224, 255, 0.12);
+  border: 1px solid rgba(0, 224, 255, 0.28);
+  flex-shrink: 0;
+}
+
+.settings-agent-avatar.standby {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.25);
+}
+
+.settings-agent-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-agent-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-agent-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.settings-agent-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-agent-role-badge {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.settings-agent-meta-chips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 1px;
+}
+
+.settings-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.settings-meta-chip svg {
+  color: #00e0ff;
+  flex-shrink: 0;
+}
+
+.settings-agent-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.settings-agent-actions .status-dot-badge {
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: 6px;
+}
+
+.settings-agent-toggle-btn {
+  height: 30px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.settings-agent-delete-btn {
+  height: 30px;
+  width: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.settings-agent-delete-btn .btn-text-mobile {
+  display: none;
+}
+
+/* Empty State proporcional, limpo e centralizado no espaço restante */
+.settings-team-panel .empty-state {
+  margin: auto;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 7px;
+  border-radius: 8px;
+  border: 1px dashed var(--line);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.settings-team-panel .empty-state svg {
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.settings-team-panel .empty-state p {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* 4. Responsividade: Tablet */
+@media (max-width: 1100px) {
+  .settings-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .settings-main-grid {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .settings-form-panel {
+    height: auto;
+    min-height: 0;
+  }
+
+  .settings-team-panel {
+    height: 316px;
+    min-height: 316px;
+    max-height: 316px;
+  }
+}
+
+/* 5. Responsividade: Mobile */
+@media (max-width: 640px) {
+  .settings-kpi-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .settings-main-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .settings-form-panel,
+  .settings-team-panel {
+    padding: 14px;
+  }
+
+  .settings-team-panel {
+    height: 320px;
+    min-height: 320px;
+    max-height: 320px;
+  }
+
+  .settings-form-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .settings-submit-btn {
+    width: 100%;
+    height: 40px;
+    align-self: stretch;
+  }
+
+  .settings-agent-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 10px;
+    padding: 11px;
+  }
+
+  .settings-agent-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    width: 100%;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line-subtle, rgba(255, 255, 255, 0.05));
+  }
+
+  .settings-agent-actions .settings-agent-toggle-btn {
+    height: 38px;
+    width: auto;
+    flex: 1;
+    justify-content: center;
+    font-size: 12.5px;
+  }
+
+  .settings-agent-actions .status-dot-badge {
+    height: 38px;
+  }
+
+  .settings-agent-actions .settings-agent-delete-btn {
+    height: 38px;
+    width: auto;
+    min-width: 38px;
+    justify-content: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    padding: 0 12px;
+  }
+
+  .settings-agent-actions .btn-text-mobile {
+    display: inline;
+  }
+}
+
+@media (max-width: 380px) {
+  .settings-agent-actions .btn-text-mobile {
+    display: none;
+  }
+
+  .settings-agent-actions .settings-agent-delete-btn {
+    width: 38px;
+    padding: 0;
+    flex-shrink: 0;
+  }
+}

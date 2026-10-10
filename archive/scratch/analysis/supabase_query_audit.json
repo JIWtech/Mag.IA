@@ -1,0 +1,268 @@
+[
+  {
+    "table": "unknown",
+    "line": 41,
+    "enclosingFunction": "anonymous",
+    "hasTenantFilter": false,
+    "sampleCode": "          const base64 = Buffer.from(buf).toString('base64');\r\n          resolve(`data:${blob.type || 'image/jpeg'};base64,${base64}`);\r\n        }).catch(reject);\r\n        return;\r\n      }\r\n      resolve(`data:${blob?.type || 'image/jpeg'};base64,mockdata`);\r\n      return;\r"
+  },
+  {
+    "table": "tenant_settings",
+    "line": 193,
+    "enclosingFunction": "loadClientData",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data: uiSettings, error: settingsError } = await supabase.from('tenant_settings')\r\n    .select('settings').eq('tenant_id', tenant.id).maybeSingle();\r\n  if (settingsError) throw new Error('Nao foi possivel carregar as configuracoes da empresa.');\r\n  const tenantChannels = enabledChannels(uiSettings?.settings);\r\n  const [eventsResult, appointments, broadcastContacts, broadcastCampaigns, kanbanConfig, followUpJobs, salesLeads, conversationReads, teamAgents] = await Promise.all([\r\n    supabase\r\n      .from('channel_events')\r"
+  },
+  {
+    "table": "channel_events",
+    "line": 198,
+    "enclosingFunction": "loadClientData",
+    "hasTenantFilter": true,
+    "sampleCode": "    supabase\r\n      .from('channel_events')\r\n      .select('*')\r\n      .eq('tenant_slug', activeTenantSlug)\r\n      .order('created_at', { ascending: false })\r\n      .limit(1000),\r\n    tenant ? loadAppointments(tenant.id) : [],\r"
+  },
+  {
+    "table": "tenants",
+    "line": 283,
+    "enclosingFunction": "loadTenant",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('tenants')\r\n    .select('id, slug, name')\r\n    .eq('slug', activeTenantSlug)\r\n    .limit(1)\r\n    .maybeSingle();\r\n  if (error) {\r"
+  },
+  {
+    "table": "conversation_reads",
+    "line": 306,
+    "enclosingFunction": "loadConversationReads",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('conversation_reads')\r\n    .select('tenant_id, user_id, channel_type, external_conversation_id, last_read_event_id, last_read_at, created_at, updated_at')\r\n    .eq('tenant_id', tenantId)\r\n    .eq('user_id', userId)\r\n    .limit(500);\r\n  if (error) {\r"
+  },
+  {
+    "table": "appointments",
+    "line": 334,
+    "enclosingFunction": "loadAppointments",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('appointments')\r\n    .select('*')\r\n    .eq('tenant_id', tenantId)\r\n    .order('starts_at', { ascending: true })\r\n    .limit(200);\r\n  if (error) {\r"
+  },
+  {
+    "table": "broadcast_contacts",
+    "line": 349,
+    "enclosingFunction": "loadBroadcastContacts",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('broadcast_contacts')\r\n    .select('*')\r\n    .eq('tenant_id', tenantId)\r\n    .order('created_at', { ascending: false })\r\n    .limit(500);\r\n  if (error) {\r"
+  },
+  {
+    "table": "broadcast_campaigns",
+    "line": 364,
+    "enclosingFunction": "loadBroadcastCampaigns",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('broadcast_campaigns')\r\n    .select('*')\r\n    .eq('tenant_id', tenantId)\r\n    .order('created_at', { ascending: false })\r\n    .limit(50);\r\n  if (error) {\r"
+  },
+  {
+    "table": "kanban_boards",
+    "line": 379,
+    "enclosingFunction": "loadKanbanConfig",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data: board, error: boardError } = await supabase\r\n    .from('kanban_boards')\r\n    .select('*')\r\n    .eq('tenant_id', tenantId)\r\n    .eq('is_default', true)\r\n    .order('created_at', { ascending: true })\r\n    .limit(1)\r"
+  },
+  {
+    "table": "kanban_columns",
+    "line": 395,
+    "enclosingFunction": "loadKanbanConfig",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data: columns, error: columnsError } = await supabase\r\n    .from('kanban_columns')\r\n    .select('*')\r\n    .eq('tenant_id', tenantId)\r\n    .eq('board_id', board.id)\r\n    .order('position', { ascending: true });\r\n\r"
+  },
+  {
+    "table": "follow_up_jobs",
+    "line": 418,
+    "enclosingFunction": "loadFollowUpJobs",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('follow_up_jobs')\r\n    .select('id, channel_type, external_conversation_id, contact_name, step_key, objective, due_at, status, created_at')\r\n    .eq('tenant_id', tenantId)\r\n    .in('status', ['pending', 'processing'])\r\n    .order('due_at', { ascending: true })\r\n    .limit(200);\r"
+  },
+  {
+    "table": "tenant_settings",
+    "line": 439,
+    "enclosingFunction": "loadAppointmentScheduling",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase.from('tenant_settings').select('settings').eq('tenant_id', tenant.id).maybeSingle();\r\n  if (error) throw error;\r\n  const config = data?.settings?.appointment_scheduling;\r\n  if (!config?.enabled) return { enabled: false, tenantId: tenant.id };\r\n  const { data: services, error: catalogError } = await supabase.from('tenant_service_catalog')\r\n    .select('external_id,name,category').eq('tenant_id', tenant.id).eq('active', true);\r\n  if (catalogError) throw catalogError;\r"
+  },
+  {
+    "table": "tenant_service_catalog",
+    "line": 443,
+    "enclosingFunction": "loadAppointmentScheduling",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data: services, error: catalogError } = await supabase.from('tenant_service_catalog')\r\n    .select('external_id,name,category').eq('tenant_id', tenant.id).eq('active', true);\r\n  if (catalogError) throw catalogError;\r\n  return { ...config, tenantId: tenant.id, services: services || [] };\r\n}\r\n\r\nexport async function loadAppointmentAvailability(tenantId, unitId, serviceId, date) {\r"
+  },
+  {
+    "table": "appointments",
+    "line": 478,
+    "enclosingFunction": "saveAppointment",
+    "hasTenantFilter": true,
+    "sampleCode": "        const { data: fallbackData, error: insertError } = await supabase\r\n          .from('appointments')\r\n          .insert({\r\n            tenant_id: tenant.id,\r\n            title: appointment.title || 'Agendamento',\r\n            starts_at: startsAt,\r\n            status: 'scheduled',\r"
+  },
+  {
+    "table": "appointments",
+    "line": 501,
+    "enclosingFunction": "saveAppointment",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('appointments')\r\n    .insert({\r\n      tenant_id: tenant.id,\r\n      title: appointment.title,\r\n      starts_at: appointment.startsAt,\r\n      ends_at: appointment.endsAt || null,\r"
+  },
+  {
+    "table": "broadcast_contacts",
+    "line": 541,
+    "enclosingFunction": "upsertBroadcastContacts",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('broadcast_contacts')\r\n    .upsert(clean, { onConflict: 'tenant_id,channel_type,external_conversation_id' })\r\n    .select('*');\r\n  if (error) throw error;\r\n  return data || [];\r\n}\r"
+  },
+  {
+    "table": "broadcast_campaigns",
+    "line": 555,
+    "enclosingFunction": "createBroadcastCampaign",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data: campaignRow, error: campaignError } = await supabase\r\n    .from('broadcast_campaigns')\r\n    .insert({\r\n      tenant_id: tenant.id,\r\n      name: campaign.name,\r\n      channel_type: campaign.channelType || 'telegram',\r\n      message_text: campaign.messageText,\r"
+  },
+  {
+    "table": "broadcast_campaign_recipients",
+    "line": 581,
+    "enclosingFunction": "createBroadcastCampaign",
+    "hasTenantFilter": false,
+    "sampleCode": "    const { error: recipientsError } = await supabase\r\n      .from('broadcast_campaign_recipients')\r\n      .insert(recipientRows);\r\n    if (recipientsError) throw recipientsError;\r\n  }\r\n\r\n  return campaignRow;\r"
+  },
+  {
+    "table": "broadcast_campaigns",
+    "line": 593,
+    "enclosingFunction": "updateBroadcastCampaign",
+    "hasTenantFilter": false,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('broadcast_campaigns')\r\n    .update({ ...patch, updated_at: new Date().toISOString() })\r\n    .eq('id', campaignId)\r\n    .select('*')\r\n    .single();\r\n  if (error) throw error;\r"
+  },
+  {
+    "table": "broadcast_campaign_recipients",
+    "line": 606,
+    "enclosingFunction": "updateBroadcastRecipient",
+    "hasTenantFilter": false,
+    "sampleCode": "  const { error } = await supabase\r\n    .from('broadcast_campaign_recipients')\r\n    .update(patch)\r\n    .eq('campaign_id', campaignId)\r\n    .eq('external_conversation_id', externalConversationId);\r\n  if (error) throw error;\r\n}\r"
+  },
+  {
+    "table": "channels",
+    "line": 665,
+    "enclosingFunction": "enrichCatalogReferrals",
+    "hasTenantFilter": true,
+    "sampleCode": "      const { data, error } = await supabase.from('channels')\n        .select('external_id,config').eq('tenant_id', tenantId).eq('type', 'whatsapp').eq('status', 'active').limit(2);\n      if (error) throw error;\n      const instances = [...new Set((data || []).map((channel) => String(channel.external_id || channel.config?.instance_name || '').trim()).filter(Boolean))];\n      // Ambiguity is deliberately fail-closed: no cache lookup or Evolution\n      // request can cross an unknown instance boundary.\n      if (instances.length === 1) for (const reference of unresolved) {"
+  },
+  {
+    "table": "whatsapp_catalog_products",
+    "line": 686,
+    "enclosingFunction": "anonymous",
+    "hasTenantFilter": true,
+    "sampleCode": "      const { data, error } = await supabase.from('whatsapp_catalog_products')\n        .select('product_id,title,currency,regular_price_cents,sale_price_cents,effective_price_cents,price_source,price_evidence_source,price_observed_at,image_url,image_urls,synced_at,active')\n        .eq('tenant_id', tenantId).eq('instance_name', instanceName).eq('active', true).in('product_id', productIds);\n      if (error) throw error;\n      const rows = new Map((data || []).map((row) => [String(row.product_id), row]));\n      for (const productId of productIds) {\n        const key = catalogProductKey(tenantId, instanceName, productId); const value = rows.get(productId) || null;"
+  },
+  {
+    "table": "unknown",
+    "line": 892,
+    "enclosingFunction": "mapWithConcurrency",
+    "hasTenantFilter": false,
+    "sampleCode": "  await Promise.all(Array.from({ length: workerCount }, async () => {\r\n    while (nextIndex < items.length) {\r\n      const currentIndex = nextIndex;\r\n      nextIndex += 1;\r\n      results[currentIndex] = await mapper(items[currentIndex], currentIndex);\r\n    }\r\n  }));\r"
+  },
+  {
+    "table": "unknown",
+    "line": 905,
+    "enclosingFunction": "resolveStoredMediaUrl",
+    "hasTenantFilter": false,
+    "sampleCode": "  const storageBucket = supabase.storage.from(media.bucket);\r\n  let resolvedUrl = '';\r\n\r\n  // 1. Preferir createSignedUrl diretamente do Storage (sem baixar Blob nem usar FileReader)\r\n  // Seguro para bucket privado e diretamente utilizável por <img>, <audio>, <video>\r\n  if (media.encoding !== 'base64' && typeof storageBucket?.createSignedUrl === 'function') {\r\n    resolvedUrl = await createSignedUrlWithRetry(storageBucket, media.storagePath);\r"
+  },
+  {
+    "table": "unknown",
+    "line": 2518,
+    "enclosingFunction": "eventsToConversations",
+    "hasTenantFilter": false,
+    "sampleCode": "    conversation.tags = Array.from(new Set([...conversation.tags, event.service, stageName].filter(Boolean)));\r\n    if (event.direction === 'outbound') {\r\n      const isOperator = ['agent', 'human', 'operator', 'atendente'].includes(event.sender_type);\r\n      conversation.messages.push({\r\n        from: isOperator ? 'agent' : event.sender_type === 'system' ? 'system' : 'ai',\r\n        sent_by: event.sent_by_user || (isOperator ? 'Operador' : null),\r\n        text: visibleText || event.response_text || '',\r"
+  },
+  {
+    "table": "unknown",
+    "line": 2631,
+    "enclosingFunction": "eventsToConversations",
+    "hasTenantFilter": false,
+    "sampleCode": "  return sortConversationsByRecentActivity(Array.from(byChat.values()));\r\n}\r\n\r\nexport function applyIncomingEventToConversations(conversations = [], event, tenantSlug = '', { markIncomingAsRead = false, kanbanColumns = [], tenantSettings = null } = {}) {\r\n  if (!event || isInternalOperationalEvent(event)) return conversations;\r\n  if (tenantSlug && event.tenant_slug && event.tenant_slug !== tenantSlug) return conversations;\r\n\r"
+  },
+  {
+    "table": "contacts",
+    "line": 3468,
+    "enclosingFunction": "loadRelevantContacts",
+    "hasTenantFilter": true,
+    "sampleCode": "    const { data, error } = await supabase\r\n      .from('contacts')\r\n      .select(columns)\r\n      .eq('tenant_id', tenantId)\r\n      .eq('source_channel', 'whatsapp')\r\n      .is('deleted_at', null)\r\n      .in('external_handle', requested.slice(start, start + 200))\r"
+  },
+  {
+    "table": "contacts",
+    "line": 3495,
+    "enclosingFunction": "loadContactAvatars",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('contacts')\r\n    .select(contactAvatarColumns)\r\n    .eq('tenant_id', tenantId)\r\n    .is('deleted_at', null)\r\n    .not('external_handle', 'is', null)\r\n    .limit(1000);\r"
+  },
+  {
+    "table": "sales_leads",
+    "line": 3735,
+    "enclosingFunction": "loadSalesLeads",
+    "hasTenantFilter": true,
+    "sampleCode": "  const { data, error } = await supabase\r\n    .from('sales_leads')\r\n    .select('id, tenant_id, channel_type, chat_id, stage_key, ai_locked, revision, state, product, hot, interest_registered, updated_at')\r\n    .eq('tenant_id', tenantId)\r\n    .order('updated_at', { ascending: false });\r\n\r\n  if (error) {\r"
+  },
+  {
+    "table": "unknown",
+    "line": 4011,
+    "enclosingFunction": "buildStatus",
+    "hasTenantFilter": false,
+    "sampleCode": "  const channels = Array.from(new Set((events || []).map((event) => normalizeChannel(event.channel_type).label)));\r\n\r\n  const rawBot = events?.find((e) => e.raw_payload?.sent?.raw?.result?.from?.username)?.raw_payload?.sent?.raw?.result?.from?.username\r\n    || (tenantSlug === 'clinica_nubia' ? 'clinica_nubia_bot' : `${tenantSlug}_bot`);\r\n  const botUsername = `@${rawBot.replace(/^@/, '')}`;\r\n\r\n  return {\r"
+  },
+  {
+    "table": "team_agents",
+    "line": 4076,
+    "enclosingFunction": "loadTeamAgents",
+    "hasTenantFilter": true,
+    "sampleCode": "      const { data, error } = await supabase\r\n        .from('team_agents')\r\n        .select('*')\r\n        .eq('tenant_slug', tenantSlug)\r\n        .eq('is_active', true)\r\n        .order('created_at', { ascending: false });\r\n      if (!error && Array.isArray(data)) {\r"
+  },
+  {
+    "table": "team_agents",
+    "line": 4116,
+    "enclosingFunction": "saveTeamAgent",
+    "hasTenantFilter": false,
+    "sampleCode": "      const { data, error } = await supabase\r\n        .from('team_agents')\r\n        .insert([newRecord])\r\n        .select()\r\n        .single();\r\n      if (!error && data) {\r\n        return data;\r"
+  },
+  {
+    "table": "team_agents",
+    "line": 4140,
+    "enclosingFunction": "updateTeamAgentStatus",
+    "hasTenantFilter": true,
+    "sampleCode": "      await supabase\r\n        .from('team_agents')\r\n        .update({ status: newStatus, updated_at: new Date().toISOString() })\r\n        .eq('id', agentId)\r\n        .eq('tenant_slug', tenantSlug);\r\n    }\r\n  } catch (e) {\r"
+  },
+  {
+    "table": "team_agents",
+    "line": 4163,
+    "enclosingFunction": "removeTeamAgent",
+    "hasTenantFilter": true,
+    "sampleCode": "      await supabase\r\n        .from('team_agents')\r\n        .delete()\r\n        .eq('id', agentId)\r\n        .eq('tenant_slug', tenantSlug);\r\n    }\r\n  } catch (e) {\r"
+  },
+  {
+    "table": "tenant_settings",
+    "line": 4188,
+    "enclosingFunction": "loadTenantSettings",
+    "hasTenantFilter": true,
+    "sampleCode": "    const { data, error } = await supabase\r\n      .from('tenant_settings')\r\n      .select('timezone, business_hours, settings')\r\n      .eq('tenant_id', tenant.id)\r\n      .maybeSingle();\r\n    if (error) {\r\n      console.warn('Falha ao carregar tenant_settings:', error.message);\r"
+  },
+  {
+    "table": "channel_events",
+    "line": 4302,
+    "enclosingFunction": "moveGenesisSalesCard",
+    "hasTenantFilter": false,
+    "sampleCode": "    const { error } = await supabase.from('channel_events').insert([newEvent]);\r\n    if (error) throw error;\r\n    return [newEvent];\r\n  }\r\n\r\n  let leadId = card.salesLeadId || null;\r\n  let revision = Number.isInteger(card.salesRevision) ? card.salesRevision : null;\r"
+  },
+  {
+    "table": "sales_leads",
+    "line": 4312,
+    "enclosingFunction": "moveGenesisSalesCard",
+    "hasTenantFilter": true,
+    "sampleCode": "    const { data: lead, error: leadError } = await supabase\r\n      .from('sales_leads')\r\n      .select('id, revision')\r\n      .eq('tenant_id', tenant.id)\r\n      .eq('channel_type', channelType)\r\n      .eq('chat_id', conversationId)\r\n      .maybeSingle();\r"
+  },
+  {
+    "table": "channel_events",
+    "line": 4457,
+    "enclosingFunction": "moveKanbanCard",
+    "hasTenantFilter": false,
+    "sampleCode": "    const { error } = await supabase.from('channel_events').insert([newEvent]);\r\n    if (error) throw error;\r\n    return [newEvent];\r\n  }\r\n\r\n  return [newEvent];\r\n}\r"
+  }
+]

@@ -1,4 +1,4 @@
--- Generated: node scripts/build_nubia_session_sql.cjs
+-- Generated: node scripts/build/sql/build_nubia_session_sql.cjs
 -- Publicar primeiro o workflow atualizado. Executar migration 019 antes deste arquivo.
 -- Preserva catalogo, reservas, pagamento, modelo, limite diario e outros clientes.
 begin;

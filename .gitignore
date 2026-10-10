@@ -9,3 +9,4 @@ tmp-*.sql
 localtunnel-*.log
 tools/*.exe
 .local/
+/audit-package-2026-10-08/

@@ -1,0 +1,159 @@
+.topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--topbar-height);
+  margin-bottom: var(--space-4);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.topbar-brand-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar p,
+.topbar-subtitle {
+  margin: var(--space-1) 0 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.topbar-actions,
+.header-actions,
+.section-toolbar,
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.topbar-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kanban-title-block {
+  gap: 5px;
+}
+
+.kanban-title-block .topbar-title-row {
+  gap: 9px;
+  min-height: 42px;
+  align-items: center;
+  overflow: visible;
+}
+
+.kanban-title-accent {
+  width: 3px;
+  height: 34px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: linear-gradient(180deg, var(--brand), var(--violet));
+}
+
+.kanban-title-block h1 {
+  position: relative;
+  display: inline-block;
+  font-size: 28px;
+  font-weight: 780;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0;
+  padding-bottom: 8px;
+  margin-bottom: 0;
+  overflow: visible;
+}
+
+.kanban-title-block h1::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2.5px;
+  width: 44px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), #489cff 54%, var(--violet));
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  -webkit-text-fill-color: initial;
+  pointer-events: none;
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .kanban-title-block h1 {
+    background: linear-gradient(90deg, #00e0ff 0%, #38bdf8 32%, #7861ff 64%, #00e0ff 100%);
+    background-size: 250% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: noriaTitleFlow 7s ease-in-out infinite;
+  }
+}
+
+@keyframes noriaTitleFlow {
+
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kanban-title-block h1 {
+    animation: none;
+    background-position: 50% 50%;
+  }
+}
+
+.kanban-title-context {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  line-height: 1.2;
+}
+
+.page-context-tenant {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.page-context-tenant svg {
+  color: var(--brand);
+  flex: 0 0 auto;
+}
+
+.page-context-tenant strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.page-context-segment {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 480;
+  line-height: 1.25;
+  opacity: 0.84;
+}

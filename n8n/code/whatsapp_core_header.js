@@ -16,3 +16,5 @@ let turn = null;
 let sendAttempted = false;
 let providerAccepted = false;
 let turnCommitted = false;
+let deliveryAttemptId = '';
+const coreRevision = 'conversation_core_v2_2026_10_07';

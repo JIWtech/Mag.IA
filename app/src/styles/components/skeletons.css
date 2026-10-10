@@ -1,0 +1,109 @@
+/* ==========================================================================
+   NORIA SKELETON LOADERS & READY STATES
+   ========================================================================== */
+
+@keyframes skeleton-pulse {
+  0% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 0.9;
+  }
+
+  100% {
+    opacity: 0.45;
+  }
+}
+
+.skeleton-line,
+.skeleton-block {
+  background: var(--surface-hover);
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  animation: skeleton-pulse 1.8s ease-in-out infinite;
+  pointer-events: none;
+  user-select: none;
+}
+
+.skeleton-line {
+  height: 12px;
+  vertical-align: middle;
+}
+
+.skeleton-block {
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .skeleton-line,
+  .skeleton-block {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* Metric Cards Skeleton */
+.metric-skeleton-value {
+  width: 44px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  margin: 0 auto;
+}
+
+/* Table Skeletons */
+.table-row-skeleton {
+  pointer-events: none;
+}
+
+/* Conversation Sidebar Skeletons */
+.conversation-item-skeleton {
+  pointer-events: none;
+  cursor: default;
+}
+
+.conversation-item-skeleton .conversation-avatar.skeleton-block {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+}
+
+/* Chat Panel Placeholder Skeleton */
+.chat-empty-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 320px;
+  color: var(--text);
+}
+
+/* Kanban Skeletons */
+.kanban-card-skeleton {
+  pointer-events: none;
+  cursor: default;
+  border-color: var(--line) !important;
+  box-shadow: none !important;
+}
+
+/* Appointments Skeletons */
+.appointment-card-skeleton {
+  pointer-events: none;
+  cursor: default;
+  border-color: var(--line) !important;
+}
+
+/* Agent Card Skeletons */
+.agent-card-skeleton {
+  pointer-events: none;
+  cursor: default;
+}
+
+.agent-selection-card-skeleton {
+  pointer-events: none;
+  cursor: default;
+  opacity: 0.75;
+}
+

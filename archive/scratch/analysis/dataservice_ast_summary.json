@@ -1,0 +1,1777 @@
+{
+  "imports": [
+    {
+      "source": "@supabase/supabase-js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "createClient",
+          "local": "createClient"
+        }
+      ],
+      "line": 1
+    },
+    {
+      "source": "./utils/asObject.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "asObject",
+          "local": "asObject"
+        }
+      ],
+      "line": 2
+    },
+    {
+      "source": "./utils/dateFormatting.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "formatDate",
+          "local": "formatDate"
+        },
+        {
+          "type": "named",
+          "imported": "compareDateLabel",
+          "local": "compareDateLabel"
+        }
+      ],
+      "line": 3
+    },
+    {
+      "source": "./utils/recordRecency.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "appointmentTimestamp",
+          "local": "appointmentTimestamp"
+        },
+        {
+          "type": "named",
+          "imported": "isMoreRecentRecord",
+          "local": "isMoreRecentRecord"
+        }
+      ],
+      "line": 4
+    },
+    {
+      "source": "./authService.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "getAuthClient",
+          "local": "getAuthClient"
+        },
+        {
+          "type": "named",
+          "imported": "isAuthRequired",
+          "local": "isAuthRequired"
+        }
+      ],
+      "line": 5
+    },
+    {
+      "source": "./tenantAccess.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "loadUserTenants",
+          "local": "loadUserTenants"
+        },
+        {
+          "type": "named",
+          "imported": "enabledChannels",
+          "local": "enabledChannels"
+        }
+      ],
+      "line": 6
+    },
+    {
+      "source": "./conversationEvents.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "prepareConversationEvents",
+          "local": "prepareConversationEvents"
+        }
+      ],
+      "line": 7
+    },
+    {
+      "source": "./conversationLifecycle.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "applyConversationLifecycle",
+          "local": "applyConversationLifecycle"
+        },
+        {
+          "type": "named",
+          "imported": "isConversationClosed",
+          "local": "isConversationClosed"
+        }
+      ],
+      "line": 8
+    },
+    {
+      "source": "./eventClassification.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "isEligibleForExternalOutbound",
+          "local": "isEligibleForExternalOutbound"
+        },
+        {
+          "type": "named",
+          "imported": "isInternalOperationalEvent",
+          "local": "isInternalOperationalEvent"
+        }
+      ],
+      "line": 10
+    },
+    {
+      "source": "./services/funnel/funnelHelpers.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "emptyFunnel",
+          "local": "emptyFunnel"
+        },
+        {
+          "type": "named",
+          "imported": "formatCurrency",
+          "local": "formatCurrency"
+        }
+      ],
+      "line": 11
+    },
+    {
+      "source": "./services/appointments/schedulingLinks.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "TENANT_SCHEDULING_LINKS",
+          "local": "TENANT_SCHEDULING_LINKS"
+        },
+        {
+          "type": "named",
+          "imported": "getTenantSchedulingLink",
+          "local": "getTenantSchedulingLink"
+        }
+      ],
+      "line": 13
+    },
+    {
+      "source": "./services/identity/conversationIdentity.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "canonicalConversationKey",
+          "local": "canonicalConversationKey"
+        },
+        {
+          "type": "named",
+          "imported": "normalizeChannel",
+          "local": "normalizeChannel"
+        },
+        {
+          "type": "named",
+          "imported": "normalizeExternalConversationId",
+          "local": "normalizeExternalConversationId"
+        }
+      ],
+      "line": 15
+    },
+    {
+      "source": "./services/conversations/conversationDerived.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "estimatedValue",
+          "local": "estimatedValue"
+        },
+        {
+          "type": "named",
+          "imported": "sentimentFromEvent",
+          "local": "sentimentFromEventWithStage"
+        }
+      ],
+      "line": 17
+    },
+    {
+      "source": "./services/contacts/contactIdentity.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "contactAvatarKey",
+          "local": "contactAvatarKey"
+        },
+        {
+          "type": "named",
+          "imported": "normalizeAvatarUrl",
+          "local": "normalizeAvatarUrl"
+        }
+      ],
+      "line": 18
+    },
+    {
+      "source": "./services/contacts/contactDirectory.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "buildContactAvatarIndex",
+          "local": "buildContactAvatarIndex"
+        },
+        {
+          "type": "named",
+          "imported": "buildContactDirectory",
+          "local": "buildContactDirectory"
+        }
+      ],
+      "line": 20
+    },
+    {
+      "source": "./services/contacts/contactApplication.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "applyContactAvatars",
+          "local": "applyContactAvatars"
+        },
+        {
+          "type": "named",
+          "imported": "applyContactAvatarsToBroadcastContacts",
+          "local": "applyContactAvatarsToBroadcastContacts"
+        },
+        {
+          "type": "named",
+          "imported": "applyContactDirectory",
+          "local": "applyContactDirectory"
+        },
+        {
+          "type": "named",
+          "imported": "resolveContactAvatarState",
+          "local": "resolveContactAvatarState"
+        }
+      ],
+      "line": 22
+    },
+    {
+      "source": "./services/contacts/contactNames.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "getTrustedContactName",
+          "local": "getTrustedContactName"
+        },
+        {
+          "type": "named",
+          "imported": "getUsefulTrustedContactName",
+          "local": "getUsefulTrustedContactName"
+        },
+        {
+          "type": "named",
+          "imported": "isUsefulContactName",
+          "local": "isUsefulContactName"
+        }
+      ],
+      "line": 34
+    },
+    {
+      "source": "./services/contacts/contactPhones.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "conversationPhoneFallback",
+          "local": "conversationPhoneFallback"
+        },
+        {
+          "type": "named",
+          "imported": "formatWhatsAppPhone",
+          "local": "formatWhatsAppPhone"
+        }
+      ],
+      "line": 36
+    },
+    {
+      "source": "./services/contacts/contactUpdates.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "applyContactUpdateToConversations",
+          "local": "applyContactUpdateToConversations"
+        }
+      ],
+      "line": 38
+    },
+    {
+      "source": "./services/contacts/contactPayload.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "extractAvatarUrlFromEvent",
+          "local": "extractAvatarUrlFromEvent"
+        },
+        {
+          "type": "named",
+          "imported": "extractPayloadAvatar",
+          "local": "extractPayloadAvatar"
+        }
+      ],
+      "line": 40
+    },
+    {
+      "source": "./services/contacts/contactDisplayName.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "resolveConversationDisplayName",
+          "local": "resolveConversationDisplayName"
+        }
+      ],
+      "line": 42
+    },
+    {
+      "source": "./services/agents/agentNames.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "cleanAgentName",
+          "local": "cleanAgentName"
+        }
+      ],
+      "line": 44
+    },
+    {
+      "source": "./services/agents/teamAgentReads.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "loadTeamAgents",
+          "local": "loadTeamAgentsWithDependencies"
+        }
+      ],
+      "line": 46
+    },
+    {
+      "source": "./services/appointments/appointmentPresentation.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "mapAppointment",
+          "local": "mapAppointment"
+        }
+      ],
+      "line": 47
+    },
+    {
+      "source": "./services/conversations/conversationPresentation.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "normalizeAudioTranscription",
+          "local": "normalizeAudioTranscription"
+        },
+        {
+          "type": "named",
+          "imported": "normalizeLocation",
+          "local": "normalizeLocation"
+        },
+        {
+          "type": "named",
+          "imported": "normalizeStage",
+          "local": "normalizeStage"
+        },
+        {
+          "type": "named",
+          "imported": "resolveConversationHeaderOwner",
+          "local": "resolveConversationHeaderOwner"
+        },
+        {
+          "type": "named",
+          "imported": "resolveConversationOwner",
+          "local": "resolveConversationOwner"
+        },
+        {
+          "type": "named",
+          "imported": "resolveConversationOwnerDetails",
+          "local": "resolveConversationOwnerDetails"
+        },
+        {
+          "type": "named",
+          "imported": "resolveEventMessagePreview",
+          "local": "resolveEventMessagePreview"
+        },
+        {
+          "type": "named",
+          "imported": "resolveMessageSender",
+          "local": "resolveMessageSender"
+        }
+      ],
+      "line": 48
+    },
+    {
+      "source": "./services/reads/readsService.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "conversationReadKey",
+          "local": "conversationReadKey"
+        },
+        {
+          "type": "named",
+          "imported": "isUnreadInboundEvent",
+          "local": "isUnreadInboundEvent"
+        },
+        {
+          "type": "named",
+          "imported": "getLatestReadableEvent",
+          "local": "getLatestReadableEvent"
+        },
+        {
+          "type": "named",
+          "imported": "shouldAdvanceConversationRead",
+          "local": "shouldAdvanceConversationRead"
+        },
+        {
+          "type": "named",
+          "imported": "upsertConversationReadMarker",
+          "local": "upsertConversationReadMarker"
+        },
+        {
+          "type": "named",
+          "imported": "applyConversationReadState",
+          "local": "applyConversationReadState"
+        }
+      ],
+      "line": 68
+    },
+    {
+      "source": "./services/timeline/conversationFilters.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "isConversationWaitingForFollowUp",
+          "local": "isConversationWaitingForFollowUp"
+        },
+        {
+          "type": "named",
+          "imported": "formatWaitingDuration",
+          "local": "formatWaitingDuration"
+        },
+        {
+          "type": "named",
+          "imported": "matchesResponsibleFilter",
+          "local": "matchesResponsibleFilter"
+        },
+        {
+          "type": "named",
+          "imported": "matchesConversationTab",
+          "local": "matchesConversationTab"
+        },
+        {
+          "type": "named",
+          "imported": "sortConversationsForTab",
+          "local": "sortConversationsForTab"
+        },
+        {
+          "type": "named",
+          "imported": "getConversationTabCounts",
+          "local": "getConversationTabCounts"
+        },
+        {
+          "type": "named",
+          "imported": "formatConversationCardOrigin",
+          "local": "formatConversationCardOrigin"
+        },
+        {
+          "type": "named",
+          "imported": "formatMediaPreviewWithIcon",
+          "local": "formatMediaPreviewWithIcon"
+        }
+      ],
+      "line": 84
+    },
+    {
+      "source": "./services/timeline/conversationOrdering.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "getConversationActivityEpoch",
+          "local": "getConversationActivityEpoch"
+        },
+        {
+          "type": "named",
+          "imported": "sortConversationsByRecentActivity",
+          "local": "sortConversationsByRecentActivity"
+        }
+      ],
+      "line": 104
+    },
+    {
+      "source": "./services/kanban/kanbanHelpers.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "OFFICIAL_KANBAN_COLUMNS",
+          "local": "OFFICIAL_KANBAN_COLUMNS"
+        },
+        {
+          "type": "named",
+          "imported": "KANBAN_KEY_ALIASES",
+          "local": "KANBAN_KEY_ALIASES"
+        },
+        {
+          "type": "named",
+          "imported": "normalizeKey",
+          "local": "normalizeKey"
+        },
+        {
+          "type": "named",
+          "imported": "canonicalKanbanKey",
+          "local": "canonicalKanbanKey"
+        },
+        {
+          "type": "named",
+          "imported": "emptyKanban",
+          "local": "emptyKanban"
+        },
+        {
+          "type": "named",
+          "imported": "getKanbanColumnKind",
+          "local": "getKanbanColumnKind"
+        }
+      ],
+      "line": 106
+    },
+    {
+      "source": "./audioUtils.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "TECHNICAL_MEDIA_LABELS",
+          "local": "TECHNICAL_MEDIA_LABELS"
+        },
+        {
+          "type": "named",
+          "imported": "REAL_MEDIA_KINDS",
+          "local": "REAL_MEDIA_KINDS"
+        },
+        {
+          "type": "named",
+          "imported": "isMediaPlaceholderForKind",
+          "local": "isMediaPlaceholderForKind"
+        }
+      ],
+      "line": 115
+    },
+    {
+      "source": "./services/kanban/stageTone.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "getStageTone",
+          "local": "getStageTone"
+        }
+      ],
+      "line": 116
+    },
+    {
+      "source": "./services/media/storageErrors.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "isTransientStorageError",
+          "local": "isTransientStorageError"
+        }
+      ],
+      "line": 118
+    },
+    {
+      "source": "./services/media/mediaPresentation.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "mediaPreview",
+          "local": "mediaPreview"
+        },
+        {
+          "type": "named",
+          "imported": "isGeneratedMediaLabel",
+          "local": "isGeneratedMediaLabel"
+        }
+      ],
+      "line": 120
+    },
+    {
+      "source": "./services/media/mediaDirection.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "isExplicitOutboundMedia",
+          "local": "isExplicitOutboundMedia"
+        }
+      ],
+      "line": 121
+    },
+    {
+      "source": "./services/media/productImages.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "safeProductImageUrl",
+          "local": "safeProductImageUrl"
+        },
+        {
+          "type": "named",
+          "imported": "safeProductThumbnail",
+          "local": "safeProductThumbnail"
+        }
+      ],
+      "line": 122
+    },
+    {
+      "source": "./services/media/productSnapshot.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "productSnapshotMedia",
+          "local": "productSnapshotMedia"
+        }
+      ],
+      "line": 123
+    },
+    {
+      "source": "./services/media/mediaNormalization.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "normalizeMedia",
+          "local": "normalizeMedia"
+        },
+        {
+          "type": "named",
+          "imported": "hasStoredMediaNeedingUrl",
+          "local": "hasStoredMediaNeedingUrl"
+        }
+      ],
+      "line": 124
+    },
+    {
+      "source": "./services/media/mediaUrlService.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "SIGNED_URL_EXPIRES_IN",
+          "local": "SIGNED_URL_EXPIRES_IN"
+        },
+        {
+          "type": "named",
+          "imported": "clearMediaUrlCache",
+          "local": "clearMediaUrlCache"
+        },
+        {
+          "type": "named",
+          "imported": "enrichMediaUrls",
+          "local": "enrichMediaUrls"
+        },
+        {
+          "type": "named",
+          "imported": "getMediaUrlFromCache",
+          "local": "getMediaUrlFromCache"
+        }
+      ],
+      "line": 126
+    },
+    {
+      "source": "./services/media/singleMediaEvent.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "enrichSingleMediaEvent",
+          "local": "enrichSingleMediaEventWithClient"
+        }
+      ],
+      "line": 133
+    },
+    {
+      "source": "./services/contacts/contactDataService.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "loadContactAvatars",
+          "local": "loadContactAvatarsWithClient"
+        },
+        {
+          "type": "named",
+          "imported": "loadRelevantContacts",
+          "local": "loadRelevantContactsWithClient"
+        }
+      ],
+      "line": 134
+    },
+    {
+      "source": "./services/tenants/tenantDataReads.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "findTenantBySlug",
+          "local": "findTenantBySlug"
+        },
+        {
+          "type": "named",
+          "imported": "loadAppointments",
+          "local": "loadAppointmentsWithClient"
+        },
+        {
+          "type": "named",
+          "imported": "loadBroadcastCampaigns",
+          "local": "loadBroadcastCampaignsWithClient"
+        },
+        {
+          "type": "named",
+          "imported": "loadBroadcastContacts",
+          "local": "loadBroadcastContactsWithClient"
+        },
+        {
+          "type": "named",
+          "imported": "loadFollowUpJobs",
+          "local": "loadFollowUpJobsWithClient"
+        },
+        {
+          "type": "named",
+          "imported": "loadKanbanConfig",
+          "local": "loadKanbanConfigWithClient"
+        }
+      ],
+      "line": 138
+    },
+    {
+      "source": "./services/reads/conversationDataReads.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "loadConversationReads",
+          "local": "loadConversationReadsWithClient"
+        }
+      ],
+      "line": 146
+    },
+    {
+      "source": "./services/leads/leadDataReads.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "buildSalesLeadIndex",
+          "local": "buildSalesLeadIndexWithHelpers"
+        },
+        {
+          "type": "named",
+          "imported": "loadSalesLeads",
+          "local": "loadSalesLeadsWithClient"
+        },
+        {
+          "type": "named",
+          "imported": "resolveSalesControlMode",
+          "local": "resolveSalesControlMode"
+        }
+      ],
+      "line": 147
+    },
+    {
+      "source": "./services/kanban/commercialStages.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "GENESIS_SALES_STAGE_DEFAULT_NAMES",
+          "local": "GENESIS_SALES_STAGE_DEFAULT_NAMES"
+        },
+        {
+          "type": "named",
+          "imported": "GENESIS_SALES_STAGE_BY_KEY",
+          "local": "GENESIS_SALES_STAGE_BY_KEY"
+        },
+        {
+          "type": "named",
+          "imported": "GENESIS_SALES_STAGE_KEYS",
+          "local": "GENESIS_SALES_STAGE_KEYS"
+        },
+        {
+          "type": "named",
+          "imported": "isGenesisSalesTenant",
+          "local": "isGenesisSalesTenant"
+        }
+      ],
+      "line": 153
+    },
+    {
+      "source": "./services/kanban/stageResolution.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "getStageLabel",
+          "local": "getStageLabel"
+        },
+        {
+          "type": "named",
+          "imported": "findKanbanColumn",
+          "local": "findKanbanColumn"
+        }
+      ],
+      "line": 155
+    },
+    {
+      "source": "./services/conversations/conversationEventState.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "shouldHideGenericLeadInquiry",
+          "local": "shouldHideGenericLeadInquiry"
+        },
+        {
+          "type": "named",
+          "imported": "isCustomerInboundEvent",
+          "local": "isCustomerInboundEvent"
+        },
+        {
+          "type": "named",
+          "imported": "isFollowUpOutboundEvent",
+          "local": "isFollowUpOutboundEvent"
+        },
+        {
+          "type": "named",
+          "imported": "isSubstantiveInboundFollowUp",
+          "local": "isSubstantiveInboundFollowUp"
+        },
+        {
+          "type": "named",
+          "imported": "isGenericLeadInquiry",
+          "local": "isGenericLeadInquiry"
+        },
+        {
+          "type": "named",
+          "imported": "isShortlyAfter",
+          "local": "isShortlyAfter"
+        }
+      ],
+      "line": 157
+    },
+    {
+      "source": "./services/conversations/eventsToConversations.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "eventsToConversations",
+          "local": "eventsToConversations"
+        }
+      ],
+      "line": 159
+    },
+    {
+      "source": "./services/conversations/applyIncomingEvent.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "applyIncomingEventToConversations",
+          "local": "applyIncomingEventToConversations"
+        }
+      ],
+      "line": 161
+    },
+    {
+      "source": "./services/kanban/applyIncomingEvent.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "applyIncomingEventToKanban",
+          "local": "applyIncomingEventToKanban"
+        },
+        {
+          "type": "named",
+          "imported": "sortKanbanCardsByConversationActivity",
+          "local": "sortKanbanCardsByConversationActivity"
+        }
+      ],
+      "line": 163
+    },
+    {
+      "source": "./services/kanban/eventsToKanban.js",
+      "specifiers": [
+        {
+          "type": "named",
+          "imported": "eventsToKanban",
+          "local": "eventsToKanban"
+        },
+        {
+          "type": "named",
+          "imported": "orderKanbanColumnsForTenant",
+          "local": "orderKanbanColumnsForTenant"
+        },
+        {
+          "type": "named",
+          "imported": "ownerMetadataFromKanbanEvent",
+          "local": "ownerMetadataFromKanbanEvent"
+        },
+        {
+          "type": "named",
+          "imported": "resolveTenantKanbanStage",
+          "local": "resolveTenantKanbanStage"
+        }
+      ],
+      "line": 165
+    }
+  ],
+  "exports": [
+    {
+      "name": "isConversationClosed",
+      "local": "isConversationClosed",
+      "kind": "specifier",
+      "line": 9
+    },
+    {
+      "name": "emptyFunnel",
+      "local": "emptyFunnel",
+      "kind": "specifier",
+      "line": 12
+    },
+    {
+      "name": "formatCurrency",
+      "local": "formatCurrency",
+      "kind": "specifier",
+      "line": 12
+    },
+    {
+      "name": "TENANT_SCHEDULING_LINKS",
+      "local": "TENANT_SCHEDULING_LINKS",
+      "kind": "specifier",
+      "line": 14
+    },
+    {
+      "name": "getTenantSchedulingLink",
+      "local": "getTenantSchedulingLink",
+      "kind": "specifier",
+      "line": 14
+    },
+    {
+      "name": "canonicalConversationKey",
+      "local": "canonicalConversationKey",
+      "kind": "specifier",
+      "line": 16
+    },
+    {
+      "name": "normalizeExternalConversationId",
+      "local": "normalizeExternalConversationId",
+      "kind": "specifier",
+      "line": 16
+    },
+    {
+      "name": "contactAvatarKey",
+      "local": "contactAvatarKey",
+      "kind": "specifier",
+      "line": 19
+    },
+    {
+      "name": "normalizeAvatarUrl",
+      "local": "normalizeAvatarUrl",
+      "kind": "specifier",
+      "line": 19
+    },
+    {
+      "name": "buildContactAvatarIndex",
+      "local": "buildContactAvatarIndex",
+      "kind": "specifier",
+      "line": 21
+    },
+    {
+      "name": "buildContactDirectory",
+      "local": "buildContactDirectory",
+      "kind": "specifier",
+      "line": 21
+    },
+    {
+      "name": "applyContactAvatars",
+      "local": "applyContactAvatars",
+      "kind": "specifier",
+      "line": 28
+    },
+    {
+      "name": "applyContactAvatarsToBroadcastContacts",
+      "local": "applyContactAvatarsToBroadcastContacts",
+      "kind": "specifier",
+      "line": 28
+    },
+    {
+      "name": "applyContactDirectory",
+      "local": "applyContactDirectory",
+      "kind": "specifier",
+      "line": 28
+    },
+    {
+      "name": "resolveContactAvatarState",
+      "local": "resolveContactAvatarState",
+      "kind": "specifier",
+      "line": 28
+    },
+    {
+      "name": "getTrustedContactName",
+      "local": "getTrustedContactName",
+      "kind": "specifier",
+      "line": 35
+    },
+    {
+      "name": "getUsefulTrustedContactName",
+      "local": "getUsefulTrustedContactName",
+      "kind": "specifier",
+      "line": 35
+    },
+    {
+      "name": "isUsefulContactName",
+      "local": "isUsefulContactName",
+      "kind": "specifier",
+      "line": 35
+    },
+    {
+      "name": "conversationPhoneFallback",
+      "local": "conversationPhoneFallback",
+      "kind": "specifier",
+      "line": 37
+    },
+    {
+      "name": "formatWhatsAppPhone",
+      "local": "formatWhatsAppPhone",
+      "kind": "specifier",
+      "line": 37
+    },
+    {
+      "name": "applyContactUpdateToConversations",
+      "local": "applyContactUpdateToConversations",
+      "kind": "specifier",
+      "line": 39
+    },
+    {
+      "name": "extractAvatarUrlFromEvent",
+      "local": "extractAvatarUrlFromEvent",
+      "kind": "specifier",
+      "line": 41
+    },
+    {
+      "name": "extractPayloadAvatar",
+      "local": "extractPayloadAvatar",
+      "kind": "specifier",
+      "line": 41
+    },
+    {
+      "name": "resolveConversationDisplayName",
+      "local": "resolveConversationDisplayName",
+      "kind": "specifier",
+      "line": 43
+    },
+    {
+      "name": "cleanAgentName",
+      "local": "cleanAgentName",
+      "kind": "specifier",
+      "line": 45
+    },
+    {
+      "name": "normalizeAudioTranscription",
+      "local": "normalizeAudioTranscription",
+      "kind": "specifier",
+      "line": 58
+    },
+    {
+      "name": "normalizeLocation",
+      "local": "normalizeLocation",
+      "kind": "specifier",
+      "line": 58
+    },
+    {
+      "name": "normalizeStage",
+      "local": "normalizeStage",
+      "kind": "specifier",
+      "line": 58
+    },
+    {
+      "name": "resolveConversationHeaderOwner",
+      "local": "resolveConversationHeaderOwner",
+      "kind": "specifier",
+      "line": 58
+    },
+    {
+      "name": "resolveConversationOwner",
+      "local": "resolveConversationOwner",
+      "kind": "specifier",
+      "line": 58
+    },
+    {
+      "name": "resolveConversationOwnerDetails",
+      "local": "resolveConversationOwnerDetails",
+      "kind": "specifier",
+      "line": 58
+    },
+    {
+      "name": "resolveEventMessagePreview",
+      "local": "resolveEventMessagePreview",
+      "kind": "specifier",
+      "line": 58
+    },
+    {
+      "name": "resolveMessageSender",
+      "local": "resolveMessageSender",
+      "kind": "specifier",
+      "line": 58
+    },
+    {
+      "name": "conversationReadKey",
+      "local": "conversationReadKey",
+      "kind": "specifier",
+      "line": 76
+    },
+    {
+      "name": "isUnreadInboundEvent",
+      "local": "isUnreadInboundEvent",
+      "kind": "specifier",
+      "line": 76
+    },
+    {
+      "name": "getLatestReadableEvent",
+      "local": "getLatestReadableEvent",
+      "kind": "specifier",
+      "line": 76
+    },
+    {
+      "name": "shouldAdvanceConversationRead",
+      "local": "shouldAdvanceConversationRead",
+      "kind": "specifier",
+      "line": 76
+    },
+    {
+      "name": "upsertConversationReadMarker",
+      "local": "upsertConversationReadMarker",
+      "kind": "specifier",
+      "line": 76
+    },
+    {
+      "name": "applyConversationReadState",
+      "local": "applyConversationReadState",
+      "kind": "specifier",
+      "line": 76
+    },
+    {
+      "name": "isConversationWaitingForFollowUp",
+      "local": "isConversationWaitingForFollowUp",
+      "kind": "specifier",
+      "line": 94
+    },
+    {
+      "name": "formatWaitingDuration",
+      "local": "formatWaitingDuration",
+      "kind": "specifier",
+      "line": 94
+    },
+    {
+      "name": "matchesResponsibleFilter",
+      "local": "matchesResponsibleFilter",
+      "kind": "specifier",
+      "line": 94
+    },
+    {
+      "name": "matchesConversationTab",
+      "local": "matchesConversationTab",
+      "kind": "specifier",
+      "line": 94
+    },
+    {
+      "name": "sortConversationsForTab",
+      "local": "sortConversationsForTab",
+      "kind": "specifier",
+      "line": 94
+    },
+    {
+      "name": "getConversationTabCounts",
+      "local": "getConversationTabCounts",
+      "kind": "specifier",
+      "line": 94
+    },
+    {
+      "name": "formatConversationCardOrigin",
+      "local": "formatConversationCardOrigin",
+      "kind": "specifier",
+      "line": 94
+    },
+    {
+      "name": "formatMediaPreviewWithIcon",
+      "local": "formatMediaPreviewWithIcon",
+      "kind": "specifier",
+      "line": 94
+    },
+    {
+      "name": "getConversationActivityEpoch",
+      "local": "getConversationActivityEpoch",
+      "kind": "specifier",
+      "line": 105
+    },
+    {
+      "name": "sortConversationsByRecentActivity",
+      "local": "sortConversationsByRecentActivity",
+      "kind": "specifier",
+      "line": 105
+    },
+    {
+      "name": "emptyKanban",
+      "local": "emptyKanban",
+      "kind": "specifier",
+      "line": 114
+    },
+    {
+      "name": "getKanbanColumnKind",
+      "local": "getKanbanColumnKind",
+      "kind": "specifier",
+      "line": 114
+    },
+    {
+      "name": "getStageTone",
+      "local": "getStageTone",
+      "kind": "specifier",
+      "line": 117
+    },
+    {
+      "name": "isTransientStorageError",
+      "local": "isTransientStorageError",
+      "kind": "specifier",
+      "line": 119
+    },
+    {
+      "name": "normalizeMedia",
+      "local": "normalizeMedia",
+      "kind": "specifier",
+      "line": 125
+    },
+    {
+      "name": "hasStoredMediaNeedingUrl",
+      "local": "hasStoredMediaNeedingUrl",
+      "kind": "specifier",
+      "line": 125
+    },
+    {
+      "name": "SIGNED_URL_EXPIRES_IN",
+      "local": "SIGNED_URL_EXPIRES_IN",
+      "kind": "specifier",
+      "line": 132
+    },
+    {
+      "name": "clearMediaUrlCache",
+      "local": "clearMediaUrlCache",
+      "kind": "specifier",
+      "line": 132
+    },
+    {
+      "name": "enrichMediaUrls",
+      "local": "enrichMediaUrls",
+      "kind": "specifier",
+      "line": 132
+    },
+    {
+      "name": "getMediaUrlFromCache",
+      "local": "getMediaUrlFromCache",
+      "kind": "specifier",
+      "line": 132
+    },
+    {
+      "name": "resolveSalesControlMode",
+      "local": "resolveSalesControlMode",
+      "kind": "specifier",
+      "line": 152
+    },
+    {
+      "name": "GENESIS_SALES_STAGE_DEFAULT_NAMES",
+      "local": "GENESIS_SALES_STAGE_DEFAULT_NAMES",
+      "kind": "specifier",
+      "line": 154
+    },
+    {
+      "name": "isGenesisSalesTenant",
+      "local": "isGenesisSalesTenant",
+      "kind": "specifier",
+      "line": 154
+    },
+    {
+      "name": "getStageLabel",
+      "local": "getStageLabel",
+      "kind": "specifier",
+      "line": 156
+    },
+    {
+      "name": "shouldHideGenericLeadInquiry",
+      "local": "shouldHideGenericLeadInquiry",
+      "kind": "specifier",
+      "line": 158
+    },
+    {
+      "name": "isCustomerInboundEvent",
+      "local": "isCustomerInboundEvent",
+      "kind": "specifier",
+      "line": 158
+    },
+    {
+      "name": "isFollowUpOutboundEvent",
+      "local": "isFollowUpOutboundEvent",
+      "kind": "specifier",
+      "line": 158
+    },
+    {
+      "name": "eventsToConversations",
+      "local": "eventsToConversations",
+      "kind": "specifier",
+      "line": 160
+    },
+    {
+      "name": "applyIncomingEventToConversations",
+      "local": "applyIncomingEventToConversations",
+      "kind": "specifier",
+      "line": 162
+    },
+    {
+      "name": "applyIncomingEventToKanban",
+      "local": "applyIncomingEventToKanban",
+      "kind": "specifier",
+      "line": 164
+    },
+    {
+      "name": "sortKanbanCardsByConversationActivity",
+      "local": "sortKanbanCardsByConversationActivity",
+      "kind": "specifier",
+      "line": 164
+    },
+    {
+      "name": "eventsToKanban",
+      "local": "eventsToKanban",
+      "kind": "specifier",
+      "line": 166
+    },
+    {
+      "name": "orderKanbanColumnsForTenant",
+      "local": "orderKanbanColumnsForTenant",
+      "kind": "specifier",
+      "line": 166
+    },
+    {
+      "name": "ownerMetadataFromKanbanEvent",
+      "local": "ownerMetadataFromKanbanEvent",
+      "kind": "specifier",
+      "line": 166
+    },
+    {
+      "name": "resolveTenantKanbanStage",
+      "local": "resolveTenantKanbanStage",
+      "kind": "specifier",
+      "line": 166
+    },
+    {
+      "name": "hasSupabaseConfig",
+      "kind": "function",
+      "isAsync": false,
+      "params": "",
+      "line": 178,
+      "endLine": 180
+    },
+    {
+      "name": "getInitialTenantSlug",
+      "kind": "function",
+      "isAsync": false,
+      "params": "",
+      "line": 187,
+      "endLine": 190
+    },
+    {
+      "name": "persistTenantSlug",
+      "kind": "function",
+      "isAsync": false,
+      "params": "slug",
+      "line": 192,
+      "endLine": 195
+    },
+    {
+      "name": "loadAvailableTenants",
+      "kind": "function",
+      "isAsync": true,
+      "params": "fallbackTenants = []",
+      "line": 197,
+      "endLine": 201
+    },
+    {
+      "name": "subscribeToClientEvents",
+      "kind": "function",
+      "isAsync": false,
+      "params": "onChange, activeTenantSlug = defaultTenantSlug",
+      "line": 203,
+      "endLine": 247
+    },
+    {
+      "name": "shouldRefreshConversationState",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}",
+      "line": 249,
+      "endLine": 253
+    },
+    {
+      "name": "createDebouncedRealtimeRefresh",
+      "kind": "function",
+      "isAsync": false,
+      "params": "refresh, delay = 800",
+      "line": 255,
+      "endLine": 269
+    },
+    {
+      "name": "subscribeToConversationReads",
+      "kind": "function",
+      "isAsync": false,
+      "params": "onChange, userId",
+      "line": 271,
+      "endLine": 296
+    },
+    {
+      "name": "loadClientData",
+      "kind": "function",
+      "isAsync": true,
+      "params": "fallback, activeTenantSlug = defaultTenantSlug, userId = null",
+      "line": 298,
+      "endLine": 400
+    },
+    {
+      "name": "loadConversationReads",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantId, userId",
+      "line": 413,
+      "endLine": 415
+    },
+    {
+      "name": "markConversationRead",
+      "kind": "function",
+      "isAsync": true,
+      "params": "{ tenantId, channelType, externalConversationId, lastReadEventId }",
+      "line": 417,
+      "endLine": 428
+    },
+    {
+      "name": "loadAppointmentScheduling",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug",
+      "line": 430,
+      "endLine": 443
+    },
+    {
+      "name": "loadAppointmentAvailability",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantId, unitId, serviceId, date",
+      "line": 445,
+      "endLine": 456
+    },
+    {
+      "name": "saveAppointment",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug, appointment",
+      "line": 458,
+      "endLine": 516
+    },
+    {
+      "name": "upsertBroadcastContacts",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug, contacts",
+      "line": 518,
+      "endLine": 543
+    },
+    {
+      "name": "createBroadcastCampaign",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug, campaign, recipients",
+      "line": 545,
+      "endLine": 584
+    },
+    {
+      "name": "updateBroadcastCampaign",
+      "kind": "function",
+      "isAsync": true,
+      "params": "campaignId, patch",
+      "line": 586,
+      "endLine": 597
+    },
+    {
+      "name": "updateBroadcastRecipient",
+      "kind": "function",
+      "isAsync": true,
+      "params": "campaignId, externalConversationId, patch",
+      "line": 599,
+      "endLine": 608
+    },
+    {
+      "name": "enrichSingleMediaEvent",
+      "kind": "function",
+      "isAsync": true,
+      "params": "event, client, { force = false } = {}",
+      "line": 699,
+      "endLine": 702
+    },
+    {
+      "name": "subscribeToContacts",
+      "kind": "function",
+      "isAsync": false,
+      "params": "onChange, tenantId",
+      "line": 707,
+      "endLine": 721
+    },
+    {
+      "name": "buildGenesisSalesMovePayload",
+      "kind": "function",
+      "isAsync": false,
+      "params": "leadId, stageKey, revision",
+      "line": 723,
+      "endLine": 729
+    },
+    {
+      "name": "validateKanbanOrderProposal",
+      "kind": "function",
+      "isAsync": false,
+      "params": "columns = [], proposal = {}",
+      "line": 733,
+      "endLine": 752
+    },
+    {
+      "name": "loadRelevantContacts",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantId, events = [], broadcastContacts = []",
+      "line": 754,
+      "endLine": 756
+    },
+    {
+      "name": "loadContactAvatars",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantId",
+      "line": 759,
+      "endLine": 761
+    },
+    {
+      "name": "loadTeamAgents",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantSlug",
+      "line": 818,
+      "endLine": 820
+    },
+    {
+      "name": "saveTeamAgent",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantSlug, agent",
+      "line": 822,
+      "endLine": 854
+    },
+    {
+      "name": "updateTeamAgentStatus",
+      "kind": "function",
+      "isAsync": true,
+      "params": "agentId, newStatus, tenantSlug",
+      "line": 856,
+      "endLine": 877
+    },
+    {
+      "name": "removeTeamAgent",
+      "kind": "function",
+      "isAsync": true,
+      "params": "agentId, tenantSlug",
+      "line": 879,
+      "endLine": 900
+    },
+    {
+      "name": "loadTenantSettings",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantSlug",
+      "line": 902,
+      "endLine": 927
+    },
+    {
+      "name": "moveKanbanCard",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug, card, targetColumnKey, agentName = null, targetColObj = null",
+      "line": 1026,
+      "endLine": 1146
+    },
+    {
+      "name": "isEligibleForExternalOutbound",
+      "local": "isEligibleForExternalOutbound",
+      "kind": "specifier",
+      "line": 1148
+    },
+    {
+      "name": "isInternalOperationalEvent",
+      "local": "isInternalOperationalEvent",
+      "kind": "specifier",
+      "line": 1148
+    }
+  ],
+  "privateDeclarations": [
+    {
+      "name": "runtimeEnv",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 168,
+      "endLine": 168
+    },
+    {
+      "name": "supabaseUrl",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 169,
+      "endLine": 169
+    },
+    {
+      "name": "supabaseAnonKey",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 170,
+      "endLine": 170
+    },
+    {
+      "name": "defaultTenantSlug",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 171,
+      "endLine": 171
+    },
+    {
+      "name": "tenantStorageKey",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 172,
+      "endLine": 172
+    },
+    {
+      "name": "catalogProductCache",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 173,
+      "endLine": 173
+    },
+    {
+      "name": "catalogRefreshRequestedAt",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 174,
+      "endLine": 174
+    },
+    {
+      "name": "CATALOG_PRODUCT_CACHE_TTL_MS",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 175,
+      "endLine": 175
+    },
+    {
+      "name": "CATALOG_REFRESH_COOLDOWN_MS",
+      "kind": "const",
+      "isAsync": false,
+      "params": "",
+      "line": 176,
+      "endLine": 176
+    },
+    {
+      "name": "getClient",
+      "kind": "function",
+      "isAsync": false,
+      "params": "",
+      "line": 182,
+      "endLine": 185
+    },
+    {
+      "name": "loadTenant",
+      "kind": "function",
+      "isAsync": true,
+      "params": "activeTenantSlug",
+      "line": 402,
+      "endLine": 404
+    },
+    {
+      "name": "currentUserId",
+      "kind": "function",
+      "isAsync": true,
+      "params": "",
+      "line": 406,
+      "endLine": 411
+    },
+    {
+      "name": "catalogProductKey",
+      "kind": "function",
+      "isAsync": false,
+      "params": "tenantId, instanceName, productId",
+      "line": 610,
+      "endLine": 612
+    },
+    {
+      "name": "catalogReferralFromEvent",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event = {}",
+      "line": 614,
+      "endLine": 624
+    },
+    {
+      "name": "enrichCatalogReferrals",
+      "kind": "function",
+      "isAsync": true,
+      "params": "events = [], tenantId, supabase, tenantSlug = defaultTenantSlug",
+      "line": 626,
+      "endLine": 697
+    },
+    {
+      "name": "eventsToFunnel",
+      "kind": "function",
+      "isAsync": false,
+      "params": "events",
+      "line": 764,
+      "endLine": 783
+    },
+    {
+      "name": "statusFromEvent",
+      "kind": "function",
+      "isAsync": false,
+      "params": "event",
+      "line": 785,
+      "endLine": 789
+    },
+    {
+      "name": "buildStatus",
+      "kind": "function",
+      "isAsync": false,
+      "params": "{ source, events, error, tenantSlug }",
+      "line": 791,
+      "endLine": 815
+    },
+    {
+      "name": "moveGenesisSalesCard",
+      "kind": "function",
+      "isAsync": true,
+      "params": "tenantSlug, card, targetColumnKey, agentName = null, targetColObj = null",
+      "line": 929,
+      "endLine": 1024
+    }
+  ],
+  "mutableState": []
+}

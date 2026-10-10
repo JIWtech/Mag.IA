@@ -92,7 +92,7 @@ Transcricao/OCR tambem consomem chamadas. Nao muda modelo/limite de outros tenan
 Limite atingido encaminha para humano, sem impedir atendimento manual.
 
 Execute `05_validar_ativacao.sql`: espere `sales_v1`, `conversation_core_v1`,
-`canonical_v2`, IA true, canal active, prompt `wesley-sales-v1-2026-09-30`, oito
+`canonical_v2`, IA true, canal active, prompt `wesley-sales-v2-2026-10-07`, oito
 colunas e nenhum prompt legado ativo. A consulta nao retorna CPF/CNH.
 
 Na Evolution, restaure/habilite apenas o webhook de `wesley-carros` para a URL
@@ -140,7 +140,7 @@ Nao presumir que a chave do servidor e igual a chave local. Smoke test opcional,
 com chave do ambiente correto e consumo de quota:
 
 ```powershell
-node --env-file=.env scripts/smoke_wesley_model.cjs --live
+node --env-file=.env scripts/tests/smoke_wesley_model.cjs --live
 ```
 
 ## 7. Limites operacionais

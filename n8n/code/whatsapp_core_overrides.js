@@ -335,6 +335,11 @@ async function sendChannelMessage(context, text, event) {
     await recordContactExclusion(context, exclusion);
     return { cancelled: true, reason: exclusion.reason };
   }
+  const deliveryAttempt = await supabasePost('/rest/v1/rpc/magia_begin_turn_delivery', {
+    p_tenant: context.tenant.id, p_chat: chatId, p_token: turn.token,
+  });
+  if (!deliveryAttempt?.id) throw new Error('DELIVERY_ATTEMPT_NOT_PERSISTED');
+  deliveryAttemptId = String(deliveryAttempt.id);
   sendAttempted = true;
   const sent = await httpJson('POST', base + '/message/sendText/' + encodeFilter(instance),
     { apikey: key, 'Content-Type': 'application/json' }, { number: chatId, text });
@@ -350,10 +355,16 @@ async function sendChannelMessage(context, text, event) {
     ai_error: event.ai_error ? String(event.ai_error).slice(0, 300) : '',
     ai_usage: event.ai_usage || {},
     ...(event.sent_by_user ? { sent_by_user: event.sent_by_user } : {}),
-    raw_payload: { ...textReplyAuditPayload(event.raw_payload), core_revision: 'conversation_core_v1',
-      conversation_session_id: turn.boundary_id, grouped_message_ids: turn.messages.map(item => item.id) },
+    raw_payload: { ...textReplyAuditPayload(event.raw_payload), core_revision: coreRevision,
+      delivery_attempt_id: deliveryAttemptId,conversation_session_id: turn.boundary_id,
+      grouped_message_ids: turn.messages.map(item => item.id) },
   });
   const sentEvent = Array.isArray(saved) ? saved[0] : saved;
+  const confirmation = await supabasePost('/rest/v1/rpc/magia_confirm_turn_delivery', {
+    p_tenant: context.tenant.id,p_chat: chatId,p_token: turn.token,p_attempt: deliveryAttemptId,
+    p_provider_message: String(id),p_outbound_event: sentEvent?.id || null,
+  });
+  if (confirmation?.confirmed !== true) throw new Error('DELIVERY_CONFIRMATION_NOT_PERSISTED');
   try {
     const followUpsScheduled = await scheduleFollowUps(context, sentEvent, event);
     return { sent: true, id: String(id), follow_ups_scheduled: followUpsScheduled };

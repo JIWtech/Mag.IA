@@ -146,7 +146,7 @@ Falhas incertas de envio exigem reconciliacao, nunca reenvio automatico cego.
 - 03_ativar_processamento_whatsapp.sql: reproduz ativacao JA aplicada por API.
 - prompt_canonico_v2.txt e business_facts_v2.json: fontes versionadas do cadastro.
 - 04_fonte_unica_whatsapp.sql: reproduz a correcao JA aplicada. Gerar com
-  node scripts/build_nubia_grounding_sql.cjs. Nao executar 02 depois de 04.
+  node scripts/build/sql/build_nubia_grounding_sql.cjs. Nao executar 02 depois de 04.
 - Backups de publicacao/ativacao: .local/backups/ (ignorado pelo Git).
 - Rollback restrito: pausar trafego oficial, reconciliar mensagens em andamento
   e remover apenas whatsapp_processing_mode das settings oficiais. Volta para
