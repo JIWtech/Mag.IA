@@ -55,6 +55,25 @@ async function hasFutureAppointment(job) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+async function protectedEligibility(job, settings) {
+  if (settings.conversation_capability === 'sales_v1') {
+    const result = await rpc('magia_validate_sales_followup', { p_job: job.id, p_lease: job.lease_token });
+    return result?.allowed === true;
+  }
+  if (settings.contact_exclusion_enabled === true || settings.contact_exclusion_enabled === 'true') {
+    const result = await rpc('magia_contact_exclusion_status', { p_tenant: job.tenant_id, p_chat: job.external_conversation_id });
+    return result?.blocked === false;
+  }
+  return true;
+}
+
+function salesFollowUp(job, settings) {
+  // Neutral tenant-approved messages avoid interpreting documents or inventing stock/credit facts.
+  const text = settings.sales_follow_up?.messages?.[job.step_key];
+  if (typeof text !== 'string' || !text.trim() || text.length > 900) throw new Error('Sales follow-up message missing');
+  return { reply: text.trim(), model: null, usage: {} };
+}
+
 async function generate(job, settings, history) {
   const model = String(settings.ai_model || env('GEMINI_MODEL', 'gemini-2.5-flash')).trim();
   const apiKey = env('GEMINI_API_KEY');
@@ -90,35 +109,43 @@ async function generate(job, settings, history) {
 const jobs = await rpc('magia_claim_followup_jobs', { p_limit: 20 });
 const outcome = [];
 for (const job of Array.isArray(jobs) ? jobs : []) {
+  let sendAttempted = false;
   try {
+    const settingsRows = await get('tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(job.tenant_id) + '&limit=1');
+    const settings = settingsRows?.[0]?.settings || {};
+    const sales = settings.conversation_capability === 'sales_v1';
+    if (!await protectedEligibility(job, settings)) {
+      await finish(job, 'cancelled', null, 'contact_or_sales_blocked');
+      outcome.push({ id: job.id, status: 'cancelled', reason: 'contact_or_sales_blocked' });
+      continue;
+    }
     if (await conversationChanged(job)) {
       await finish(job, 'cancelled', null, 'conversation_control_changed');
       outcome.push({ id: job.id, status: 'cancelled' });
       continue;
     }
-    if (await hasFutureAppointment(job)) {
+    if (!sales && await hasFutureAppointment(job)) {
       await finish(job, 'cancelled', null, 'appointment_exists');
       outcome.push({ id: job.id, status: 'cancelled', reason: 'appointment_exists' });
       continue;
     }
-    const [settingsRows, history, channelRows] = await Promise.all([
-      get('tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(job.tenant_id) + '&limit=1'),
-      get('channel_events?select=direction,message_text,created_at&tenant_id=eq.' + encodeURIComponent(job.tenant_id)
+    const [history, channelRows] = await Promise.all([
+      sales ? [] : get('channel_events?select=direction,message_text,created_at&tenant_id=eq.' + encodeURIComponent(job.tenant_id)
         + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeURIComponent(job.external_conversation_id)
         + '&order=created_at.desc&limit=16'),
       get('channels?select=external_id,config&tenant_id=eq.' + encodeURIComponent(job.tenant_id)
         + '&type=eq.whatsapp&status=eq.active&limit=1'),
     ]);
-    const settings = settingsRows?.[0]?.settings || {};
     const channel = channelRows?.[0];
     if (!channel?.external_id) throw new Error('Canal WhatsApp ativo nao encontrado');
-    const generated = await generate.call(this, job, settings, Array.isArray(history) ? history.reverse() : []);
+    const generated = sales ? salesFollowUp(job, settings)
+      : await generate.call(this, job, settings, Array.isArray(history) ? history.reverse() : []);
     if (await conversationChanged(job)) {
       await finish(job, 'cancelled', null, 'conversation_control_changed_before_send');
       outcome.push({ id: job.id, status: 'cancelled' });
       continue;
     }
-    if (await hasFutureAppointment(job)) {
+    if (!sales && await hasFutureAppointment(job)) {
       await finish(job, 'cancelled', null, 'appointment_exists_before_send');
       outcome.push({ id: job.id, status: 'cancelled', reason: 'appointment_exists' });
       continue;
@@ -128,6 +155,12 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
     const key = env('EVOLUTION_API_KEY_' + tenantSuffix);
     const instance = env('EVOLUTION_INSTANCE_' + tenantSuffix);
     if (!base || !key || instance !== channel.external_id) throw new Error('Credenciais Evolution do tenant nao configuradas');
+    if (!await protectedEligibility(job, settings)) {
+      await finish(job, 'cancelled', null, 'contact_or_sales_blocked_before_send');
+      outcome.push({ id: job.id, status: 'cancelled', reason: 'contact_or_sales_blocked_before_send' });
+      continue;
+    }
+    sendAttempted = true;
     const sent = await request.call(this, 'POST', base + '/message/sendText/' + encodeURIComponent(instance),
       { apikey: key, 'Content-Type': 'application/json' }, { number: String(job.external_conversation_id).replace(/@s\.whatsapp\.net$/, ''), text: generated.reply });
     const messageId = sent?.key?.id || sent?.message?.key?.id || sent?.id;
@@ -136,7 +169,7 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
       tenant_id: job.tenant_id, tenant_slug: job.tenant_slug, channel_type: 'whatsapp', external_conversation_id: job.external_conversation_id,
       external_message_id: String(messageId), direction: 'outbound', sender_type: 'assistant', contact_name: job.contact_name || 'Contato',
       message_text: generated.reply, service: 'follow_up', stage: 'Follow-up ' + job.step_key, handoff: false,
-      ai_provider: 'gemini_follow_up', ai_model: generated.model, ai_usage: generated.usage, delivery_status: 'sent',
+      ai_provider: sales ? 'configured_follow_up' : 'gemini_follow_up', ai_model: generated.model, ai_usage: generated.usage, delivery_status: 'sent',
       raw_payload: { follow_up: { job_id: job.id, step_key: job.step_key, objective: job.objective, anchor_event_id: job.anchor_event_id } },
     });
     const event = Array.isArray(saved) ? saved[0] : saved;
@@ -145,7 +178,7 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
   } catch (error) {
     const message = String(error?.message || error).slice(0, 500);
     // Sending can have unknown delivery after a transport failure; do not retry it blindly.
-    const status = /Evolution|retornou o id/i.test(message) ? 'uncertain' : 'failed';
+    const status = sendAttempted ? 'uncertain' : 'failed';
     await finish(job, status, null, message).catch(() => {});
     outcome.push({ id: job.id, status, error: message });
   }

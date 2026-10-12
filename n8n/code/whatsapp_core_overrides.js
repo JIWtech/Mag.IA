@@ -104,7 +104,7 @@ async function saveEvent(event) {
   const payload = { service: event.service, stage: event.stage, handoff: event.handoff,
     ai_provider: event.ai_provider, ai_model: event.ai_model || null, ai_error: event.ai_error || '',
     ai_usage: event.ai_usage || {}, response_text: null,
-    raw_payload: { ...event.raw_payload, ...(turn.audio_transcriptions ? {audio_transcriptions:turn.audio_transcriptions} : {}), core_revision: 'conversation_core_v1',
+    raw_payload: { ...event.raw_payload, ...(turn.exclusion_phone ? {exclusion_phone:turn.exclusion_phone} : {}), ...(turn.audio_transcriptions ? {audio_transcriptions:turn.audio_transcriptions} : {}), core_revision: 'conversation_core_v1',
       grouped_message_ids: turn.messages.map(item => item.id), conversation_session_id: turn.boundary_id } };
   const ids = turn.messages.map(item => item.event_id);
   const saved = await supabasePatch('/rest/v1/channel_events?tenant_id=eq.' + encodeFilter($json.tenant_id)
@@ -114,7 +114,8 @@ async function saveEvent(event) {
 
 async function scheduleFollowUps(context, sentEvent, event) {
   const settings = settingsFor(context);
-  if (salesEnabled(context)) return 0;
+  if (salesEnabled(context) && (settings.follow_up_enabled !== true || !settings.sales_follow_up?.enabled
+    || event.service !== 'sales_qualification' || event.raw_payload?.interest_registered)) return 0;
   // The policy controls activation in the database. Never enqueue human handoffs,
   // payment flows, closed conversations, or a reply that failed to persist.
   if (!sentEvent?.id || event.handoff || ['agendamento', 'pagamento_sinal', 'conversation_closed'].includes(event.service)) return 0;
@@ -148,6 +149,11 @@ async function sendChannelMessage(context, text, event) {
     + '&or=(service.eq.conversation_assigned,service.eq.appointment_payment_confirmed,sender_type.eq.human)&limit=1');
   if (humanChanges.length) return { cancelled: true };
   if (salesEnabled(context) && !await salesCanSend(context,event)) return {cancelled:true};
+  const exclusion = await contactExclusionStatus(context);
+  if (exclusion.blocked) {
+    await recordContactExclusion(context, exclusion);
+    return { cancelled: true, reason: exclusion.reason };
+  }
   sendAttempted = true;
   const sent = await httpJson('POST', base + '/message/sendText/' + encodeFilter(instance),
     { apikey: key, 'Content-Type': 'application/json' }, { number: chatId, text });

@@ -18,16 +18,24 @@ const selected={...blank,intent:'buy',customer_name:'Maria Souza',name_evidence:
 async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 12.894,00'],
   response={action:'register_interest',reason:'none',reply:'',state:selected},
   lead=null,history=[],stale=false,stockError=false,priceChanged=false,humanRace=false,disabled=false,
-  collect=false,media=false,ocr=null,documents=[],sendError=false}={}) {
-  const calls=[],sent=[],saved=[];let generated=0,reads=0,currentLead=lead;
+  collect=false,media=false,ocr=null,documents=[],sendError=false,exclusion=false,exclusionResult=false,followUp=false,financing=false}={}) {
+  const calls=[],sent=[],saved=[];let generated=0,reads=0,currentLead=lead,exclusionChecks=0;
   const settings={conversation_capability:'sales_v1',whatsapp_processing_mode:'conversation_core_v1',grounding_mode:'canonical_v2',
     system_prompt:'Sales test',ai_model:'gemini-3.5-flash-lite',ai_enabled:!disabled,gemini_daily_limit:80,whatsapp_audio_enabled:false,
     business_facts:{locations:[{verified:true,address:'Endereco oficial'}]},
     sdr_rules:{hot_lead_percent:30,minimum_purchase_year:1995,rejected_purchase_brands:['Peugeot','Citroen']},
-    sales:{...sales,collect_documents:collect}};
+    contact_exclusion_enabled:exclusion,follow_up_enabled:followUp,sales_follow_up:{enabled:followUp},
+    sales:{...sales,collect_documents:collect,...(financing?{hot_lead_rule:'deposit_30_and_financing_documents_v1'}:{})}};
   const request=async({url,method,body})=>{
     calls.push({url,method,body});const u=new URL(url),table=u.pathname.split('/').at(-1);
-    assert.ok(!/appointments|appointment_|followup/.test(u.pathname),'Sales cannot access appointments/follow-up');
+    assert.ok(!/appointments|appointment_/.test(u.pathname),'Sales cannot access appointments');
+    if(!followUp)assert.ok(!/followup/.test(u.pathname),'Sales follow-up must be opt-in');
+    if(table==='magia_contact_exclusion_status'){
+      exclusionChecks++;
+      if(exclusionResult==='error')throw Error('RPC missing');
+      return {blocked:exclusionResult==='race'?exclusionChecks>1:exclusionResult,reason:'contact_excluded'};
+    }
+    if(table==='magia_schedule_followups')return 3;
     if(u.hostname==='docs.google.com'){reads++;if(stockError)throw Error('PRIVATE_ERROR');return priceChanged&&reads>1?stock.replace('42980','42981'):stock;}
     if(u.hostname==='evo.test') {
       if(u.pathname.includes('getBase64'))return {mimetype:'image/jpeg',base64:Buffer.from('fake-jpeg').toString('base64')};
@@ -47,9 +55,12 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
     if(table==='sales_documents')return documents;
     if(table==='magia_sales_save'){
       if(humanRace)throw Error('SALES_CONTROL_CHANGED');
-      const hot=body.p_state.deposit_cents*100>=body.p_product?.price_cents*30;
-      const stage=body.p_register?(body.p_state.intent==='sell'?sales.stage_keys.appraisal:hot?sales.stage_keys.hot:sales.stage_keys.human):body.p_stage;
-      currentLead={id:'lead-1',revision:1,stage_key:stage,state:body.p_state,ai_locked:!sales.stages[stage].allow_ai,interest_registered:body.p_register};
+      const received=[...documents,...body.p_documents].map(d=>d.extracted);
+      const complete=['cpf','cnh','birth_date'].every(k=>received.some(d=>!!d?.[k]));
+      const hot=body.p_state.deposit_cents*100>=body.p_product?.price_cents*30 && (!financing || complete);
+      let stage=body.p_register?(body.p_state.intent==='sell'?sales.stage_keys.appraisal:hot?sales.stage_keys.hot:sales.stage_keys.human):body.p_stage;
+      if(financing&&hot&&body.p_state.intent==='buy'&&['sales_qualifying','sales_human'].includes(stage))stage=sales.stage_keys.hot;
+      currentLead={id:'lead-1',revision:1,stage_key:stage,state:body.p_state,hot,ai_locked:!sales.stages[stage].allow_ai,interest_registered:body.p_register};
       saved.push(body);return currentLead;
     }
     if(table==='channel_events'){
@@ -67,6 +78,60 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
   return {result:result.json,calls,sent,saved,generated};
 }
 
+test('financing opt-in recognizes CNH as image, combines prior CPF/date, and hands hot lead to team',async()=>{
+  const r=await run({financing:true,collect:true,texts:['[image]'],
+    lead:{id:'lead',revision:2,state:selected,stage_key:'sales_qualifying',ai_locked:false},
+    documents:[{extracted:{cpf:'52998224725',birth_date:'1990-01-02'}}],
+    ocr:{kind:'document',name:'Maria',cpf:'',cnh:'12345678901',birth_date:''},
+    response:{action:'reply',reason:'none',reply:'Pode mandar os documentos?',state:blank}});
+  assert.equal(r.result.ok,true);assert.equal(r.result.handoff,true);
+  assert.equal(r.saved[0].p_documents[0].extracted.cnh,'12345678901');
+  assert.equal(r.saved[0].p_register,false,'qualification must not depend on register_interest');
+  assert.match(r.sent[0],/encaminhar/);assert.doesNotMatch(r.sent[0],/12345678901|52998224725|1990/);
+});
+test('financing opt-in captures birth date text and does not treat vehicle photo as documentation',async()=>{
+  const r=await run({financing:true,collect:true,texts:['Nasci em 02/01/1990'],
+    lead:{id:'lead',revision:2,state:selected,stage_key:'sales_qualifying',ai_locked:false},
+    documents:[{extracted:{cpf:'52998224725',cnh:'12345678901'}}],
+    response:{action:'reply',reason:'none',reply:'Obrigado.',state:blank}});
+  assert.equal(r.saved[0].p_documents[0].extracted.birth_date,'1990-01-02');
+  assert.equal(r.result.handoff,true);
+  const photo=await run({financing:true,collect:true,texts:['[image]'],
+    lead:{id:'lead',revision:2,state:selected,stage_key:'sales_qualifying',ai_locked:false},
+    ocr:{kind:'other',name:'',cpf:'',cnh:'',birth_date:''},
+    response:{action:'reply',reason:'none',reply:'Pode enviar sua CNH?',state:blank}});
+  assert.equal(photo.saved[0].p_documents.length,0);assert.equal(photo.result.handoff,false);
+});
+test('financing zero entry overwrites previous entry; missing birth date prevents registration',async()=>{
+  const r=await run({financing:true,texts:['Nao tenho entrada'],
+    lead:{id:'lead',revision:2,state:selected,stage_key:'sales_qualifying',ai_locked:false},
+    response:{action:'reply',reason:'none',reply:'Entendi.',state:blank}});
+  assert.equal(r.saved[0].p_state.deposit_cents,0);assert.equal(r.result.handoff,false);
+  const missing=await run({financing:true,collect:true,lead:{id:'lead',revision:2,state:selected,ai_locked:false},
+    documents:[{extracted:{cpf:'52998224725',cnh:'12345678901'}}]});
+  assert.equal(missing.saved[0].p_register,false);assert.match(missing.sent[0],/nascimento/);
+});
+test('financing opt-in preserves excluded contacts, human silence and stale generation guards',async()=>{
+  for(const flags of [{exclusion:true,exclusionResult:true},{lead:{id:'lead',ai_locked:true,stage_key:'sales_human'}}]) {
+    const r=await run({financing:true,...flags,texts:['[image]']});
+    assert.equal(r.sent.length,0);assert.equal(r.generated,0);assert.equal(r.saved.length,0);
+    assert.ok(!r.calls.some(c=>c.url.includes('getBase64')));
+  }
+  const stale=await run({financing:true,stale:true});assert.equal(stale.saved.length,0);assert.equal(stale.sent.length,0);
+});
+test('financing incomplete entry remains qualifying; changed inventory cannot create a hot lead',async()=>{
+  const documents=[{extracted:{cpf:'52998224725',cnh:'12345678901',birth_date:'1990-01-02'}}];
+  const low=await run({financing:true,collect:true,documents,lead:{id:'lead',revision:2,ai_locked:false},
+    texts:['Quero Sandero GT Line','Maria Souza','Entrada de R$ 1.000,00'],
+    response:{action:'register_interest',reason:'none',reply:'',state:{...selected,deposit_cents:100000}}});
+  assert.equal(low.saved[0].p_register,false);assert.equal(low.result.handoff,false);
+  assert.equal(low.saved[0].p_state.deposit_cents,100000);assert.match(low.sent[0],/30%/);
+  for(const flags of [{priceChanged:true},{stockError:true}]) {
+    const r=await run({financing:true,collect:true,documents,lead:{id:'lead',revision:2,state:selected,ai_locked:false},...flags});
+    assert.equal(r.saved[0].p_product,null);assert.equal(r.saved[0].p_register,false);assert.equal(r.result.handoff,true);
+    assert.doesNotMatch(r.sent[0],/Recebi os dados/);
+  }
+});
 test('sales registers an interest with exact 30% score, no appointments',async()=>{
   const r=await run();assert.equal(r.result.ok,true);assert.equal(r.saved.length,1);assert.equal(r.saved[0].p_register,true);
   assert.equal(r.result.handoff,true);assert.match(r.sent[0],/interesse foi registrado/);
@@ -99,10 +164,9 @@ test('after-sales is persisted and silent',async()=>{
   const r=await run({texts:['O carro que comprei quebrou'],response:{action:'handoff',reason:'after_sales',reply:'',state:{...blank,intent:'after_sales'}}});
   assert.equal(r.sent.length,0);assert.equal(r.saved[0].p_stage,'sales_after_sales');assert.equal(r.result.handoff,true);
 });
-test('stock failure, invalid prices, unsupported booking actions and ambiguous PCX fail to human',async()=>{
+test('stock failure, invalid prices and unsupported booking actions fail to human',async()=>{
   const variants=[{stockError:true},{response:{action:'create_appointment',reason:'none',reply:'',state:blank}},
-    {response:{action:'reply',reason:'none',reply:'Custa R$ 1,00',state:blank}},
-    {texts:['Quero PCX'],response:{action:'reply',reason:'none',reply:'Certo',state:{...blank,product_id:'honda|pcx|2023|branca',product_evidence:'e0'}}}];
+    {response:{action:'reply',reason:'none',reply:'Custa R$ 1,00',state:blank}}];
   for(const flags of variants){const r=await run(flags);assert.equal(r.saved[0].p_register,false);assert.equal(r.result.handoff,true);}
 });
 test('price changed during registration does not confirm an interest at stale price',async()=>{
@@ -112,14 +176,14 @@ test('CPF/CNH required by tenant do not disappear behind a register action',asyn
   const r=await run({collect:true});assert.equal(r.saved[0].p_register,false);assert.match(r.sent[0],/CNH/);
 });
 test('document extraction is saved privately, not in commercial model context',async()=>{
-  const r=await run({texts:['[image]'],response:{action:'reply',reason:'none',reply:'Qual veiculo te interessa?',state:blank}});
+  const r=await run({texts:['[document]'],response:{action:'reply',reason:'none',reply:'Qual veiculo te interessa?',state:blank}});
   assert.equal(r.saved[0].p_documents[0].extracted.cnh,'12345678901');
   const commercial=r.calls.find(c=>c.url.includes('generateContent')&&!c.body.contents[0].parts[0].inlineData);
   assert.ok(!JSON.stringify(commercial.body).includes('12345678901'));
   assert.ok(!JSON.stringify(r.calls.filter(c=>c.url.includes('/channel_events')&&c.method!=='GET')).includes('12345678901'));
 });
 test('captions do not bypass document extraction and prior photos remain available for appraisal',async()=>{
-  const image=await run({texts:['[image]\nMinha CNH'],response:{action:'reply',reason:'none',reply:'Qual veiculo te interessa?',state:blank}});
+  const image=await run({texts:['[document]\nMinha CNH'],response:{action:'reply',reason:'none',reply:'Qual veiculo te interessa?',state:blank}});
   assert.equal(image.saved[0].p_documents.length,1);
   const state={...blank,intent:'sell',customer_name:'Maria Souza',name_evidence:'e3',sell_brand:'Fiat',sell_brand_evidence:'e0',
     sell_model:'Uno',sell_model_evidence:'e1',sell_year:2010,sell_year_evidence:'e2'};
@@ -127,11 +191,39 @@ test('captions do not bypass document extraction and prior photos remain availab
     history:[{id:'old',direction:'inbound',message_text:'[image]',created_at:new Date().toISOString(),
       raw_payload:{sales_media:[{event_id:'old',kind:'vehicle_photo',readable:false}]}}],
     response:{action:'register_interest',reason:'none',reply:'',state}});
-  assert.equal(photo.saved[0].p_register,true);assert.equal(photo.result.handoff,true);
+  // Published semantic flow requires three photos plus a description, not just one photo.
+  assert.equal(photo.saved[0].p_register,false);assert.equal(photo.result.handoff,false);
+  assert.match(photo.sent[0],/fotos/);
 });
 test('unreadable documents never invent identity fields',async()=>{
-  const r=await run({texts:['[image]'],ocr:{kind:'document',name:'',cpf:'',cnh:'',birth_date:''}});
+  const r=await run({texts:['[document]'],ocr:{kind:'document',name:'',cpf:'',cnh:'',birth_date:''}});
   assert.equal(r.generated,0);assert.equal(r.result.handoff,true);assert.equal(r.saved[0].p_documents.length,0);
+});
+
+test('ambiguous PCX requests a variant without selecting an arbitrary vehicle',async()=>{
+  const r=await run({texts:['Quero PCX'],response:{action:'reply',reason:'none',reply:'Qual ano?',
+    state:{...blank,product_id:'honda|pcx|2023|branca',product_evidence:'e0'}}});
+  assert.equal(r.saved[0].p_register,false);assert.equal(r.saved[0].p_product,null);
+  assert.equal(r.result.handoff,false);
+});
+
+test('excluded contacts and unavailable guard never reach sales model, media or inventory',async()=>{
+  for(const exclusionResult of [true,'error'])for(const text of ['Oi','/reset','[audio]','[document]']){
+    const r=await run({texts:[text],exclusion:true,exclusionResult});
+    assert.equal(r.sent.length,0);assert.equal(r.generated,0);assert.equal(r.saved.length,0);
+    assert.equal(r.result.reason,exclusionResult==='error'?'contact_exclusion_unavailable':'contact_excluded');
+    assert.ok(!r.calls.some(c=>/docs.google.com|getBase64/.test(c.url)));
+  }
+});
+test('non-excluded contact can respond; a late exclusion blocks the actual send',async()=>{
+  const allowed=await run({exclusion:true});assert.equal(allowed.sent.length,1);
+  const blocked=await run({exclusion:true,exclusionResult:'race'});assert.equal(blocked.sent.length,0);
+  assert.equal(blocked.result.cancelled,true);
+});
+test('only opted-in ongoing sales qualification schedules follow-ups, never interest/handoff',async()=>{
+  const response={action:'reply',reason:'none',reply:'Qual e o seu nome?',state:{...selected,customer_name:'',name_evidence:''}};
+  const pending=await run({followUp:true,response});assert.equal(pending.result.follow_ups_scheduled,3);
+  const registered=await run({followUp:true});assert.ok(!registered.calls.some(c=>c.url.includes('magia_schedule_followups')));
 });
 test('split seller details are accepted and excluded brands are not registered',async()=>{
   const state={...blank,intent:'sell',sell_brand:'Peugeot',sell_brand_evidence:'e0',sell_model:'208',sell_model_evidence:'e1',sell_year:2020,sell_year_evidence:'e2'};
@@ -158,9 +250,21 @@ test('pending onboarded channel cannot enter legacy fallback; existing legacy te
   await assert.rejects(selector.call({helpers},input,env),/do not use fallback/);
   helpers.httpRequest=async({url})=>url.includes('/channels?')?[]:url.includes('/tenants?')?[{id:'legacy',status:'active'}]:[{settings:{}}];
   const legacy=await selector.call({helpers},input,env);assert.equal(legacy.json.use_conversation_core,false);
+  helpers.httpRequest=async({url})=>url.includes('/tenants?')?[{id:'sales',status:'active'}]:[{settings:{contact_exclusion_enabled:true}}];
+  await assert.rejects(selector.call({helpers},{...input,tenant_resolution:{source:'channels.external_id'}},env),/legacy fallback blocked/);
   helpers.httpRequest=async({url})=>url.includes('/tenants?')?[{id:'sales',status:'active'}]:[{settings:{conversation_capability:'sales_v1',whatsapp_processing_mode:'conversation_core_v1'}}];
   const commercial=await selector.call({helpers},{...input,tenant_slug:'sales',tenant_resolution:{source:'channels.external_id'}},env);
   assert.equal(commercial.json.core_sales,true);
+});
+
+test('queue preserves transport-provided phone for LID without using contact name as identity',async()=>{
+  const enqueue=new AsyncFunction('$json','$env',fs.readFileSync(path.join(root,'n8n/code/whatsapp_enqueue_core.js'),'utf8'));
+  let queued;
+  await enqueue.call({helpers:{httpRequest:async r=>{queued=r.body;return {};}}},
+    {core_sales:true,core_quiet_ms:8000,core_fragment_ms:12000,messageText:'Oi',remoteJid:'123456789012345@lid',
+      contactName:'5521999998888',raw_payload:{data:{key:{remoteJid:'123456789012345@lid',remoteJidAlt:'5521988887777@s.whatsapp.net'}}}},
+    {SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake'});
+  assert.equal(queued.p_message.raw.exclusion_phone,'5521988887777@s.whatsapp.net');
 });
 test('media queue markers change only for sales capability',async()=>{
   const enqueue=new AsyncFunction('$json','$env',fs.readFileSync(path.join(root,'n8n/code/whatsapp_enqueue_core.js'),'utf8'));
