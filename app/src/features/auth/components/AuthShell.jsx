@@ -2,7 +2,7 @@ import React from 'react';
 import { RefreshCcw } from 'lucide-react';
 import noriaLogo from '../../../assets/noria_logo.png';
 
-export function AuthShell({ title, children }) {
+export function AuthShell({ title, description, children }) {
   return (
     <main className="auth-page auth-loading-page">
       <div className="auth-visual-ambient-aurora cyan auth-loading-aurora" />
@@ -16,6 +16,7 @@ export function AuthShell({ title, children }) {
           <RefreshCcw size={20} className="spin" />
         </div>}
         <h1 className="auth-loading-title">{title}</h1>
+        {description && <p className="auth-loading-desc">{description}</p>}
         {children}
       </section>
     </main>

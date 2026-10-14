@@ -90,5 +90,16 @@ async function updateBroadcastRecipient(campaignId, externalConversationId, patc
     .eq('external_conversation_id', externalConversationId);
   if (error) throw error;
 }
-return { upsertBroadcastContacts, createBroadcastCampaign, updateBroadcastCampaign, updateBroadcastRecipient };
+async function getBroadcastCampaignRecipients(campaignId) {
+  const supabase = getClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('broadcast_campaign_recipients')
+    .select('*')
+    .eq('campaign_id', campaignId);
+  if (error) throw error;
+  return data || [];
+}
+
+return { upsertBroadcastContacts, createBroadcastCampaign, updateBroadcastCampaign, updateBroadcastRecipient, getBroadcastCampaignRecipients };
 }

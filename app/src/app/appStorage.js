@@ -57,10 +57,12 @@ export function appDataSignature(value) {
   ));
 }
 
-export function loadCachedAppData(tenantSlug) {
-  if (isAuthRequired()) return null;
+export function loadCachedAppData(tenantSlug, userId = null) {
+  if (isAuthRequired() && !userId) return null;
+  const userPrefix = userId ? `${userId}:` : '';
+  const key = `${appDataCachePrefix}${userPrefix}${tenantSlug}`;
   try {
-    const raw = typeof window !== 'undefined' ? localStorage.getItem(`${appDataCachePrefix}${tenantSlug}`) : null;
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(key) : null;
     const cached = raw ? JSON.parse(raw) : null;
     return cached?.conversations ? cached : null;
   } catch {
@@ -68,14 +70,16 @@ export function loadCachedAppData(tenantSlug) {
   }
 }
 
-export function cacheAppData(tenantSlug, data) {
-  if (isAuthRequired()) return;
+export function cacheAppData(tenantSlug, data, userId = null) {
+  if (isAuthRequired() && !userId) return;
+  const userPrefix = userId ? `${userId}:` : '';
+  const key = `${appDataCachePrefix}${userPrefix}${tenantSlug}`;
   try {
     const serialized = JSON.stringify(data, (key, value) => (
       key === 'url' || key === 'thumbnailUrl' ? undefined : value
     ));
     if (serialized.length <= 2_000_000 && typeof window !== 'undefined') {
-      localStorage.setItem(`${appDataCachePrefix}${tenantSlug}`, serialized);
+      localStorage.setItem(key, serialized);
     }
   } catch {
     // Cache local é opcional: quota cheia nunca deve afetar o painel.

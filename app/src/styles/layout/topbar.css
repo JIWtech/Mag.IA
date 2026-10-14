@@ -157,3 +157,45 @@
   line-height: 1.25;
   opacity: 0.84;
 }
+
+/* ==========================================================================
+   NORIA — Topbar Dashboard Exclusiva (Escala Tipográfica Ampliada)
+   ========================================================================== */
+.main[data-page="dashboard"] .topbar h1,
+.main[data-page="dashboard"] .kanban-title-block h1,
+.main:has(.dashboard-page-container) .topbar h1,
+.main:has(.dashboard-page-container) .kanban-title-block h1 {
+  font-size: 32px;
+  line-height: 1.22;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  font-family: var(--font-editorial, var(--font-serif));
+}
+
+.main[data-page="dashboard"] .kanban-title-accent,
+.main:has(.dashboard-page-container) .kanban-title-accent {
+  height: 38px;
+}
+
+.main[data-page="dashboard"] .page-context-tenant,
+.main:has(.dashboard-page-container) .page-context-tenant {
+  font-size: 15.5px;
+  gap: 7px;
+}
+
+.main[data-page="dashboard"] .page-context-tenant svg,
+.main:has(.dashboard-page-container) .page-context-tenant svg {
+  width: 15px;
+  height: 15px;
+}
+
+.main[data-page="dashboard"] .page-context-tenant strong,
+.main:has(.dashboard-page-container) .page-context-tenant strong {
+  font-size: 15.5px;
+  font-weight: 700;
+}
+
+.main[data-page="dashboard"] .page-context-segment,
+.main:has(.dashboard-page-container) .page-context-segment {
+  font-size: 13.5px;
+}

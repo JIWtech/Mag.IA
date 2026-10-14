@@ -17,7 +17,12 @@ export function clearMediaUrlCache() {
 export function getMediaUrlFromCache(key) {
   const cached = mediaObjectUrlCache.get(key);
   if (!cached) return null;
-  return typeof cached === 'string' ? cached : cached.url;
+  if (typeof cached === 'string') return cached;
+  if (cached.expiresAt <= Date.now()) {
+    mediaObjectUrlCache.delete(key);
+    return null;
+  }
+  return cached.url;
 }
 
 function blobToDataUrl(blob) {

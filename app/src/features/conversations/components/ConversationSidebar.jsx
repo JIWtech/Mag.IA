@@ -10,6 +10,7 @@ import { formatConversationPreview } from '../../../utils/audioUtils.js';
 export function ConversationSidebar({
   activeCount = 0, activeTab, agentsList, allowedChannels, availableStages, channelCounts, channelFilter,
   closedCount, filteredConversations, followUpCount, isSecondaryFilterActive, kanbanColumns,
+  kanbanCardsByConversationKey,
   onCloseSearch, onOpenSearch, onSearchKeyDown, onSelectConversation, query, ready, responsibleFilter, searchInputRef,
   searchOpen, selected, setActiveTab, setChannelFilter, setQuery, setResponsibleFilter,
   setShowFilterMenu, setStageFilter, showFilterMenu, stageFilter, tenantSettings, tenantSlug,
@@ -390,7 +391,20 @@ export function ConversationSidebar({
         ) : (
           <>
             {filteredConversations.map((conversation) => {
-              const presentation = deriveConversationPresentationState(conversation, { kanbanColumns, tenantSlug });
+              const matchingCard = kanbanCardsByConversationKey?.get(conversation.canonicalKey)
+                || (conversation.normalizedExternalId && kanbanCardsByConversationKey?.get(conversation.normalizedExternalId))
+                || (conversation.externalConversationId && kanbanCardsByConversationKey?.get(conversation.externalConversationId))
+                || kanbanCardsByConversationKey?.get(conversation.id)
+                || null;
+              const conversationStageLabel = getStageLabel(conversation.stage || conversation.salesStageKey, { kanbanColumns, tenantSettings, tenantSlug });
+              const presentation = deriveConversationPresentationState(conversation, {
+                matchingCard,
+                activeAgents: agentsList,
+                stageLabel: conversationStageLabel,
+                kanbanColumns,
+                tenantSlug,
+                tenantSettings,
+              });
               const isClosedConv = presentation.isClosed;
               const isHumanAttendant = presentation.isHuman;
               const attendantName = presentation.assignee || 'Humano';
@@ -399,7 +413,6 @@ export function ConversationSidebar({
               const isSelected = selected?.id === conversation.id;
               const isUnread = (conversation.unread || 0) > 0;
               const isWaitingFollowUp = Boolean(conversation.waitingForFollowUp);
-              const conversationStageLabel = getStageLabel(conversation.stage || conversation.salesStageKey, { kanbanColumns, tenantSettings, tenantSlug });
 
               return (
                 <button

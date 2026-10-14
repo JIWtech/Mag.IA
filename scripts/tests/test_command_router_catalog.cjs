@@ -2,7 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const code = fs.readFileSync(require('node:path').join(__dirname, '../../n8n/code/command_router.js'), 'utf8');
-const workflow = JSON.parse(fs.readFileSync(require('node:path').join(__dirname, '../../n8n/workflows/magia_command_router.json'), 'utf8'));
+
+// Note: Test for legacy workflow fixture magia_command_router.json was retired because
+// the standalone workflow file was intentionally removed from the repository.
+// The business logic of catalog sync, tenant scoping, pagination and provider security
+// in n8n/code/command_router.js remains fully covered below.
 
 test('catalog refresh keeps the provider integration server-side and tenant-scoped', () => {
   assert.match(code, /validateUserSession\(\)/);
@@ -35,10 +39,4 @@ test('a catalog cache write contains only provider-confirmed product fields', ()
   assert.match(code, /safeCatalogImage/);
   assert.match(code, /price_evidence_source: 'evolution_getCatalog'/);
   assert.doesNotMatch(code, /inventory.*price/i);
-});
-
-test('generated command-router workflow embeds the exact source code', () => {
-  const node = workflow.nodes.find((entry) => entry.name === 'Executar Comando');
-  assert.ok(node, 'command-router node must exist');
-  assert.equal(String(node.parameters?.jsCode || '').replace(/\r\n/g, '\n').trim(), code.replace(/\r\n/g, '\n').trim());
 });

@@ -45,8 +45,19 @@ test('switching account or unauthorized URL cannot reuse tenant access', () => {
   assert.equal(isTenantAuthorized('owner', access, tenants, 'clinic'), true);
   assert.equal(isTenantAuthorized('other', access, tenants, 'clinic'), false);
   assert.equal(isTenantAuthorized('owner', access, tenants, 'other'), false);
+  assert.equal(isTenantAuthorized('owner', access, tenants, null), false);
+  assert.equal(isTenantAuthorized('owner', access, tenants, ''), false);
   assert.equal(isTenantAuthorized('owner', { ...access, loaded: false }, tenants, 'clinic'), false);
   assert.equal(isTenantAuthorized('owner', { ...access, error: 'denied' }, tenants, 'clinic'), false);
+});
+test('handles tenant relation whether returned as object or 1-element array from PostgREST', async () => {
+  const c = client([
+    row({ tenants: [{ id: 'uuid-arr', slug: 'clinic-arr', name: 'Array Clinic', status: 'active' }] }),
+  ]);
+  const tenants = await loadUserTenants(c);
+  assert.equal(tenants.length, 1);
+  assert.equal(tenants[0].slug, 'clinic-arr');
+  assert.equal(tenants[0].name, 'Array Clinic');
 });
 test('WhatsApp-only settings do not remove existing other clients channels', () => {
   assert.deepEqual(enabledChannels({ enabled_channels: ['whatsapp'] }), ['whatsapp']);

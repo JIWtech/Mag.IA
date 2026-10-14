@@ -40,13 +40,66 @@ if (supabaseUrl && serviceKey && instance) {
     }
   } catch {}
 }
+const KNOWN_TENANT_BUSINESS_PATTERNS = {
+  wesley_automoveis: [
+    /^(?:g[eê]nesis|wesley)\s*(?:autom[oó]veis|ve[ií]culos|multimarcas|motors|auto)\b/i,
+    /^(?:g[eê]nesis\s+autom[oó]veis|wesley\s+autom[oó]veis|wesley_automoveis)$/i,
+  ],
+  '74b57037-9349-4a9e-889c-b65fb63c983a': [
+    /^(?:g[eê]nesis|wesley)\s*(?:autom[oó]veis|ve[ií]culos|multimarcas|motors|auto)\b/i,
+    /^(?:g[eê]nesis\s+autom[oó]veis|wesley\s+autom[oó]veis|wesley_automoveis)$/i,
+  ],
+  clinica_nubia_oficial: [
+    /^(?:cl[ií]nica\s+n[uú]bia(?:\s+oficial)?|n[uú]bia\s+oficial|clinica_nubia_oficial)$/i,
+  ],
+  royal_4x4: [
+    /^royal\s+4x4(?:\s+ve[ií]culos)?$/i,
+  ],
+};
+
+const GENERIC_SYSTEM_ROLES = /^(?:atendente|operador|operadora|suporte|sac|central(?:\s+de\s+atendimento)?|sistema|administrador|admin|bot|robo|noria)$/i;
+
+function isBusinessOrTenantName(candidate, slug = '', inst = '') {
+  const trimmed = String(candidate || '').trim();
+  if (!trimmed) return false;
+  const norm = trimmed.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (GENERIC_SYSTEM_ROLES.test(norm)) return true;
+
+  const slugNorm = String(slug || '').trim().toLowerCase();
+  const instNorm = String(inst || '').trim().toLowerCase();
+
+  if (slugNorm && (norm === slugNorm || norm === slugNorm.replace(/_/g, ' '))) return true;
+  if (instNorm && (norm === instNorm || norm === instNorm.replace(/_/g, ' '))) return true;
+
+  if (slugNorm) {
+    const patterns = KNOWN_TENANT_BUSINESS_PATTERNS[slugNorm];
+    if (patterns && patterns.some((re) => re.test(trimmed))) return true;
+  }
+  if (instNorm) {
+    const patterns = KNOWN_TENANT_BUSINESS_PATTERNS[instNorm];
+    if (patterns && patterns.some((re) => re.test(trimmed))) return true;
+  }
+
+  if (slugNorm || instNorm) {
+    if (/\b(?:atendimento|assistente\s+virtual|inteligencia\s+artificial)\b/i.test(norm)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const eventSupported = !event || ['messages.upsert', 'messages.update'].includes(event);
 // fromMe is a valid message event. It is routed to the manual-capture branch,
 // where known NORIA sends are deduplicated before any new event is created.
 const ignoredReason = !eventSupported ? 'event_not_supported' : !remoteJid ? 'missing_remote_jid' : remoteJid.includes('@g.us') || remoteJid === 'status@broadcast' ? 'group_or_status' : !phone ? 'missing_phone' : '';
+const candidatePush = fromMe ? '' : text(data.pushName || data.senderName);
+const safeContactName = (!fromMe && candidatePush && !isBusinessOrTenantName(candidatePush, tenantSlug, instance))
+  ? candidatePush
+  : (fromMe ? '' : phone);
+
 return { json: {
   shouldProcess: !ignoredReason, ignoredReason, event, eventRaw, tenant_slug: tenantSlug, tenant_resolution: tenantResolution,
   instance, remoteJid, phone, messageId: text(key.id || data.id || remoteJid + ':' + Date.now()),
-  contactName: text(data.pushName || data.senderName || phone), messageText, contentType, base64,
+  contactName: safeContactName, messageText, contentType, base64,
   is_manual_whatsapp_outbound: fromMe, raw_payload: input, channel_type: 'whatsapp',
 } };

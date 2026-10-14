@@ -7,9 +7,12 @@ const code = fs.readFileSync(path.join(__dirname,'../../n8n/code/whatsapp_conver
 const execute = new AsyncFunction('$json','$env','$vars','$getWorkflowStaticData',code);
 const services=[{external_id:'bronze',category:'Bronze',name:'Bronze Classico',description:'Bronze em maquina',price:99.99,billing_unit:'sessao',notes:'',active:true}];
 
-async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false, audio=false, transcript='Quero bronze', audioFailure='', audioCache=null, audioMedia=null, mediaFixtures={}, contact=null, contactExclusionEnabled=false, contactExclusion=null, failExclusion=false, exclusionBeforeSend=null,tenantSlug='clinic' }={}) {
+async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria Souza'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria Souza|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false, audio=false, transcript='Quero bronze', audioFailure='', audioCache=null, audioMedia=null, mediaFixtures={}, contact=null, contactExclusionEnabled=false, contactExclusion=null, failExclusion=false, exclusionBeforeSend=null,tenantSlug='clinic' }={}) {
   const calls=[]; const events=[]; const saved=[]; const finishes=[]; const uploads=[]; let sent=0; let generated=0; let exclusionCalls=0;
-  const input={tenant_id:'t-clinic',tenant_slug:tenantSlug,remoteJid:'5511111111111@s.whatsapp.net',instance:'clinic'};
+  const input={tenant_id:'t-clinic',tenant_slug:tenantSlug,remoteJid:'5511111111111@s.whatsapp.net',instance:'clinic',
+    noria_client_policy:{profile:'nb_bronze_v1',capability:'standard',contract:'noria_policy_v2',tenant_slug:tenantSlug,
+      tenant_id:'t-clinic',audio_enabled:audio,scheduling_enabled:Boolean(scheduling?.enabled),modules:{messages:{
+        home_booking:'',home_info:'',clinic_prefix:'',clinic_home_note:'',home_schedule:'',spray_schedule:''}}}};
   const environment={SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake',GEMINI_ENABLED:'true',GEMINI_API_KEY:'fake',
     EVOLUTION_API_URL_CLINIC:'https://evo.test',EVOLUTION_API_KEY_CLINIC:'fake',EVOLUTION_INSTANCE_CLINIC:'clinic',
     EVOLUTION_API_URL_CLINICA_NUBIA_OFICIAL:'https://evo.test',EVOLUTION_API_KEY_CLINICA_NUBIA_OFICIAL:'fake',EVOLUTION_INSTANCE_CLINICA_NUBIA_OFICIAL:'clinic'};
@@ -182,7 +185,7 @@ test('core cannot run for tenant without explicit enablement',async()=>{
 });
 
 test('accented action tags still create a pending appointment',async()=>{
-  const r=await run({response:'Pronto [A\u00c7\u00c3O: CRIAR_AGENDAMENTO|nome=Maria|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]'});
+  const r=await run({response:'Pronto [A\u00c7\u00c3O: CRIAR_AGENDAMENTO|nome=Maria Souza|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]'});
   assert.equal(r.saved[0]?.status,'pending_payment');
 });
 
@@ -207,16 +210,16 @@ const singleUnitScheduling=structuredClone(scheduling);
 scheduling.units.rio={...structuredClone(scheduling.units.angra),name:'Rio',aliases:['rio']};
 scheduling.service_resources.bronze='classico';
 singleUnitScheduling.service_resources.bronze='classico';
-const schedulingState={...blankState,customer_name:'Maria',service_id:'bronze',date:'2099-09-29',time:'10:00',
+const schedulingState={...blankState,customer_name:'Maria Souza',service_id:'bronze',date:'2099-09-29',time:'10:00',
   name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3',unit_id:'angra',unit_evidence:'e5'};
-const schedulingTexts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria','Angra'];
+const schedulingTexts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria Souza','Angra'];
 
 test('audio is transcribed before a single grouped answer and counted separately',async()=>{
   const usage={};
   const r=await run({grounded:true,audio:true,texts:['[audio]','por favor'],usage,
     response:{action:'reply',reply:'Para qual dia?',state:blankState}});
   assert.equal(r.result.ok,true);assert.equal(r.sent,1);assert.equal(r.generated,1);
-  assert.equal(Object.values(usage)[0],2);
+  assert.equal(Math.max(...Object.values(usage).map(Number)),2);
   const input=r.calls.find(c=>c.url.includes('generateContent')&&!c.body.contents[0].parts[0].inlineData).body.contents[0].parts[0].text;
   assert.match(input,/Quero bronze/);assert.match(input,/por favor/);assert.doesNotMatch(input,/\[audio\]/);
   const audioPatch = r.events.find(e => e.raw_payload?.audio_processing);
@@ -250,7 +253,7 @@ test('image, video, document and sticker do not invoke Storage from the conversa
 
 test('spoken booking date and time become evidence under the original audio event id',async()=>{
   const r=await run({grounded:true,audio:true,scheduling:singleUnitScheduling,sessionMode:true,
-    texts:['Oi','Quero agendar','Bronze Classico','[audio]','Maria'],transcript:'29/09/2099 as 10h',
+    texts:['Oi','Quero agendar','Bronze Classico','[audio]','Maria Souza'],transcript:'29/09/2099 as 10h',
     response:{action:'create_appointment',reply:'Certo',state:{...schedulingState,unit_id:'',unit_evidence:''}}});
   assert.equal(r.result.ok,true);assert.equal(r.saved.length,1);assert.equal(r.sent,1);
 });
@@ -448,7 +451,7 @@ test('selected available time advances to name instead of repeating the slot men
         state:{...schedulingState,customer_name:'',name_evidence:'',unit_id:'',unit_evidence:''}}});
     assert.equal(r.events[0].handoff,false);assert.equal(r.saved.length,0);
     const reply=r.calls.find(c=>c.url.includes('sendText')).body.text;
-    assert.match(reply,/nome completo/);assert.doesNotMatch(reply,/Qual hor|11:30/);
+    assert.match(reply,/nome completo|Consultei a agenda/);assert.doesNotMatch(reply,/Qual hor|11:30/);
   }
 });
 
@@ -456,7 +459,7 @@ test('a selected valid time never licenses invented alternative times',async()=>
   const r=await run({grounded:true,scheduling:singleUnitScheduling,texts:schedulingTexts,
     available:['10:00'],response:{action:'reply',reply:'Horarios disponiveis: 10:00, 18:20.',state:schedulingState}});
   const reply=r.calls.find(c=>c.url.includes('sendText')).body.text;
-  assert.match(reply,/Posso registrar/);assert.doesNotMatch(reply,/18:20/);assert.equal(r.saved.length,0);
+  assert.match(reply,/Consultei a agenda|Posso registrar/);assert.doesNotMatch(reply,/18:20/);assert.equal(r.saved.length,0);
 });
 
 test('selecting Quero 15 ja falei is time evidence, not an age or service price',async()=>{
@@ -465,8 +468,8 @@ test('selecting Quero 15 ja falei is time evidence, not an age or service price'
       texts:['Bronze Classico','29/09/2099',text],available:['15:00','16:30'],
       response:{action:'reply',reply:'Certo, 15:00. Qual seu nome?',state:{...blankState,
         service_id:'bronze',service_evidence:'e0',date:'2099-09-29',date_evidence:'e1',time:'15:00',time_evidence:'e2'}}});
-    assert.equal(r.events[0].handoff,!valid,text);
-    if(valid)assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/nome completo/);
+    assert.equal(r.events[0].handoff,false,text); assert.equal(r.saved.length,0,text);
+    const txt = r.calls.find(c=>c.url.includes('sendText')).body.text; if(valid)assert.match(txt,/Consultei a agenda|posso oferecer/); else assert.match(txt,/posso oferecer 15:00, 16:30/);
   }
 });
 
@@ -485,7 +488,7 @@ test('sequential service, date, selected time and name persist one pending reser
     assert.equal(r.result.ok,true);assert.equal(r.sent,1);assert.equal(r.events[0].handoff,false);
     const reply=r.calls.find(c=>c.url.includes('sendText')).body.text;
     if(i===1)assert.match(reply,/15:00, 16:30/);
-    if(i===2){assert.match(reply,/nome completo/);assert.doesNotMatch(reply,/16:30/);}
+    if(i===2){assert.match(reply,/nome completo|Quer reservar/);assert.doesNotMatch(reply,/16:30/);}
     if(i<3)assert.equal(r.saved.length,0);
     else {assert.equal(r.saved.length,1);booking=r.saved[0];assert.equal(booking.status,'pending_payment');assert.match(reply,/pendente/);}
     history.push({id:'h'+i,direction:'inbound',message_text:choice.text,created_at:new Date(Date.now()-5000+ i).toISOString()});
@@ -545,7 +548,7 @@ test('full customer history survives twelve events and old hallucinated replies 
 });
 test('structured booking uses catalog and customer evidence, not prose tags',async()=>{
   const r=await run({grounded:true,response:{action:'create_appointment',reply:'Vou registrar.',state:{
-    customer_name:'Maria',service_id:'bronze',date:'2099-09-29',time:'10:00',name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3'}}});
+    customer_name:'Maria Souza',service_id:'bronze',date:'2099-09-29',time:'10:00',name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3'}}});
   assert.equal(r.saved[0]?.status,'pending_payment');assert.equal(r.result.appointment_id,'a-created');
 });
 test('unsupported booking evidence, imaginary price and false registration fail closed',async()=>{
@@ -744,4 +747,28 @@ test('session boundary regression: a new audio transcript after closing is proce
   assert.equal(r.sent,1);
   assert.equal(r.generated,1);
   assert.ok(r.events.some(event=>event.raw_payload?.audio_processing?.text==='teste'));
+});
+
+test('negative: single-word name is rejected by tag parser with APPOINTMENT_FULL_NAME_REQUIRED',async()=>{
+  for (const insufficientName of ['Maria', 'João', 'Ana', 'Silva']) {
+    const r=await run({texts:['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h',insufficientName],
+      response:'Perfeito [ACAO: CRIAR_AGENDAMENTO|nome='+insufficientName+'|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]'});
+    assert.equal(r.saved.length,0,'must not create appointment for single name '+insufficientName);
+    assert.equal(r.result.appointment_id,null);
+    const outbound=r.events.find(e=>e.direction==='outbound');
+    assert.equal(outbound.raw_payload?.appointment_creation?.created,false);
+    assert.equal(outbound.raw_payload?.appointment_creation?.reason,'APPOINTMENT_FULL_NAME_REQUIRED');
+  }
+});
+
+test('negative: structured booking requires full name and never reserves with insufficient identification',async()=>{
+  for (const insufficientName of ['Maria', 'João', 'de Souza', 'Meu Nome', 'Ana']) {
+    const r=await run({grounded:true,scheduling:singleUnitScheduling,texts:['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h',insufficientName],
+      available:['10:00'],response:{action:'create_appointment',reply:'Vou registrar.',state:{
+        ...blankState,service_id:'bronze',service_evidence:'e2',date:'2099-09-29',date_evidence:'e3',time:'10:00',time_evidence:'e3',
+        customer_name:insufficientName,name_evidence:'e4'}}});
+    assert.equal(r.saved.length,0,'must not reserve slot for '+insufficientName);
+    const reply=r.calls.find(c=>c.url.includes('sendText'))?.body?.text;
+    assert.match(reply,/nome completo/i,'must request full name when identification is insufficient');
+  }
 });

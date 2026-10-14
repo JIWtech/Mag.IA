@@ -116,6 +116,15 @@ services:
       # MCP nativo do n8n (ativar via Settings → Instance-level MCP após subir)
       N8N_COMMUNITY_PACKAGES_ENABLED: "true"
 
+      # Gemini distributed admission control (Supabase migration 029).
+      GEMINI_RATE_SCOPE: ${GEMINI_RATE_SCOPE:-}
+      GEMINI_MAX_RPM: ${GEMINI_MAX_RPM:-}
+      GEMINI_MAX_TPM: ${GEMINI_MAX_TPM:-}
+      GEMINI_MAX_RPD: ${GEMINI_MAX_RPD:-}
+      GEMINI_MAX_CONCURRENT_CALLS: ${GEMINI_MAX_CONCURRENT_CALLS:-2}
+      GEMINI_LEASE_TTL_MS: ${GEMINI_LEASE_TTL_MS:-30000}
+      GEMINI_RATE_CONTROL_REQUIRED: ${GEMINI_RATE_CONTROL_REQUIRED:-false}
+
     volumes:
       - n8n_data:/home/node/.n8n
       - ./workflows:/home/node/.n8n/workflows

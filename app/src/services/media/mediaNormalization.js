@@ -86,6 +86,8 @@ export function normalizeMedia(rawPayload, event = null) {
         kind,
         category: normalized.category || kind,
         status: normalized.status || '',
+        verified: normalized.verified === true,
+        origin: normalized.origin || normalized.source || '',
         loadState: normalized.loadState || '',
         bucket: normalized.bucket || '',
         storagePath: normalized.storagePath || '',

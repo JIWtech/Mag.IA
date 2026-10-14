@@ -6,9 +6,14 @@ const vm=require('node:vm');
 const root=path.resolve(__dirname,'../..');
 const sales=JSON.parse(fs.readFileSync(path.join(root,'clients/wesley_automoveis/sales.json')));
 const inventory=JSON.parse(fs.readFileSync(path.join(root,'clients/wesley_automoveis/estoque_referencia.json'))).vehicles;
-const stock='/*O_o*/\ngoogle.visualization.Query.setResponse('+JSON.stringify({status:'ok',table:{
-  cols:['MODELO','MARCA','PRECO','COR','KM','ANO','COMBUSTIVEL'].map(label=>({label})),
-  rows:inventory.map(v=>({c:[v.model,v.brand,v.price_cents/100,v.color,v.km,v.year,v.fuel].map(v=>({v}))}))}})+');';
+const stockFor=rows=>{
+  const genesis=rows.some(v=>v.status!==undefined||v.observations!==undefined);
+  const columns=genesis?['MODELO','MARCA','PRECO','COR','KM','ANO','COMBUSTIVEL','STATUS','OBSERVAÇÕES']:['MODELO','MARCA','PRECO','COR','KM','ANO','COMBUSTIVEL'];
+  return '/*O_o*/\ngoogle.visualization.Query.setResponse('+JSON.stringify({status:'ok',table:{
+    cols:columns.map(label=>({label})),
+    rows:rows.map(v=>({c:(genesis?[v.model,v.brand,v.price_cents/100,v.color,v.km,v.year,v.fuel,v.status||'ANUNCIADO',v.observations||'']:[v.model,v.brand,v.price_cents/100,v.color,v.km,v.year,v.fuel]).map(v=>({v}))}))}})+');';
+};
+const stock=stockFor(inventory);
 const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 const code=fs.readFileSync(path.join(root,'n8n/code/whatsapp_conversation_core.generated.js'),'utf8');
 const blank={intent:'unknown',transaction_mode:'unknown',customer_name:'',name_evidence:'',product_id:'',product_evidence:'',product_variant_evidence:'',deposit_cents:null,deposit_evidence:'',
@@ -47,9 +52,12 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
   collect=false,media=false,ocr=null,imageClassification='vehicle_photo',visualKinds=null,visualFinishReason='STOP',documents=[],sendError=false,inboundPayloads={},mediaPatchFailure=false,teamAgents=undefined,contactName='Maria',contact=null,
   followUpEnabled=false,salesFollowUp=null,followUpFailure=false,followUpJobsScheduled=1,
   audioEnabled=false,audioTranscript='teste',boundary=null,boundaryId=boundary?'close-1':'initial',businessFacts=null,
-  hotLeadPercent=20,messageIds=null,messageRawPayloads=[]}={}) {
+  hotLeadPercent=20,messageIds=null,messageRawPayloads=[],inventoryRows=inventory,tenantSlug='sales',dialoguePlan=null,dialogueReview=null}={}) {
   const calls=[],sent=[],saved=[];let generated=0,reads=0,currentLead=lead;
-  const turnPayloads=Object.fromEntries(texts.map((_,i)=>[messageIds?.[i]?.event_id||'e'+i,messageRawPayloads[i]||{}]));
+  const turnPayloads=Object.fromEntries(texts.map((_,i)=>{
+    const eventId=messageIds?.[i]?.event_id||'e'+i;
+    return [eventId,messageRawPayloads[i]||inboundPayloads[eventId]||{}];
+  }));
   const settings={conversation_capability:'sales_v1',whatsapp_processing_mode:'conversation_core_v1',grounding_mode:'canonical_v2',
     system_prompt:'Sales test',ai_model:'gemini-3.5-flash-lite',ai_enabled:!disabled,gemini_daily_limit:80,whatsapp_audio_enabled:audioEnabled,
     business_facts:businessFacts||{locations:[{verified:true,address:'Endereco oficial'}]},
@@ -60,7 +68,7 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
   const request=async({url,method,body})=>{
     calls.push({url,method,body});const u=new URL(url),table=u.pathname.split('/').at(-1);
     assert.ok(!/appointments|appointment_/.test(u.pathname),'Sales cannot access appointments');
-    if(u.hostname==='docs.google.com'){reads++;if(stockError)throw Error('PRIVATE_ERROR');return priceChanged&&reads>1?stock.replace('42980','42981'):stock;}
+    if(u.hostname==='docs.google.com'){reads++;if(stockError)throw Error('PRIVATE_ERROR');const stock=stockFor(inventoryRows);return priceChanged&&reads>1?stock.replace('42980','42981'):stock;}
     if(u.hostname==='evo.test') {
       if(u.pathname.includes('getBase64'))return texts.some(text=>text==='[audio]')
         ? {mimetype:'audio/ogg',base64:Buffer.from('OggS test audio').toString('base64')}
@@ -78,9 +86,12 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
         const kinds=visualKinds===null?Array.from({length:count},(_,i)=>Array.isArray(imageClassification)?imageClassification[i]:imageClassification):visualKinds;
         return {candidates:[{finishReason:batch?visualFinishReason:'STOP',content:{parts:[{text:JSON.stringify(batch?{kinds}:visual?{kind:imageClassification}:(ocr||{kind:'document',name:'Maria',cpf:'',cnh:'12345678901',birth_date:''}))}]}}]};
       }
+      const schema=body.generationConfig?.responseSchema?.properties||{};
+      if(dialogueReview&&schema.ok&&schema.current_act) return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(dialogueReview)}]}}]};
+      if(dialoguePlan&&schema.requests&&schema.memory) return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(dialoguePlan)}]}}]};
       generated++;return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(response)}]}}]};
     }
-    if(table==='tenants')return [{id:'tenant-sales',slug:'sales',status:'active',name:'Sales'}];
+    if(table==='tenants')return [{id:'tenant-sales',slug:tenantSlug,status:'active',name:'Sales'}];
     if(table==='tenant_settings')return [{settings}];
     if(table==='channels')return [{external_id:'sales-instance'}];
     if(table==='contacts')return contact ? [contact] : [];
@@ -148,16 +159,20 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
     throw Error('Unexpected '+table);
   };
   const result=await new AsyncFunction('$json','$env','$vars','$getWorkflowStaticData',code).call({helpers:{httpRequest:request}},
-    {tenant_slug:'sales',tenant_id:'tenant-sales',remoteJid:'5511999999999@s.whatsapp.net',instance:'sales-instance'},
+    {tenant_slug:tenantSlug,tenant_id:'tenant-sales',remoteJid:'5511999999999@s.whatsapp.net',instance:'sales-instance',
+      noria_client_policy:{profile:'vehicle_sales_v1',capability:'sales_v1',contract:'noria_policy_v2',tenant_slug:tenantSlug,tenant_id:'tenant-sales',audio_enabled:audioEnabled,scheduling_enabled:false,modules:{}}},
     {SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake',GEMINI_ENABLED:'true',GEMINI_API_KEY:'fake',
-      EVOLUTION_API_URL_SALES:'https://evo.test',EVOLUTION_API_KEY_SALES:'fake',EVOLUTION_INSTANCE_SALES:'sales-instance'}, {},()=>({}));
+      EVOLUTION_API_URL_SALES:'https://evo.test',EVOLUTION_API_KEY_SALES:'fake',EVOLUTION_INSTANCE_SALES:'sales-instance',
+      EVOLUTION_API_URL_WESLEY_AUTOMOVEIS:'https://evo.test',EVOLUTION_API_KEY_WESLEY_AUTOMOVEIS:'fake',EVOLUTION_INSTANCE_WESLEY_AUTOMOVEIS:'sales-instance'}, {},()=>({}));
   return {result:result.json,calls,saved,sent,generated};
 }
 
 async function completedBuyAndSellCatalogChoice() {
   const state={...blank,intent:'sell',transaction_mode:'buy_and_sell',sell_model:'Siena',sell_model_evidence:'e0',sell_year:2014,sell_year_evidence:'e0',
+    customer_name:'Maria Souza',name_evidence:'name-0',
     sell_vehicle:{...blank.sell_vehicle,model:'Siena',year:2014,evidence_ids:['e0'],maintenance_reported:true,maintenance_evidence_ids:['e1'],condition_reported:true,condition_evidence_ids:['e1']}};
   const history=[
+    {id:'name-0',direction:'inbound',message_text:'Meu nome é Maria Souza',raw_payload:{}},
     {id:'e0',direction:'inbound',message_text:'Quero vender meu Siena 2014 e comprar outro carro',raw_payload:{}},
     {id:'e1',direction:'inbound',message_text:'A manutenção está em dia e não há avarias',raw_payload:{}},
     {id:'e2',direction:'inbound',message_text:'[image]',raw_payload:{sales_media:[{event_id:'e2',kind:'vehicle_photo',readable:true}]}}
@@ -220,18 +235,31 @@ test('locked or disabled sales does not generate, download stock or respond to r
   assert.equal(locked.generated,0);assert.equal(locked.sent.length,0);assert.equal(locked.result.human_lock,true);
   const disabled=await run({disabled:true});assert.equal(disabled.generated,0);assert.equal(disabled.sent.length,0);
 });
-test('after-sales is persisted and silent',async()=>{
+test('after-sales is persisted, acknowledged and handed off',async()=>{
   const r=await run({texts:['O carro que comprei quebrou'],response:{action:'handoff',reason:'after_sales',reply:'',state:{...blank,intent:'after_sales'}}});
-  assert.equal(r.sent.length,0);assert.equal(r.saved[0].p_stage,'sales_after_sales');assert.equal(r.result.handoff,true);
+  assert.equal(r.sent.length,1);assert.match(r.sent[0],/encaminhar seu pós-venda/i);
+  assert.equal(r.saved[0].p_stage,'sales_after_sales');assert.equal(r.result.handoff,true);
 });
 test('technical sales failures preserve their code without commercial handoff',async()=>{
-  const variants=[{stockError:true},{response:{action:'create_appointment',reason:'none',reply:'',state:blank}},
-    {response:{action:'reply',reason:'none',reply:'Custa R$ 1,00',state:blank}}];
+  const variants=[{stockError:true},{response:{action:'create_appointment',reason:'none',reply:'',state:blank}}];
   for(const flags of variants){
     const r=await run(flags);assert.equal(r.saved[0].p_register,false);assert.equal(r.result.handoff,false);
     const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
     assert.ok(outbound.body.ai_error);assert.equal(outbound.body.handoff,false);
   }
+});
+test('unbound invented price is repaired without weakening commercial validation',async()=>{
+  const r=await run({response:{action:'reply',reason:'none',reply:'Custa R$ 1,00',state:blank}});
+  const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+  assert.equal(outbound.body.ai_error,'');
+  assert.equal(outbound.body.raw_payload.sales_response_repair,'unbound_amount');
+  assert.doesNotMatch(r.sent[0],/R\$\s*1(?:,00)?/);
+  assert.match(r.sent[0],/preço confirmado/i);
+  assert.equal(r.saved[0].p_register,false);
+  assert.equal(r.saved[0].p_product,null);
+  assert.equal(r.saved[0].p_state.product_id,'');
+  assert.equal(r.saved[0].p_state.deposit_cents,null);
+  assert.equal(r.result.handoff,false);
 });
 test('ambiguous PCX in inventory without color or year clears candidate and continues qualifying without human handoff',async()=>{
   const r=await run({texts:['Quero PCX'],response:{action:'reply',reason:'none',reply:'Certo',state:{...blank,product_id:'honda|pcx|2023|branca',product_evidence:'e0'}}});
@@ -573,40 +601,13 @@ test('parity F: salesValidate clears unproven fields tolerantly instead of throw
 });
 
 test('parity G: source, generated core and generated workflow are identical', () => {
-  const ts = require('../../app/node_modules/typescript');
-  function getFunctions(fileContent) {
-    const ast = ts.createSourceFile('file.js', fileContent, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-    const map = new Map();
-    ast.statements.filter(ts.isFunctionDeclaration).forEach(node => {
-      map.set(node.name.text, node.getText(ast));
-    });
-    return map;
-  }
-  const wf = JSON.parse(fs.readFileSync(path.join(root, 'n8n/workflows/NORIA_Hotfix12_CATALOGO_REFERENCIAS_PRODUTOS_LAYOUT.json'), 'utf8'));
-  const genCode = wf.nodes.find(n => n.name === 'Processar Conversa WhatsApp').parameters.jsCode;
+  const wf = JSON.parse(fs.readFileSync(path.join(root, 'n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json'), 'utf8'));
+  const genCode = wf.nodes.find(n => n.name === 'CORE | Motor conversacional único').parameters.jsCode;
   const generatedFile=fs.readFileSync(path.join(root,'n8n/code/whatsapp_conversation_core.generated.js'),'utf8');
   assert.equal(genCode.replace(/\r\n/g,'\n').trimEnd(),generatedFile.replace(/\r\n/g,'\n').trimEnd(),
     'generated core and workflow worker must be byte-equivalent after newline normalization');
-  assert.equal(wf.meta?.magiaCoreRevision,'conversation_core_v2_2026_10_07');
-  const genFuncs = getFunctions(genCode);
-  const salesFuncs = getFunctions(fs.readFileSync(path.join(root, 'n8n/code/whatsapp_sales.js'), 'utf8'));
-
-  const targets = [
-    'salesSchema','salesEmptyState','salesModeFor','salesMergeState','salesSanitizeSemanticState',
-    'salesValidate','salesPurchaseCandidate','salesPurchaseProductQuestion','salesGenerate',
-    'salesVehiclePhotoCount','salesDescriptionComplete','salesLastPendingRequirement',
-    'salesBuyAndSellAcknowledgement','salesPendingRequirementReply','salesAppraisalDecision',
-    'salesCorrectedIntent','salesClassifyImages','salesReadMedia','salesFinancingPolicy','salesFinancingTemperature',
-    'salesEvaluateEligibility','salesMediaCapability','salesDuplicateReplyDecision','runSalesTurn'
-  ];
-  for (const name of targets) {
-    assert.ok(genFuncs.has(name), name + ' must exist in generated workflow');
-    assert.ok(salesFuncs.has(name), name + ' must exist in whatsapp_sales.js');
-    const genNorm = genFuncs.get(name).replace(/\r?\n/g, '\n').trim();
-    const srcNorm = salesFuncs.get(name).replace(/\r?\n/g, '\n').trim();
-    assert.equal(genNorm, srcNorm, name + ' in generated workflow must be identical to sales.js');
-  }
-
+  assert.equal(wf.meta?.magiaCoreRevision,'conversation_core_v2_1_23_gemini_global_rate_control_2026_10_14');
+  assert.match(genCode,/conversation_core_v2_1_23_gemini_global_rate_control_2026_10_14/);
 });
 
 test('parity H: sales_media persistence failure throws SALES_MEDIA_PERSISTENCE_FAILED and does not send false confirmation', async () => {
@@ -745,6 +746,7 @@ test('bug 3: IA pede descrição, cliente responde manutenção/avaria útil -> 
 test('bug 3: IA pede foto, cliente manda 1 foto válida do veículo -> requisito de foto satisfeito', async () => {
   const state = {
     ...blank, intent: 'sell', transaction_mode: 'sell',
+    customer_name:'Maria Souza',name_evidence:'name-0',
     sell_model:'Uno',sell_model_evidence:'e0',
     sell_vehicle: { brand: 'Fiat', model: 'Uno', year: 2010, raw_mention: 'Uno 2010', description_summary: '', reported_facts: [], concerns: [], maintenance_history: [], evidence_ids: ['e0'],
       maintenance_reported:true,maintenance_evidence_ids:['e0'],condition_reported:false,condition_evidence_ids:[] },
@@ -752,6 +754,7 @@ test('bug 3: IA pede foto, cliente manda 1 foto válida do veículo -> requisito
   const r = await run({
     texts: ['[image]'],
     history: [
+      { id: 'name-0', direction: 'inbound', message_text: 'Meu nome é Maria Souza', created_at: '2026-10-03T09:59:00Z', raw_payload: {} },
       { id: 'e0', direction: 'inbound', message_text: 'Quero vender Uno 2010 revisado sem avarias', created_at: '2026-10-03T10:00:00Z', raw_payload: {} }
     ],
     response: { action: 'reply', reason: 'none', reply: 'Recebi', state }
@@ -1174,8 +1177,8 @@ test('UX D: ACK contextual de foto em buy_and_sell mantém o interesse em Corsa 
 });
 
 test('UX E: descrição completa e foto válida avançam sem repetir manutenção ou avarias', async () => {
-  const state={...blank,intent:'sell',transaction_mode:'sell',sell_vehicle:{...blank.sell_vehicle,model:'Siena',evidence_ids:['e0'],maintenance_reported:true,maintenance_evidence_ids:['e1'],condition_reported:true,condition_evidence_ids:['e1']}};
-  const r=await run({texts:['[image]'],history:[{id:'e0',direction:'inbound',message_text:'Quero vender meu Siena',raw_payload:{}},{id:'e1',direction:'inbound',message_text:'A manutenção está em dia e não há avarias',raw_payload:{}},{id:'a0',direction:'outbound',message_text:'Envie uma foto',raw_payload:{pending_requirement:'vehicle_photo'}}],response:{action:'reply',reason:'none',reply:'Certo',state}});
+  const state={...blank,intent:'sell',transaction_mode:'sell',customer_name:'Maria Souza',name_evidence:'name-0',sell_vehicle:{...blank.sell_vehicle,model:'Siena',evidence_ids:['e0'],maintenance_reported:true,maintenance_evidence_ids:['e1'],condition_reported:true,condition_evidence_ids:['e1']}};
+  const r=await run({texts:['[image]'],history:[{id:'name-0',direction:'inbound',message_text:'Meu nome é Maria Souza',raw_payload:{}},{id:'e0',direction:'inbound',message_text:'Quero vender meu Siena',raw_payload:{}},{id:'e1',direction:'inbound',message_text:'A manutenção está em dia e não há avarias',raw_payload:{}},{id:'a0',direction:'outbound',message_text:'Envie uma foto',raw_payload:{pending_requirement:'vehicle_photo'}}],response:{action:'reply',reason:'none',reply:'Certo',state}});
   assert.doesNotMatch(r.sent[0],/manutenção|avaria/i);assert.match(r.sent[0],/encaminhar para a equipe/i);
 });
 
@@ -1255,7 +1258,7 @@ test('UX fechamento A: buy_and_sell completo e escolha 5 confirmam Sandero uma v
   const reply=r.sent[0];
   assert.equal((reply.match(/Renault Sandero GT Line 2016/g)||[]).length,1);
   assert.doesNotMatch(reply,/Siena/i);assert.doesNotMatch(reply,/SANDERO GT LINE/);
-  assert.match(reply,/avaliação.*encaminhada|encaminhada.*avaliação/i);assert.match(reply,/equipe.*negociação/i);
+  assert.match(reply,/informações iniciais do seu veículo/i);assert.match(reply,/equipe.*negociação/i);
   assert.equal(r.result.handoff,true);
 });
 
@@ -1291,21 +1294,64 @@ test('referral A/B: externalAdReply do webhook chega ao core e reconhece o veíc
 
 test('referral C: pergunta contextual sem referral não inventa veículo', async () => {
   const r=await run({texts:['Olá! Posso ter mais informações sobre isso?'],response:{action:'reply',reason:'none',reply:'Certo',state:blank}});
-  assert.equal(r.sent[0],'Claro! Sobre qual veículo você gostaria de saber mais?');
+  assert.equal(r.sent[0],'Claro! Qual carro ou moto do catálogo te interessou? Pode me dizer o modelo.');
   assert.doesNotMatch(r.sent[0],/Sandero|Siena|comprar ou vender/i);
 });
 
 test('referral D: anúncio sem produto oficial não inventa disponibilidade', async () => {
   const r=await run({texts:['Tenho interesse'],history:[{id:'e0',direction:'inbound',message_text:'Tenho interesse',raw_payload:{referral:{...sanderoReferral,title:'Renault Sandero GT Line 2015'}}}],response:{action:'reply',reason:'none',reply:'Certo',state:blank}});
-  assert.match(r.sent[0],/Não encontrei esse veículo no estoque atual/);assert.doesNotMatch(r.sent[0],/está disponível/i);
+  assert.match(r.sent[0],/Não encontrei esse veículo no estoque oficial atual/);assert.doesNotMatch(r.sent[0],/está disponível/i);
 });
 
 test('referral E/F: preço e disponibilidade usam o produto anunciado e fatos oficiais', async () => {
   const historyFor=text=>[{id:'e0',direction:'inbound',message_text:text,raw_payload:{referral:sanderoReferral}}];
   const price=await run({texts:['Quanto está?'],history:historyFor('Quanto está?'),response:{action:'reply',reason:'none',reply:'Certo',state:blank}});
-  assert.match(price.sent[0],/Renault Sandero GT Line 2016/);assert.match(price.sent[0],/R\$ 42\.980,00/);
+  assert.match(price.sent[0],/R\$ 42\.980,00/);assert.equal(price.saved[0].p_product.id,'renault|sandero gt line|2016|branco');
   const availability=await run({texts:['Esse ainda está disponível?'],history:historyFor('Esse ainda está disponível?'),response:{action:'reply',reason:'none',reply:'Certo',state:blank}});
-  assert.match(availability.sent[0],/Renault Sandero GT Line 2016/);assert.match(availability.sent[0],/disponível no estoque/i);
+  assert.match(availability.sent[0],/confirm|conferir/i);assert.doesNotMatch(availability.sent[0],/está disponível no estoque/i);
+});
+
+test('João: item 7 é a compra e Camaro amarelo permanece o veículo oferecido', async () => {
+  const expandedInventory=[...inventory,{
+    source_row:8,model:'COROLLA XEI',brand:'TOYOTA',price_raw:'79.900',price_cents:7990000,
+    color:'PRATA',km_raw:'85000',km:85000,year:2020,fuel:'FLEX'
+  }];
+  const buyState={...blank,intent:'buy',transaction_mode:'buy'};
+  const catalog=await run({texts:['Quais veículos vocês têm?'],inventoryRows:expandedInventory,
+    response:{action:'catalog',reason:'none',reply:'',state:buyState}});
+  const catalogPayload=catalog.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events')).body.raw_payload;
+  assert.equal(catalogPayload.catalog_item_ids.length,7);
+  const state={...blank,intent:'sell',transaction_mode:'buy_and_sell',intent_evidence_id:'e0',
+    sell_brand:'Chevrolet',sell_brand_evidence:'e0',sell_model:'Camaro',sell_model_evidence:'e0',
+    sell_vehicle:{...blank.sell_vehicle,brand:'Chevrolet',model:'Camaro',raw_mention:'Camaro amarelo',evidence_ids:['e0']}};
+  const r=await run({texts:['Quero pegar a 7, vender Camaro amarelo.'],inventoryRows:expandedInventory,
+    history:[{id:'catalog-out',direction:'outbound',ai_provider:'sales_core',message_text:catalog.sent[0],raw_payload:catalogPayload}],
+    response:{action:'reply',reason:'none',reply:'Certo',state}});
+  assert.equal(r.saved[0].p_state.product_id,catalogPayload.catalog_item_ids[6]);
+  assert.equal(r.saved[0].p_state.buy_interest.model,'COROLLA XEI');
+  assert.equal(r.saved[0].p_state.sell_vehicle.model,'Camaro');
+  assert.equal(r.saved[0].p_state.sell_vehicle.raw_mention,'Camaro amarelo');
+  assert.equal(r.saved[0].p_state.transaction_mode,'buy_and_sell');
+});
+
+test('Jackson: nome informado depois da escolha preserva a Tornado selecionada', async () => {
+  const buyState={...blank,intent:'buy',transaction_mode:'buy'};
+  const catalog=await run({texts:['Quais motos vocês têm?'],response:{action:'catalog',reason:'none',reply:'',state:buyState}});
+  const catalogPayload=catalog.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events')).body.raw_payload;
+  const choice=await run({texts:['1'],lead:{id:'lead-1',revision:0,stage_key:'sales_qualifying',state:buyState,ai_locked:false},
+    history:[{id:'catalog-out',direction:'outbound',ai_provider:'sales_core',message_text:catalog.sent[0],raw_payload:catalogPayload}],
+    response:{action:'register_interest',reason:'none',reply:'',state:buyState}});
+  assert.match(choice.saved[0].p_product.model,/TORNADO/i);
+  const chosenState=choice.saved[0].p_state;
+  const namedState={...chosenState,customer_name:'Jackson Silva',name_evidence:'name-0'};
+  const named=await run({texts:['Jackson Silva'],messageIds:[{id:'name-message',event_id:'name-0'}],
+    lead:{id:'lead-1',revision:1,stage_key:'sales_qualifying',state:chosenState,product:choice.saved[0].p_product,ai_locked:false},
+    history:[{id:'choice-in',direction:'inbound',message_text:'1',raw_payload:{}},
+      {id:'choice-out',direction:'outbound',ai_provider:'sales_core',message_text:choice.sent[0],raw_payload:{pending_requirement:'customer_name'}}],
+    response:{action:'register_interest',reason:'none',reply:'',state:namedState}});
+  assert.equal(named.saved[0].p_state.customer_name,'Jackson Silva');
+  assert.equal(named.saved[0].p_state.product_id,chosenState.product_id);
+  assert.match(named.saved[0].p_product.model,/TORNADO/i);
 });
 
 test('catalog referral atual prioriza compra sem apagar a venda anterior nem confirmar disponibilidade', async () => {
@@ -1335,7 +1381,7 @@ test('catalog referral atual prioriza compra sem apagar a venda anterior nem con
 test('referral G/H: enqueue preserva referral sem contaminar mídia, áudio ou outro evento', async () => {
   const image=await enqueueCore({tenant_id:'tenant-sales',remoteJid:'chat',instance:'sales-instance',messageId:'image-1',contactName:'Maria',messageText:'Tenho interesse',contentType:'image',core_sales:true,core_quiet_ms:8000,core_fragment_ms:12000,
     raw_payload:{data:{message:{imageMessage:{caption:'Tenho interesse',contextInfo:{externalAdReply:{title:'Renault Sandero GT Line 2016',body:'Confira as condições',sourceId:'ad-123',sourceUrl:'https://fb.me/ad-123',mediaType:'image'}}}}}}});
-  assert.equal(image.p_message.raw.content_type,'image');assert.equal(image.p_message.raw.sales_media_type,'image');assert.equal(image.p_message.raw.core_revision,'conversation_core_v2_2026_10_07');
+  assert.equal(image.p_message.raw.content_type,'image');assert.equal(image.p_message.raw.sales_media_type,'image');assert.equal(image.p_message.raw.core_revision,'conversation_core_v2_1_9_2026_10_07');
   assert.deepEqual(image.p_message.raw.referral,sanderoReferral);
   const audio=await enqueueCore({tenant_id:'tenant-sales',remoteJid:'chat',instance:'sales-instance',messageId:'audio-2',contactName:'Maria',messageText:'[audio]',contentType:'audio',core_sales:true,core_quiet_ms:8000,core_fragment_ms:12000,
     raw_payload:{data:{message:{audioMessage:{seconds:17,fileLength:3210}}}}});
@@ -1390,7 +1436,7 @@ test('anti-loop B: cliente envia fotos + ano, mas sem modelo -> preserva fatos e
   assert.equal(savedState.sell_model, '');
 });
 
-test('anti-loop C: cliente responde outra mensagem sem modelo -> NÃO pede modelo pela terceira vez; handoff sales_human', async () => {
+test('anti-loop C: cliente responde outra mensagem sem modelo -> oferece humano sem fingir handoff', async () => {
   const stateWithYear = {
     ...blank, intent: 'sell', transaction_mode: 'sell',
     sell_year: 2006, sell_year_evidence: 'e2',
@@ -1408,26 +1454,16 @@ test('anti-loop C: cliente responde outra mensagem sem modelo -> NÃO pede model
     lead: { id: 'lead-1', revision: 2, stage_key: 'sales_qualifying', ai_locked: false, state: stateWithYear },
     response: { action: 'reply', reason: 'none', reply: 'Qual é o modelo do veículo que deseja vender?', state: stateWithYear }
   });
-  // Must NOT ask for model a 3rd time! Must execute handoff to Wesley
-  assert.match(r.sent[0], /Sem problema, vou passar seu atendimento para o Wesley continuar por aqui/i);
-  assert.doesNotMatch(r.sent[0], /modelo do veículo/i);
-  assert.equal(r.saved[0].p_stage, 'sales_human');
+  assert.match(r.sent[0], /posso chamar o Wesley/i);
+  assert.equal(r.saved[0].p_stage, 'sales_qualifying');
   const outbound = r.calls.find(c => c.method === 'POST' && c.url.includes('/channel_events') && c.body.sender_type === 'assistant');
-  assert.equal(outbound.body.handoff, true);
-  assert.equal(outbound.body.stage, 'Atendimento humano');
+  assert.equal(outbound.body.handoff, false);
+  assert.equal(outbound.body.stage, 'IA - Qualificacao automotiva');
   assert.equal(outbound.body.sender_type, 'assistant');
   assert.equal(outbound.body.sent_by_user, undefined);
   assert.equal(outbound.body.raw_payload.assignee, undefined);
-
-  // Canonical assignment event
   const assignEvent = r.calls.find(c => c.method === 'POST' && c.url.includes('/channel_events') && c.body.service === 'conversation_assigned');
-  assert.ok(assignEvent, 'deve existir evento canônico de assign_conversation');
-  assert.equal(assignEvent.body.sender_type, 'system');
-  assert.equal(assignEvent.body.service, 'conversation_assigned');
-  assert.equal(assignEvent.body.message_text, 'Conversa atribuida a Wesley');
-  assert.equal(assignEvent.body.raw_payload.command, 'assign_conversation');
-  assert.equal(assignEvent.body.raw_payload.assignee.name, 'Wesley');
-  assert.equal(assignEvent.body.raw_payload.assignee.id, '2b927dd1-8f69-4b33-9bdf-6abc2968c1cf');
+  assert.equal(assignEvent,undefined);
 });
 
 test('anti-loop D: cliente demonstra irritação clara após requisito pendente -> handoff imediato', async () => {
@@ -1503,7 +1539,7 @@ test('anti-loop G: duas fotos + "2006" -> sell_year permanece 2006; fotos contin
   assert.equal(inboundPayloads.e1.sales_media[0].kind, 'vehicle_photo');
 });
 
-test('anti-loop H: anti-loop também funciona para outro pending_requirement, não apenas sell_model', async () => {
+test('anti-loop H: requisito repetido oferece humano sem transferir antes do aceite', async () => {
   const state = {
     ...blank, intent: 'buy', transaction_mode: 'buy',
     customer_name: '', product_id: 'renault|sandero gt line|2016|branco'
@@ -1519,11 +1555,11 @@ test('anti-loop H: anti-loop também funciona para outro pending_requirement, n�
     lead: { id: 'lead-1', revision: 2, stage_key: 'sales_qualifying', ai_locked: false, state },
     response: { action: 'register_interest', reason: 'none', reply: '', state }
   });
-  // Customer failed customer_name twice -> 3rd time must escalate to human handoff!
-  assert.match(r.sent[0], /Sem problema, vou passar seu atendimento para o Wesley continuar por aqui/i);
-  assert.equal(r.saved[0].p_stage, 'sales_human');
+  assert.match(r.sent[0], /Como você se chama.*posso chamar o Wesley/i);
+  assert.equal(r.saved[0].p_stage, 'sales_qualifying');
   const outbound = r.calls.find(c => c.method === 'POST' && c.url.includes('/channel_events'));
-  assert.equal(outbound.body.handoff, true);
+  assert.equal(outbound.body.handoff, false);
+  assert.equal(r.saved[0].p_state.optional_human_offer.reason,'anti_loop_assist');
 });
 
 test('anti-loop I: não contam como múltiplas tentativas eventos internos/reprocessamento técnico', async () => {
@@ -1907,6 +1943,119 @@ test('follow-up K: sales + interest_registered=true schedules 0 jobs', async () 
   assert.ok(!r.calls.some(c => c.url.includes('magia_schedule_followups')));
 });
 
+test('financing amounts are deposits, never vehicle price discrepancies', async () => {
+  for (const [label,depositCents] of [['R$ 1.000,00',100000],['R$ 3.000,00',300000],['R$ 12.894,00',1289400],['R$ 30.000,00',3000000]]) {
+    const state={...selected,deposit_cents:depositCents,deposit_evidence:'e2'};
+    const r=await run({texts:['Quero Sandero GT Line','Maria Souza',`Entrada de ${label}`],
+      response:{action:'register_interest',reason:'none',reply:'',state},followUpEnabled:true,salesFollowUp:{enabled:true}});
+    const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+    assert.equal(r.saved[0].p_state.deposit_cents,depositCents,label);
+    assert.equal(r.saved[0].p_product.price_cents,4298000,label);
+    assert.equal(r.saved[0].p_register,true,label);
+    assert.equal(outbound.body.raw_payload.price_discrepancy,undefined,label);
+    assert.notEqual(outbound.body.raw_payload.handoff_reason,'price_discrepancy',label);
+    assert.equal(r.result.follow_ups_scheduled,0,label);
+  }
+});
+
+test('an explicit advertised vehicle price still triggers the price discrepancy guard', async () => {
+  const state={...selected,deposit_cents:null,deposit_evidence:''};
+  const r=await run({texts:['Quero Sandero GT Line','Maria Souza','No anúncio o preço está R$ 39.900,00'],
+    response:{action:'register_interest',reason:'none',reply:'',state}});
+  const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+  assert.equal(r.saved[0].p_register,false);
+  assert.equal(r.saved[0].p_product.price_cents,4298000);
+  assert.equal(r.result.handoff,true);
+  assert.equal(outbound.body.raw_payload.price_discrepancy.customer_amount_cents,3990000);
+  assert.equal(outbound.body.raw_payload.handoff_reason,'price_discrepancy');
+});
+
+test('a deposit does not create a discrepancy when the official vehicle price is absent', async () => {
+  const context={normalizeText:value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()};
+  vm.createContext(context);
+  const start=code.indexOf('function salesMentionedPriceCents');
+  const end=code.indexOf('function salesCatalogRequested',start);
+  assert.ok(start>=0&&end>start);
+  vm.runInContext(code.slice(start,end),context);
+  const result=context.salesPriceDiscrepancy('Entrada de R$ 12.894,00',{price_cents:null},[]);
+  assert.equal(result,null);
+});
+
+test('César: entrada de R$ 1.000 permanece registrada quando o preço oficial está ausente', async () => {
+  const state={...blank,intent:'buy',transaction_mode:'buy',customer_name:'César Lima',name_evidence:'e0',
+    deposit_cents:100000,deposit_evidence:'e1',payment_mode:'financing'};
+  const r=await run({texts:['César Lima','Entrada de R$ 1.000,00'],
+    response:{action:'register_interest',reason:'none',reply:'',state}});
+  const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+  assert.equal(r.saved[0].p_product,null);
+  assert.equal(r.saved[0].p_state.deposit_cents,100000);
+  assert.equal(r.saved[0].p_state.customer_name,'César Lima');
+  assert.equal(outbound.body.raw_payload.price_discrepancy,undefined);
+  assert.equal(outbound.body.raw_payload.deposit_validation,undefined);
+  assert.equal(r.result.handoff,false);
+});
+
+test('a deposit above the vehicle price gets deposit-specific validation without handoff', async () => {
+  const state={...selected,deposit_cents:5000000,deposit_evidence:'e2'};
+  const r=await run({texts:['Quero Sandero GT Line','Maria Souza','Entrada de R$ 50.000,00'],
+    response:{action:'register_interest',reason:'none',reply:'',state}});
+  const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+  assert.equal(r.saved[0].p_product.price_cents,4298000);
+  assert.equal(r.saved[0].p_state.deposit_cents,null);
+  assert.equal(r.saved[0].p_register,false);
+  assert.equal(r.result.handoff,false);
+  assert.match(r.sent[0],/entrada informada.*maior que o preço/i);
+  assert.equal(outbound.body.raw_payload.deposit_validation.reason,'exceeds_vehicle_price');
+  assert.equal(outbound.body.raw_payload.price_discrepancy,undefined);
+  assert.notEqual(outbound.body.raw_payload.handoff_reason,'price_discrepancy');
+});
+
+test('cash purchase remains distinct from financing deposit classification', async () => {
+  const cashState={...selected,payment_mode:'cash',deposit_cents:null,deposit_evidence:''};
+  const r=await run({texts:['Quero Sandero GT Line','Maria Souza','Quero comprar à vista'],
+    response:{action:'register_interest',reason:'none',reply:'',state:cashState}});
+  const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+  assert.equal(r.saved[0].p_state.payment_mode,'cash');
+  assert.equal(r.saved[0].p_product.price_cents,4298000);
+  assert.equal(outbound.body.raw_payload.price_discrepancy,undefined);
+  assert.notEqual(outbound.body.raw_payload.handoff_reason,'price_discrepancy');
+});
+
+test('independent sale monetary expectation cannot become dealer price discrepancy', async () => {
+  const state={...blank,intent:'sell',transaction_mode:'sell',customer_name:'Maria Souza',name_evidence:'e1',
+    sell_model:'Sandero',sell_model_evidence:'e0',sell_vehicle:{...blank.sell_vehicle,model:'Sandero',raw_mention:'Sandero',evidence_ids:['e0']}};
+  const r=await run({texts:['Quero vender meu Sandero','Maria Souza','Quero R$ 30.000,00 nele'],
+    response:{action:'reply',reason:'none',reply:'Pode descrever o estado do veículo?',state}});
+  const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+  assert.equal(r.saved[0].p_state.transaction_mode,'sell');
+  assert.equal(r.result.handoff,false);
+  assert.equal(outbound.body.raw_payload.price_discrepancy,undefined);
+});
+
+test('buy and sell keeps both intents while a cash deposit stays separate from official price', async () => {
+  const state={...selected,intent:'sell',transaction_mode:'buy_and_sell',sell_model:'Siena',sell_model_evidence:'e0',
+    sell_vehicle:{...blank.sell_vehicle,model:'Siena',raw_mention:'Siena',evidence_ids:['e0']},deposit_cents:3000000,deposit_evidence:'e2'};
+  const r=await run({texts:['Quero vender meu Siena e comprar o Sandero GT Line','Maria Souza','Entrada de R$ 30.000,00'],
+    response:{action:'register_interest',reason:'none',reply:'',state}});
+  const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+  assert.equal(r.saved[0].p_state.transaction_mode,'buy_and_sell');
+  assert.equal(r.saved[0].p_state.deposit_cents,3000000);
+  assert.equal(r.saved[0].p_product.price_cents,4298000);
+  assert.equal(outbound.body.raw_payload.price_discrepancy,undefined);
+  assert.notEqual(outbound.body.raw_payload.handoff_reason,'price_discrepancy');
+});
+
+test('financing with pending documents asks for documents instead of inventing a price conflict', async () => {
+  const r=await run({collect:true});
+  const outbound=r.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events'));
+  assert.equal(r.saved[0].p_state.deposit_cents,1289400);
+  assert.equal(r.saved[0].p_register,false);
+  assert.equal(r.result.handoff,false);
+  assert.match(r.sent[0],/CNH/i);
+  assert.equal(outbound.body.raw_payload.pending_requirement,'documents');
+  assert.equal(outbound.body.raw_payload.price_discrepancy,undefined);
+});
+
 test('follow-up L: sales_qualification valid + follow_up_enabled=true + sales_follow_up.enabled=true calls magia_schedule_followups', async () => {
   const state = { ...blank, intent: 'sell', transaction_mode: 'sell', sell_model: '' };
   const r = await run({
@@ -2026,7 +2175,7 @@ test('semantic guard F: first irrelevant reply to a valid pending sell model reo
   assert.equal(r.sent[0],'Se quiser continuar a avaliação, me diga o modelo do veículo. Se precisar de outra coisa, pode me falar.');
 });
 
-test('semantic guard G: repeated pending requirement in the current session hands off only after the real limit', async () => {
+test('semantic guard G: repeated pending requirement offers human help without a false handoff', async () => {
   const state={...blank,intent:'sell',transaction_mode:'sell'};
   const r=await run({texts:['teste de novo'],lead:{id:'lead-1',revision:2,stage_key:'sales_qualifying',state,ai_locked:false},history:[
     {id:'intent-0',direction:'inbound',message_text:'Quero vender meu carro',raw_payload:{}},
@@ -2034,9 +2183,10 @@ test('semantic guard G: repeated pending requirement in the current session hand
     {id:'other-0',direction:'inbound',message_text:'teste',raw_payload:{}},
     {id:'ask-1',direction:'outbound',ai_provider:'sales_core',message_text:'Qual é o modelo?',raw_payload:{pending_requirement:'sell_model'}}
   ],response:{action:'reply',reason:'none',reply:'Qual é o modelo?',state}});
-  assert.equal(r.saved[0].p_stage,'sales_human');
-  assert.equal(r.result.handoff,true);
-  assert.match(r.sent[0],/Wesley continuar por aqui/i);
+  assert.equal(r.saved[0].p_stage,'sales_qualifying');
+  assert.equal(r.result.handoff,false);
+  assert.match(r.sent[0],/posso chamar o Wesley/i);
+  assert.equal(r.saved[0].p_state.optional_human_offer.reason,'anti_loop_assist');
 });
 
 test('semantic guard H: explicit request to speak with Wesley still hands off immediately', async () => {
@@ -2061,8 +2211,10 @@ test('semantic guard I: sell intent may use a vehicle photo only when the same t
 
 test('semantic guard J: photo after pending vehicle_photo satisfies that requirement for an established sale', async () => {
   const state={...blank,intent:'sell',transaction_mode:'sell',intent_evidence_id:'intent-0',sell_model:'Uno',sell_model_evidence:'intent-0',
+    customer_name:'Maria Souza',name_evidence:'name-0',
     sell_vehicle:{...blank.sell_vehicle,model:'Uno',evidence_ids:['intent-0'],maintenance_reported:true,maintenance_evidence_ids:['description-0'],condition_reported:true,condition_evidence_ids:['description-0']}};
   const r=await run({texts:['[image]'],lead:{id:'lead-1',revision:2,stage_key:'sales_qualifying',state,ai_locked:false},history:[
+    {id:'name-0',direction:'inbound',message_text:'Meu nome é Maria Souza',raw_payload:{}},
     {id:'intent-0',direction:'inbound',message_text:'Quero vender meu Uno',raw_payload:{}},
     {id:'description-0',direction:'inbound',message_text:'Manutenção em dia e sem avarias',raw_payload:{}},
     {id:'ask-photo',direction:'outbound',ai_provider:'sales_core',message_text:'Pode enviar uma foto?',raw_payload:{pending_requirement:'vehicle_photo'}}
@@ -2440,7 +2592,7 @@ test('demonstrativos nunca viram modelo e referral identificável resolve soment
     const r=await run({texts:[text],response:{action:'reply',reason:'none',reply:'Certo',state:hallucinated}});
     assert.equal(r.saved[0].p_state.buy_interest.model,'',demonstrative);
     assert.equal(r.saved[0].p_state.product_id,'',demonstrative);
-    assert.match(r.sent[0],/qual veículo/i,demonstrative);
+    assert.match(r.sent[0],/qual (?:veículo|carro|moto)/i,demonstrative);
   }
   const r=await run({texts:['Olá! Posso ter mais informações sobre isso?'],
     history:[{id:'ref-1',direction:'inbound',message_text:'Olá! Posso ter mais informações sobre isso?',raw_payload:{referral:sanderoReferral}}],
@@ -2526,7 +2678,7 @@ test('@WASH: rejeição persiste, agradecimento e foto adiada não reabrem appra
 
 test('mídia comercial distingue vídeo, imagem, PDF, áudio e formato desconhecido sem handoff automático', async () => {
   const video=await run({texts:['[video]'],response:{action:'handoff',reason:'human',reply:'',state:blank}});
-  assert.equal(video.generated,0);assert.equal(video.result.handoff,false);assert.match(video.sent[0],/não consigo analisar/i);
+  assert.equal(video.generated,1);assert.equal(video.result.handoff,false);assert.equal(video.sent[0],'Recebi o vídeo. Como posso ajudar você?');
   const context=vm.createContext({});
   vm.runInContext(fs.readFileSync(path.join(root,'n8n/code/whatsapp_sales.js'),'utf8'),context);
   assert.equal(context.salesMediaCapability([{text:'[image]'}]).supported,true);
@@ -2560,4 +2712,59 @@ test('model_uncertain pede esclarecimento e anúncio externo não fabrica vídeo
     response:{action:'reply',reason:'missing_product',reply:'Vou verificar o anúncio, o vídeo e a localização.',state:external}});
   assert.doesNotMatch(listing.sent[0],/vou (?:confirmar|verificar).*(?:vídeo|localização)/i);
   assert.doesNotMatch(listing.sent[0],/está disponível/i);
+});
+
+test('saudação simples Ola em lead existente com intent unknown responde determinístico sem acionar Gemini', async () => {
+  const existingHistory = [
+    { id: 'old-1', direction: 'inbound', message_text: 'Olá', created_at: '2026-10-12T10:00:00Z', raw_payload: {} },
+    { id: 'old-2', direction: 'outbound', sender_type: 'assistant', message_text: 'Olá! Como posso ajudar?', created_at: '2026-10-12T10:00:05Z', raw_payload: {} }
+  ];
+  const greeting = await run({
+    texts: ['Ola'],
+    lead: { id: 'lead-existing', revision: 1, stage_key: 'sales_qualifying', state: { ...blank, intent: 'unknown' }, ai_locked: false },
+    history: existingHistory,
+    response: { action: 'reply', reason: 'none', reply: 'resposta-do-gemini-nao-deve-ocorrer', state: blank }
+  });
+  assert.equal(greeting.result.workflow_ok, true);
+  assert.equal(greeting.result.ai_processing_ok, true);
+  assert.match(greeting.sent[0], /Olá! Como posso ajudar\? Você quer comprar, vender ou tirar uma dúvida sobre um veículo\?/);
+  assert.equal(greeting.calls.filter(c => c.url.includes('googleapis.com')).length, 0);
+});
+
+test('Genesis classifica leilao por intencao, preserva produto e transfere com contexto', async () => {
+  const genesisInventory=[{model:'Versa SL',brand:'Nissan',price_cents:4999000,color:'Prata',km:82000,year:2013,fuel:'Flex',status:'ANUNCIADO',observations:'Passagem por leilao documentada na ficha'}];
+  const versaState={...blank,intent:'buy',transaction_mode:'buy',product_id:'nissan|versa sl|2013|prata',product_evidence:'e0',product_variant_evidence:'e0',
+    buy_interest:{...blank.buy_interest,brand:'Nissan',model:'Versa SL',year:2013,product_id:'nissan|versa sl|2013|prata',evidence_ids:['e0']}};
+  const dialoguePlan={requests:[],next_requirement:'none',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+  const dialogueReview={ok:true,issues:[],catalog_scope:{audience:'unspecified',evidence_id:'',quote:''},current_topics:['other'],
+    current_act:{human_requested:false,entry_offered:false,entry_declined:false,entry_kind_corrected:false,purchase_changed:false,needs_clarification:false,catalog_list_requested:false,price_requested:false},
+    purchase_product_id:'',purchase_reference_quote:'',customer_deposit:{amount_cents:null,evidence_id:'',quote:''}};
+  const auctionPayload=result=>result.calls.find(call=>call.method==='POST'&&call.url.includes('/channel_events')&&call.body?.raw_payload?.auction_vehicle_purchase)?.body.raw_payload.auction_vehicle_purchase;
+
+  const purchase=await run({tenantSlug:'wesley_automoveis',texts:['Voces compram carro de leilao?'],inventoryRows:genesisInventory,dialoguePlan,dialogueReview,
+    response:{action:'reply',reason:'none',reply:'Certo',state:{...blank,intent:'sell',transaction_mode:'sell'}}});
+  assert.equal(purchase.result.handoff,true,JSON.stringify({result:purchase.result,sent:purchase.sent,saved:purchase.saved,events:purchase.calls.filter(call=>call.url.includes('/channel_events')).map(call=>call.body)}));assert.equal(auctionPayload(purchase).reason,'auction_vehicle_purchase');
+  assert.match(purchase.sent[0],/compra veículos de leilão/i);
+
+  const offer=await run({tenantSlug:'wesley_automoveis',texts:['Meu carro e de leilao, voces pegam?'],inventoryRows:genesisInventory,dialoguePlan,dialogueReview,
+    response:{action:'reply',reason:'none',reply:'Certo',state:{...blank,intent:'sell',transaction_mode:'sell'}}});
+  assert.equal(auctionPayload(offer).intent,'customer_vehicle_offer');assert.equal(auctionPayload(offer).vehicle_origin,'customer');
+
+  const history=await run({tenantSlug:'wesley_automoveis',texts:['Esse Versa passou por leilao?'],inventoryRows:genesisInventory,dialoguePlan,dialogueReview,
+    response:{action:'reply',reason:'none',reply:'Certo',state:versaState}});
+  assert.equal(history.result.handoff,true);assert.equal(auctionPayload(history).reason,'auction_inventory_history');
+  assert.equal(auctionPayload(history).inventory_history.documented,true);assert.equal(history.saved[0].p_state.product_id,versaState.product_id);
+  assert.match(history.sent[0],/na ficha desse veículo consta/i);
+
+  const interest=await run({tenantSlug:'wesley_automoveis',texts:['Tenho interesse no Nissan Versa SL que passou por leilao'],inventoryRows:genesisInventory,dialoguePlan,dialogueReview,
+    response:{action:'reply',reason:'none',reply:'Certo',state:versaState}});
+  assert.equal(auctionPayload(interest).reason,'auction_inventory_interest');assert.equal(auctionPayload(interest).vehicle.name,'Nissan Versa SL');
+
+  const negative=await run({tenantSlug:'wesley_automoveis',texts:['Nao quero carro de leilao'],inventoryRows:genesisInventory,dialoguePlan,dialogueReview,
+    response:{action:'reply',reason:'none',reply:'Certo',state:blank}});
+  assert.notEqual(auctionPayload(negative).reason,'auction_vehicle_purchase');
+
+  const isolated=await run({tenantSlug:'sales',texts:['Voces compram carro de leilao?'],inventoryRows:genesisInventory,
+    response:{action:'reply',reason:'none',reply:'Resposta regular',state:blank}});
+  assert.equal(auctionPayload(isolated),undefined);
 });

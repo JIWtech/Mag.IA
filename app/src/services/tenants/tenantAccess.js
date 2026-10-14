@@ -7,9 +7,13 @@ export async function loadUserTenants(client) {
     .eq('status', 'active');
   if (error) throw new Error('Nao foi possivel verificar o acesso a empresa.');
   return [...new Map((data || [])
+    .map(row => {
+      const tenant = Array.isArray(row.tenants) ? row.tenants[0] : row.tenants;
+      return { ...row, tenant };
+    })
     .filter(row => row.user_id === auth.user.id && row.status === 'active'
-      && row.tenants?.status === 'active')
-    .map(row => [row.tenants.slug, { ...row.tenants, id: row.tenants.slug }])).values()];
+      && row.tenant?.status === 'active' && row.tenant?.slug)
+    .map(row => [row.tenant.slug, { ...row.tenant, id: row.tenant.slug }])).values()];
 }
 
 export const CHANNEL_OPTIONS = [
@@ -25,5 +29,5 @@ export function enabledChannels(settings) {
 
 export function isTenantAuthorized(userId, access, tenants, slug) {
   return Boolean(userId && access.userId === userId && access.loaded && !access.error
-    && tenants.some(tenant => tenant.slug === slug));
+    && slug && tenants.some(tenant => tenant.slug === slug));
 }

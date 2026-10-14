@@ -659,18 +659,24 @@ export function deriveConversationPresentationState(conversation, options = {}) 
     || (Boolean(conversation.handoff) && conversation.status !== 'ia_ativa');
 
   if (isHuman) {
-    const agentName = headerOwner?.name || conversation.owner || 'Operador';
-    const cleanName = cleanAgentName(agentName) || agentName;
-    const text = resolvedStageLabel &&
-      resolvedStageLabel !== 'Atendimento humano' &&
-      resolvedStageLabel !== cleanName &&
-      !resolvedStageLabel.toLowerCase().includes('humano')
-        ? `Atendimento humano · ${cleanName} · ${resolvedStageLabel}`
-        : `Atendimento humano · ${cleanName}`;
+    const rawAgentName = headerOwner?.name || conversation.owner || '';
+    const cleanName = cleanAgentName(rawAgentName);
+    const text = cleanName
+      ? (resolvedStageLabel &&
+        resolvedStageLabel !== 'Atendimento humano' &&
+        resolvedStageLabel !== cleanName &&
+        !resolvedStageLabel.toLowerCase().includes('humano')
+          ? `Atendimento humano · ${cleanName} · ${resolvedStageLabel}`
+          : `Atendimento humano · ${cleanName}`)
+      : (resolvedStageLabel &&
+        resolvedStageLabel !== 'Atendimento humano' &&
+        !resolvedStageLabel.toLowerCase().includes('humano')
+          ? `Atendimento humano · ${resolvedStageLabel}`
+          : 'Atendimento humano');
     return {
       lifecycle: 'human',
       ownerMode: 'human',
-      assignee: cleanName,
+      assignee: cleanName || null,
       assigneeId: headerOwner?.id || conversation.ownerId || null,
       stageKey: conversation.salesStageKey || null,
       stageLabel: resolvedStageLabel,

@@ -1,9 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Clock3,
   Search,
   UsersRound,
   X,
+  Play,
+  AlertTriangle,
 } from 'lucide-react';
 import { Badge } from '../../../components/ui/Badge';
 import { PanelTitle } from '../../../components/ui/PanelTitle';
@@ -17,6 +19,7 @@ import {
   updateBroadcastRecipient,
   upsertBroadcastContacts,
 } from '../../../dataService';
+import { getAuthClient } from '../../../services/auth/authService.js';
 import { sendN8nCommand } from '../../../services/integration.js';
 import { CHANNEL_OPTIONS } from '../../../services/tenants/tenantAccess.js';
 import {
@@ -132,6 +135,114 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
     setSelected(new Set());
   }
 
+  const interruptedCampaign = useMemo(() => {
+    return (campaigns || []).find((c) => c.status === 'sending');
+  }, [campaigns]);
+
+  useEffect(() => {
+    if (!busy) return undefined;
+    const handleBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = 'Um disparo de mensagens está em andamento. Fechar a aba interromperá o envio, que poderá ser retomado depois.';
+      return event.returnValue;
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [busy]);
+
+  async function resumeCampaign(campaignToResume) {
+    if (busy || !campaignToResume) return;
+    setBusy(true);
+    setStatus(`Retomando campanha "${campaignToResume.name}"...`);
+    let sent = campaignToResume.sent_count || 0;
+    let failed = campaignToResume.failed_count || 0;
+    const BROADCAST_TICKRATE_MS = 1200;
+
+    try {
+      const supabase = getAuthClient();
+      let dbRecipients = [];
+      if (supabase) {
+        const { data: recData } = await supabase
+          .from('broadcast_campaign_recipients')
+          .select('*')
+          .eq('campaign_id', campaignToResume.id);
+        dbRecipients = recData || [];
+      }
+      const pendingRecipients = dbRecipients.filter((r) => r.status !== 'sent');
+
+      if (!pendingRecipients.length) {
+        await updateBroadcastCampaign(campaignToResume.id, {
+          status: failed ? 'partial_error' : 'sent',
+          sent_count: sent,
+          failed_count: failed,
+          sent_at: new Date().toISOString(),
+        });
+        setStatus(`Campanha concluída: ${sent} enviados.`);
+        await onChanged?.();
+        return;
+      }
+
+      for (let i = 0; i < pendingRecipients.length; i += 1) {
+        const recipient = pendingRecipients[i];
+        if (recipient.status === 'sent') {
+          sent += 1;
+          continue;
+        }
+        if (i > 0) {
+          setStatus(`Intervalo anti-bloqueio... retomando ${i + 1} de ${pendingRecipients.length}`);
+          await new Promise((resolve) => window.setTimeout(resolve, BROADCAST_TICKRATE_MS));
+        }
+        try {
+          await updateBroadcastRecipient(campaignToResume.id, recipient.external_conversation_id, { status: 'sending' });
+          const result = await sendN8nCommand('broadcast_send', {
+            channel_type: recipient.channel_type || defaultChannel,
+            external_conversation_id: recipient.external_conversation_id,
+            contact_name: recipient.contact_name || 'Contato',
+            message_text: campaignToResume.message_text || campaignToResume.message_template || messageText,
+            sent_by_user: 'Disparo NORIA (Retomada)',
+          }, tenantSlug);
+          sent += 1;
+          await updateBroadcastRecipient(campaignToResume.id, recipient.external_conversation_id, {
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            external_message_id: result.external_message_id || null,
+          });
+          setStatus(`Retomando: ${sent} enviados, ${failed} falhas...`);
+        } catch (error) {
+          failed += 1;
+          await updateBroadcastRecipient(campaignToResume.id, recipient.external_conversation_id, {
+            status: 'failed',
+            error: error.message || String(error),
+          }).catch(() => {});
+        }
+      }
+
+      await updateBroadcastCampaign(campaignToResume.id, {
+        status: failed ? 'partial_error' : 'sent',
+        sent_count: sent,
+        failed_count: failed,
+        sent_at: new Date().toISOString(),
+      });
+      setStatus(`Campanha concluída: ${sent} enviados, ${failed} falhas.`);
+      await onChanged?.();
+    } catch (error) {
+      setStatus(error.message || 'Falha ao retomar campanha.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelCampaign(campaignToCancel) {
+    if (!campaignToCancel || busy) return;
+    try {
+      await updateBroadcastCampaign(campaignToCancel.id, { status: 'cancelled' });
+      setStatus(`Campanha "${campaignToCancel.name}" cancelada.`);
+      await onChanged?.();
+    } catch (error) {
+      setStatus('Erro ao cancelar campanha.');
+    }
+  }
+
   async function sendCampaign() {
     const text = messageText.trim();
     if (!text || !selectedContacts.length || busy) return;
@@ -151,7 +262,18 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
         status: 'sending',
       }, recipients);
 
-      for (const contact of recipients) {
+      const BROADCAST_TICKRATE_MS = 1200;
+
+      for (let i = 0; i < recipients.length; i += 1) {
+        const contact = recipients[i];
+        if (contact.status === 'sent' || contact.sent) {
+          sent += 1;
+          continue;
+        }
+        if (i > 0) {
+          setStatus(`Intervalo anti-bloqueio... enviando ${i + 1} de ${recipients.length}`);
+          await new Promise((resolve) => window.setTimeout(resolve, BROADCAST_TICKRATE_MS));
+        }
         try {
           await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, { status: 'sending' });
           const result = await sendN8nCommand('broadcast_send', {
@@ -167,7 +289,7 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
             sent_at: new Date().toISOString(),
             external_message_id: result.external_message_id || null,
           });
-          setStatus(`Enviando... ${sent} enviados, ${failed} falhas.`);
+          setStatus(`Enviando ${i + 1} de ${recipients.length} (${sent} enviados, ${failed} falhas)...`);
         } catch (error) {
           failed += 1;
           await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
@@ -201,6 +323,50 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
   return (
     <section className="broadcast-page">
       <section className="panel broadcast-campaign-panel">
+        {interruptedCampaign && (
+          <div className="broadcast-interrupted-banner" style={{
+            margin: '0 0 1.25rem 0',
+            padding: '1rem 1.25rem',
+            borderRadius: '10px',
+            background: 'rgba(59, 130, 246, 0.08)',
+            border: '1px solid rgba(59, 130, 246, 0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            flexWrap: 'wrap'
+          }}>
+            <div>
+              <div style={{ fontWeight: 600, color: '#f1f5f9', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Clock3 size={16} color="#3b82f6" />
+                <span>Campanha em andamento / recuperada: <strong>{interruptedCampaign.name}</strong></span>
+              </div>
+              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: '#94a3b8' }}>
+                {interruptedCampaign.sent_count || 0} de {interruptedCampaign.total_recipients || 0} enviados. A campanha foi preservada com segurança e pode ser retomada sem duplicar mensagens.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => resumeCampaign(interruptedCampaign)}
+                disabled={busy}
+                style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
+              >
+                <Play size={13} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Retomar envio
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => cancelCampaign(interruptedCampaign)}
+                disabled={busy}
+                style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
+              >
+                Cancelar campanha
+              </button>
+            </div>
+          </div>
+        )}
         <div className="broadcast-campaign-heading">
           <h2>Nova campanha</h2>
           <p>Defina o público, escreva sua mensagem e prepare o envio.</p>

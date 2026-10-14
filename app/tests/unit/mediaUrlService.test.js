@@ -14,6 +14,7 @@ function storedEvent(id, path = id) {
     raw_payload: {
       media: {
         status: 'stored',
+        verified: true,
         bucket: 'media',
         storagePath: path,
         kind: 'image',
@@ -22,6 +23,39 @@ function storedEvent(id, path = id) {
     },
   };
 }
+
+test('signs a verified whatsapp_fromMe outbound object without treating its source as inherited inbound media', async () => {
+  clearMediaUrlCache();
+  let pathSigned = '';
+  const event = {
+    id: 'outbound-image',
+    direction: 'outbound',
+    external_message_id: 'wamid.outbound-image',
+    raw_payload: {
+      outbound_origin: 'whatsapp_fromMe',
+      media: {
+        kind: 'image',
+        category: 'image',
+        source: 'whatsapp',
+        status: 'stored',
+        verified: true,
+        bucket: 'channel-media',
+        storagePath: 'tenant-a/whatsapp/chat/wamid.outbound-image.jpg',
+      },
+    },
+  };
+  const supabase = { storage: { from: (bucket) => ({
+    createSignedUrl: async (path) => {
+      assert.equal(bucket, 'channel-media');
+      pathSigned = path;
+      return { data: { signedUrl: 'signed-outbound' }, error: null };
+    },
+  }) } };
+
+  const [enriched] = await enrichMediaUrls([event], supabase);
+  assert.equal(pathSigned, 'tenant-a/whatsapp/chat/wamid.outbound-image.jpg');
+  assert.equal(enriched.raw_payload.media.url, 'signed-outbound');
+});
 
 test('uses a single cache, expires signed URLs, and clears it', async () => {
   clearMediaUrlCache();

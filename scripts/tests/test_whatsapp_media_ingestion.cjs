@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, '../..');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const prepareCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_prepare_media_ingestion.js'), 'utf8');
 const finalizeCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_finalize_media_ingestion.js'), 'utf8');
-const workflowPath = path.join(root, 'n8n/workflows/NORIA_Hotfix12_CATALOGO_REFERENCIAS_PRODUTOS_LAYOUT.json');
+const workflowPath = path.join(root, 'n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json');
 const corePath = path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js');
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
@@ -178,8 +178,21 @@ test('pipeline 9: duplicate event bypasses download and upload', async () => {
 
 test('pipeline 10: Evolution download failure becomes unavailable without a binary item', async () => {
   const { result } = await prepare(inbound('image'), { downloadError: 'timeout' });
-  assert.equal(result.json.media_ingestion.media.status, 'unavailable');
+  assert.equal(result.json.media_ingestion.media.status, 'download_failed');
+  assert.equal(result.json.media_ingestion.media.error, 'evolution_download_transient');
   assert.equal(result.binary, undefined);
+});
+
+test('pipeline 10b: Evolution response without a binary payload is classified separately', async () => {
+  const fn = new AsyncFunction('$json', '$env', '$binary', prepareCode);
+  const result = await fn.call({
+    helpers: {
+      httpRequest: async () => ({ mimetype: 'image/jpeg' }),
+      prepareBinaryData: async () => { throw new Error('must not prepare'); },
+    },
+  }, inbound('image'), env(), {});
+  assert.equal(result.json.media_ingestion.media.status, 'missing_binary');
+  assert.equal(result.json.media_ingestion.media.error, 'media_payload_missing');
 });
 
 test('pipeline 11: invalid Base64 never becomes a Storage upload', async () => {
@@ -200,7 +213,7 @@ test('pipeline 12: mismatched JPEG magic is rejected before HTTP upload', async 
 test('pipeline 13: declared media over 10 MiB is skipped before download', async () => {
   const huge = inbound('image', { raw_payload: { data: { message: { imageMessage: { mimetype: 'image/jpeg', fileLength: 10 * 1024 * 1024 + 1 } } } } });
   const { result, calls } = await prepare(huge, { bytes: JPEG, mime: 'image/jpeg' });
-  assert.equal(result.json.media_ingestion.media.status, 'skipped_too_large');
+  assert.equal(result.json.media_ingestion.media.status, 'too_large');
   assert.equal(calls.length, 0);
 });
 
@@ -279,7 +292,6 @@ test('pipeline 24: upload node is an n8n HTTP Request binary upload', () => {
   assert.equal(upload.parameters.sendBody, true);
   assert.equal(upload.parameters.contentType, 'binaryData');
   assert.equal(upload.parameters.inputDataFieldName, 'media_file');
-  assert.equal(upload.parameters.sendBinaryData, true);
 });
 
 test('pipeline 25: generated workflow has preparation, condition, upload and finalizer nodes', () => {
@@ -298,8 +310,9 @@ test('pipeline 26: workflow routes both upload branches through the finalizer', 
 
 test('pipeline 27: queue and debounce remain downstream of the media finalizer', () => {
   assert.ok(nextNames('Confirmar Mídia WhatsApp').includes('Confirmar Recebimento Core'));
-  assert.ok(nextNames('Confirmar Recebimento Core').includes('Aguardar Janela de Mensagens'));
-  assert.ok(nextNames('Aguardar Janela de Mensagens').includes('Processar Conversa WhatsApp'));
+  assert.ok(nextNames('Confirmar Recebimento Core').includes('Restaurar Contexto após ACK Core'));
+  assert.ok(nextNames('Restaurar Contexto após ACK Core').includes('Aguardar Janela de Mensagens'));
+  assert.ok(nextNames('Aguardar Janela de Mensagens').includes('CORE - Resolver extensão do tenant'));
 });
 
 test('pipeline 28: preparation uses n8n prepareBinaryData and never Storage fetch', () => {

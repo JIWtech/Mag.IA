@@ -1,14 +1,10 @@
 export function isExplicitOutboundMedia(media = {}, payload = {}, event = {}) {
-  const origin = String(
-    media.origin
-    || media.source
-    || media.direction
-    || media.message_origin
-    || payload.media_origin
-    || payload.media_source
-    || '',
-  ).toLowerCase();
-  if (['outbound', 'outbound_media', 'operator', 'manual_reply', 'assistant', 'whatsapp_fromme', 'from_me'].includes(origin)) {
+  const origins = [
+    media.origin, media.source, media.direction, media.message_origin,
+    payload.media_origin, payload.media_source, payload.outbound_origin,
+    payload.magia_operator?.source, payload.magia_operator?.media?.source,
+  ].map((value) => String(value || '').toLowerCase());
+  if (origins.some((origin) => ['outbound', 'outbound_media', 'operator', 'manual_reply', 'assistant', 'whatsapp_fromme', 'from_me'].includes(origin))) {
     return true;
   }
 

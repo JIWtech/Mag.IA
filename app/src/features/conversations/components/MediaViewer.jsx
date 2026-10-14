@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ZoomOut,
   ZoomIn,
@@ -74,7 +75,7 @@ export function MediaViewer({ kind, src, alt, poster, gallery = [], initialIndex
     setActiveIndex(index => Math.max(0, Math.min(imageGallery.length - 1, index + direction)));
   };
 
-  return (
+  const modal = (
     <div className="media-viewer-backdrop" role="dialog" aria-modal="true" aria-label={isImage ? 'Visualizador de imagem' : 'Visualizador de vídeo'} onClick={closeViewer}>
       <div className="media-viewer-toolbar" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
         {isImage && imageGallery.length > 1 && <span className="media-viewer-counter">{activeIndex + 1} / {imageGallery.length}</span>}
@@ -95,4 +96,6 @@ export function MediaViewer({ kind, src, alt, poster, gallery = [], initialIndex
       {isImage && imageGallery.length > 1 && <button type="button" className="media-viewer-nav media-viewer-nav-next" aria-label="Próxima imagem" disabled={!canGoNext} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); navigate(1); }}><ChevronRight size={24} /></button>}
     </div>
   );
+
+  return typeof document !== 'undefined' && document.body ? createPortal(modal, document.body) : modal;
 }

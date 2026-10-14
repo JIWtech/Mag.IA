@@ -2498,6 +2498,42 @@ test('TESTE CONVERSAS OWNER D: responsável explícito Carlos prevalece sobre fa
   assert.equal(convs[0].ownerKind, 'agent');
 });
 
+test('TESTE CONVERSAS OWNER E: conversa em atendimento humano iniciada pelo WhatsApp (fromMe/manual_reply) preserva status e atribui Wesley', () => {
+  const activeAgents = [{ id: 'agent-w1', name: 'Wesley', is_active: true, status: 'online' }];
+  const events = [
+    event({
+      id: 'e-outbound-fromme',
+      external_conversation_id: 'chat-outbound-zap',
+      direction: 'outbound',
+      sender_type: 'agent',
+      service: 'manual_reply',
+      ai_provider: 'human_operator',
+      stage: 'Atendimento humano',
+      handoff: false,
+      message_text: 'Olá, sou o Wesley da Genesis',
+      raw_payload: { magia_operator: { source: 'whatsapp_fromMe', operator_name: 'Atendente' } },
+      created_at: '2026-10-01T10:00:00.000Z',
+    }),
+    event({
+      id: 'e-inbound-client',
+      external_conversation_id: 'chat-outbound-zap',
+      direction: 'inbound',
+      sender_type: 'contact',
+      stage: 'Atendimento humano',
+      handoff: false,
+      message_text: 'Olá Wesley, estou interessado',
+      created_at: '2026-10-01T10:05:00.000Z',
+    }),
+  ];
+
+  const convs = eventsToConversations(events, 'wesley_automoveis', activeAgents);
+  assert.equal(convs.length, 1);
+  assert.equal(convs[0].status, 'atendimento_humano');
+  assert.equal(convs[0].stage, 'Atendimento humano');
+  assert.equal(convs[0].owner, 'Wesley');
+  assert.equal(convs[0].ownerKind, 'agent');
+});
+
 const controlAgents = [{ id: 'agent-w', name: 'Wesley', is_active: true }];
 
 function materializeSalesControl(history, lead, agents = controlAgents, tenant = 'wesley_automoveis') {

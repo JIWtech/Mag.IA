@@ -232,6 +232,26 @@ test('Isolamento de cache por tenant: cada tenant possui chave propria e nao sob
   assert.ok(mockLocalStorage.getItem(`magia:app-data:${tenantB}`));
 });
 
+test('Isolamento de cache por usuario e tenant: usuarios distintos nao compartilham dados de cache', () => {
+  resetStorages();
+
+  const user1 = 'usr_alice';
+  const user2 = 'usr_bob';
+  const tenant = 'clinica_nubia';
+
+  cacheAppData(tenant, { conversations: [{ id: 'conv_1', name: 'Paciente Alice' }] }, user1);
+  cacheAppData(tenant, { conversations: [{ id: 'conv_2', name: 'Paciente Bob' }] }, user2);
+
+  const dataUser1 = loadCachedAppData(tenant, user1);
+  const dataUser2 = loadCachedAppData(tenant, user2);
+
+  assert.equal(dataUser1.conversations[0].id, 'conv_1');
+  assert.equal(dataUser2.conversations[0].id, 'conv_2');
+
+  assert.ok(mockLocalStorage.getItem(`magia:app-data:${user1}:${tenant}`));
+  assert.ok(mockLocalStorage.getItem(`magia:app-data:${user2}:${tenant}`));
+});
+
 test('appDataSignature e cacheAppData: omitem campos efêmeros de midia (url, thumbnailUrl)', () => {
   const original = {
     conversations: [

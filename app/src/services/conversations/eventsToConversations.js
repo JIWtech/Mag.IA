@@ -53,9 +53,17 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
       event.external_conversation_id,
       event.contact_handle,
     );
-    const isHumanTransfer = Boolean(event.handoff && (normalizeStage(event.stage) === 'Atendimento humano' || event.service === 'manual_reply'));
-    const isClosed = stageName === 'Finalizado' || normalizeStage(event.stage) === 'Finalizado' || event.service === 'conversation_closed' || event.ai_provider === 'conversation_closed';
     const payload = asObject(event.raw_payload);
+    const isHumanTransfer = Boolean(
+      (event.handoff && (normalizeStage(event.stage) === 'Atendimento humano' || event.service === 'manual_reply'))
+      || event.service === 'manual_reply'
+      || event.ai_provider === 'human_operator'
+      || event.sender_type === 'agent'
+      || payload?.magia_operator?.source === 'whatsapp_fromMe'
+      || normalizeStage(event.stage) === 'Atendimento humano'
+      || event.stage === 'sales_human'
+    );
+    const isClosed = stageName === 'Finalizado' || normalizeStage(event.stage) === 'Finalizado' || event.service === 'conversation_closed' || event.ai_provider === 'conversation_closed';
     const eventAssignee = payload?.assignee;
     const initialOwner = eventAssignee?.name || payload?.assigned_to || (
       event.sent_by_user && !['Operador NORIA', 'Operador Mag.IA', 'Disparo NORIA'].includes(event.sent_by_user)
@@ -68,7 +76,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
       const fallbackName = `Contato ${channelType.label}`;
       const trustedContactName = getUsefulTrustedContactName(event);
       const canonicalContactName = String(event.contact_name_canonical || event.contact?.name || '').trim();
-      const hasCanonicalContactName = isUsefulContactName(canonicalContactName, conversationPhoneFallback(event));
+      const hasCanonicalContactName = isUsefulContactName(canonicalContactName, conversationPhoneFallback(event), resolvedTenant);
       const contactName = resolveConversationDisplayName(event, fallbackName);
       const initialAvatar = extractAvatarUrlFromEvent(event);
       const initialPreview = resolveEventMessagePreview(event, initialOwner);
@@ -119,7 +127,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
     if (!conversation.contactNameIsCanonical && trustedContactName) {
       conversation.contact = trustedContactName;
       conversation.contactNameIsTrusted = true;
-    } else if (displayName && (!conversation.contact || conversation.contact.startsWith('Contato ') || conversation.contact === 'Contato' || conversation.contact.includes('@') || !isUsefulContactName(conversation.contact))) {
+    } else if (displayName && (!conversation.contact || conversation.contact.startsWith('Contato ') || conversation.contact === 'Contato' || conversation.contact.includes('@') || !isUsefulContactName(conversation.contact, '', resolvedTenant))) {
       conversation.contact = displayName;
     }
 
@@ -242,7 +250,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
 
     if (matchingCard) {
       if (matchingCard.owner) {
-        if (conversation.status === 'ia_ativa' && !conversation.handoff && matchingCard.ownerKind === 'agent') {
+        if (conversation.status === 'ia_ativa' && !conversation.handoff && matchingCard.ownerKind === 'agent' && normalizeStage(conversation.stage) !== 'Atendimento humano' && conversation.stage !== 'sales_human') {
           conversation.owner = 'Assistente IA';
           conversation.ownerId = null;
           conversation.ownerKind = 'ai';

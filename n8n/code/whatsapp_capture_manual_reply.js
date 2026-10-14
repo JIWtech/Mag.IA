@@ -73,11 +73,79 @@ if (Array.isArray(existing) && existing.length) {
   await this.helpers.httpRequest({ method: 'PATCH', url: `${base}/rest/v1/channel_events?tenant_id=eq.${encodeURIComponent(tenantId)}&id=eq.${encodeURIComponent(prior.id)}`, headers, body: { raw_payload: rawPayload }, json: true, timeout: 7000 });
   return { json: { ...input, tenant_id: tenantId, queued: { event_id: prior.id, duplicate: true, matched_outbound: true } } };
 }
+const KNOWN_TENANT_BUSINESS_PATTERNS = {
+  wesley_automoveis: [
+    /^(?:g[eê]nesis|wesley)\s*(?:autom[oó]veis|ve[ií]culos|multimarcas|motors|auto)\b/i,
+    /^(?:g[eê]nesis\s+autom[oó]veis|wesley\s+autom[oó]veis|wesley_automoveis)$/i,
+  ],
+  '74b57037-9349-4a9e-889c-b65fb63c983a': [
+    /^(?:g[eê]nesis|wesley)\s*(?:autom[oó]veis|ve[ií]culos|multimarcas|motors|auto)\b/i,
+    /^(?:g[eê]nesis\s+autom[oó]veis|wesley\s+autom[oó]veis|wesley_automoveis)$/i,
+  ],
+  clinica_nubia_oficial: [
+    /^(?:cl[ií]nica\s+n[uú]bia(?:\s+oficial)?|n[uú]bia\s+oficial|clinica_nubia_oficial)$/i,
+  ],
+  royal_4x4: [
+    /^royal\s+4x4(?:\s+ve[ií]culos)?$/i,
+  ],
+};
+
+const GENERIC_SYSTEM_ROLES = /^(?:atendente|operador|operadora|suporte|sac|central(?:\s+de\s+atendimento)?|sistema|administrador|admin|bot|robo|noria)$/i;
+
+function isBusinessOrTenantName(candidate, slug = '', inst = '') {
+  const trimmed = String(candidate || '').trim();
+  if (!trimmed) return false;
+  const norm = trimmed.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (GENERIC_SYSTEM_ROLES.test(norm)) return true;
+
+  const slugNorm = String(slug || '').trim().toLowerCase();
+  const instNorm = String(inst || '').trim().toLowerCase();
+
+  if (slugNorm && (norm === slugNorm || norm === slugNorm.replace(/_/g, ' '))) return true;
+  if (instNorm && (norm === instNorm || norm === instNorm.replace(/_/g, ' '))) return true;
+
+  if (slugNorm) {
+    const patterns = KNOWN_TENANT_BUSINESS_PATTERNS[slugNorm];
+    if (patterns && patterns.some((re) => re.test(trimmed))) return true;
+  }
+  if (instNorm) {
+    const patterns = KNOWN_TENANT_BUSINESS_PATTERNS[instNorm];
+    if (patterns && patterns.some((re) => re.test(trimmed))) return true;
+  }
+
+  if (slugNorm || instNorm) {
+    if (/\b(?:atendimento|assistente\s+virtual|inteligencia\s+artificial)\b/i.test(norm)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const text = String(input.messageText || '').trim();
+let resolvedRecipientName = null;
+try {
+  const contactFilter = `&tenant_id=eq.${encodeURIComponent(tenantId)}&source_channel=eq.whatsapp&external_handle=eq.${encodeURIComponent(input.remoteJid)}&deleted_at=is.null&limit=1`;
+  const contactRows = await this.helpers.httpRequest({
+    method: 'GET',
+    url: `${base}/rest/v1/contacts?select=name${contactFilter}`,
+    headers,
+    json: true,
+    timeout: 5000,
+  });
+  const savedName = String(contactRows?.[0]?.name || '').trim();
+  if (savedName && !isBusinessOrTenantName(savedName, input.tenant_slug, input.instance)) {
+    resolvedRecipientName = savedName;
+  }
+} catch (_) {}
+
+if (!resolvedRecipientName && input.contactName && !isBusinessOrTenantName(input.contactName, input.tenant_slug, input.instance)) {
+  resolvedRecipientName = input.contactName;
+}
+
 const event = {
   tenant_id: tenantId, tenant_slug: input.tenant_slug, channel_type: 'whatsapp', external_conversation_id: input.remoteJid,
   external_message_id: input.messageId, direction: 'outbound', sender_type: 'agent', message_text: text,
-  contact_name: input.contactName || null, service: 'manual_reply', stage: null, handoff: false,
+  contact_name: resolvedRecipientName || null, service: 'manual_reply', stage: null, handoff: false,
   ai_provider: 'human_operator', ai_model: null, delivery_status: 'sent', response_text: null,
   raw_payload: { provider_event: safeProviderAudit, magia_operator: { source: 'whatsapp_fromMe', operator_name: 'Atendente', identity_resolution: 'unavailable' }, outbound_origin: 'whatsapp_fromMe', content_type: productSnapshot ? 'product' : String(input.contentType || 'text'), ...(productSnapshot ? { product_snapshot: productSnapshot } : {}), ...(media ? { source_media: media, media: { kind: media.kind, category: media.kind, source: 'whatsapp', status: 'pending', verified: false } } : {}) },
 };

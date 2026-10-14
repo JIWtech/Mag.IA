@@ -321,7 +321,7 @@
     align-items: center;
   }
 
-  .dashboard-table .table-row > * {
+  .dashboard-table .table-row>* {
     border-right: none !important;
     padding: 0 !important;
   }
@@ -416,7 +416,7 @@
     gap: 6px 12px;
   }
 
-  .funnel-row > div:first-child {
+  .funnel-row>div:first-child {
     grid-column: 1;
     grid-row: 1;
   }
@@ -515,3 +515,126 @@
   }
 }
 
+/* ==========================================================================
+   Responsive rules for Redesigned Asymmetric Dashboard Layout
+   ========================================================================== */
+
+@media (max-width: 1100px) {
+  .dashboard-metrics-asymmetric-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .dashboard-activity-dual-row {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
+@media (max-width: 820px) {
+  .chart-card-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .chart-filters-cluster {
+    justify-content: flex-start;
+  }
+
+  .activity-peak-insight-card {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .activity-peak-insight-card .peak-card-badge-row,
+  .activity-peak-insight-card .peak-window-display-area,
+  .activity-peak-insight-card .peak-capacity-tray {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-clean-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .metric-dominant-card .dominant-value-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .metric-dominant-card .dominant-value {
+    font-size: 32px;
+  }
+
+  .metric-secondary-column {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .activity-peak-insight-card {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .chart-canvas-area {
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+
+  .chart-bars-track-row {
+    min-width: 460px;
+  }
+
+  .operations-header-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .operations-search-box,
+  .operations-search-input {
+    width: 100%;
+  }
+
+  .operations-search-input:focus {
+    width: 100%;
+  }
+}
+
+@media (max-width: 1180px) {
+  .dashboard-cockpit-grid {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+    gap: 16px;
+  }
+
+  .dashboard-cockpit-left,
+  .dashboard-cockpit-right {
+    height: auto;
+    overflow: visible;
+  }
+
+  .cockpit-operations-card {
+    height: 560px;
+    min-height: 500px;
+  }
+
+  .cockpit-table-scroll-container {
+    height: 460px;
+  }
+}
+
+@media (max-width: 680px) {
+  .cockpit-kpi-row {
+    grid-template-columns: 1fr;
+  }
+}

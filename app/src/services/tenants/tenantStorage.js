@@ -15,3 +15,8 @@ export function persistTenantSlug(slug) {
   if (!slug || typeof localStorage === 'undefined') return;
   localStorage.setItem(tenantStorageKey, slug);
 }
+
+export function clearTenantSlug() {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(tenantStorageKey);
+}

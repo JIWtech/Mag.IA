@@ -75,11 +75,11 @@ for (const [kind, messageKey] of [['audio', 'audioMessage'], ['image', 'imageMes
 }
 
 test('generated workflow routes manual sends outside the AI core and through media finalization', {
-  skip: !fs.existsSync(path.join(root, 'n8n/workflows/NORIA_Hotfix12_CATALOGO_REFERENCIAS_PRODUTOS_LAYOUT.json')),
+  skip: !fs.existsSync(path.join(root, 'n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json')),
 }, () => {
-  const workflow = JSON.parse(fs.readFileSync(path.join(root, 'n8n/workflows/NORIA_Hotfix12_CATALOGO_REFERENCIAS_PRODUTOS_LAYOUT.json'), 'utf8'));
+  const workflow = JSON.parse(fs.readFileSync(path.join(root, 'n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json'), 'utf8'));
   const next = (name) => (workflow.connections[name]?.main || []).flat().map((edge) => edge.node);
   assert.deepEqual(next('Mensagem enviada fora da NORIA?').sort(), ['Capturar Resposta Manual WhatsApp', 'Sincronizar Contato WhatsApp'].sort());
   assert.deepEqual(next('Capturar Resposta Manual WhatsApp'), ['Preparar Mídia WhatsApp']);
-  assert.ok(!next('Capturar Resposta Manual WhatsApp').includes('Processar Conversa WhatsApp'));
+  assert.ok(!next('Capturar Resposta Manual WhatsApp').includes('CORE | Motor conversacional único'));
 });

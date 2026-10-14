@@ -680,6 +680,27 @@ test('TEST E: card e header recebem exatamente a mesma presentation state', () =
   assert.equal(headerState.statusKind, 'ai');
 });
 
+test('TEST E2: card e header em atendimento humano compartilham activeAgents e atribuem Wesley sem vazar Sem responsável', () => {
+  const activeAgents = [{ id: 'agent-w1', name: 'Wesley', is_active: true, status: 'online' }];
+  const conversation = {
+    id: 'conv-1',
+    status: 'atendimento_humano',
+    stage: 'Atendimento humano',
+  };
+  const options = {
+    activeAgents,
+    stageLabel: 'Atendimento humano',
+    tenantSlug: 'wesley_automoveis',
+  };
+  const cardState = deriveConversationPresentationState(conversation, options);
+  const headerState = deriveConversationPresentationState(conversation, options);
+  assert.deepEqual(cardState, headerState);
+  assert.equal(cardState.isHuman, true);
+  assert.equal(cardState.assignee, 'Wesley');
+  assert.equal(cardState.badgeLabel, 'Wesley');
+  assert.notEqual(cardState.assignee, 'Sem responsável');
+});
+
 test('TEST F: audio bytes disponíveis com transcrição -> media descriptor stored é recuperável', () => {
   const audioEvent = {
     id: 'ev-audio-1',

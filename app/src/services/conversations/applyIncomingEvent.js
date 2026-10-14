@@ -18,7 +18,7 @@ import { sortConversationsByRecentActivity } from '../timeline/conversationOrder
 import { eventsToConversations } from './eventsToConversations.js';
 import { isCustomerInboundEvent, isFollowUpOutboundEvent, isGenericLeadInquiry, isShortlyAfter, isSubstantiveInboundFollowUp } from './conversationEventState.js';
 
-export function applyIncomingEventToConversations(conversations = [], event, tenantSlug = '', { markIncomingAsRead = false, kanbanColumns = [], tenantSettings = null } = {}) {
+export function applyIncomingEventToConversations(conversations = [], event, tenantSlug = '', { markIncomingAsRead = false, kanbanColumns = [], tenantSettings = null, teamAgents = [] } = {}) {
   if (!event || isInternalOperationalEvent(event)) return conversations;
   if (tenantSlug && event.tenant_slug && event.tenant_slug !== tenantSlug) return conversations;
 
@@ -165,16 +165,17 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
     const shouldUpdateLastMessage = Boolean(isNewer && incomingPreview);
 
     const trustedContactName = getUsefulTrustedContactName(event);
+    const resolvedTenant = tenantSlug || event.tenant_slug || prevConv.tenantSlug || '';
     const displayName = resolveConversationDisplayName(event, `Contato ${channelType.label}`);
-    const previousNameIsTrusted = prevConv.contactNameIsTrusted ?? isUsefulContactName(prevConv.contact);
+    const previousNameIsTrusted = prevConv.contactNameIsTrusted ?? isUsefulContactName(prevConv.contact, '', resolvedTenant);
     const canonicalContactName = String(event.contact_name_canonical || event.contact?.name || '').trim();
-    const hasCanonicalContactName = isUsefulContactName(canonicalContactName, conversationPhoneFallback(event));
+    const hasCanonicalContactName = isUsefulContactName(canonicalContactName, conversationPhoneFallback(event), resolvedTenant);
     const previousNameIsCanonical = Boolean(prevConv.contactNameIsCanonical);
     const updatedContact = hasCanonicalContactName
       ? canonicalContactName
       : trustedContactName && !previousNameIsCanonical
         ? trustedContactName
-      : displayName && (!prevConv.contact || prevConv.contact.startsWith('Contato ') || prevConv.contact === 'Contato' || prevConv.contact.includes('@') || !isUsefulContactName(prevConv.contact))
+      : displayName && (!prevConv.contact || prevConv.contact.startsWith('Contato ') || prevConv.contact === 'Contato' || prevConv.contact.includes('@') || !isUsefulContactName(prevConv.contact, '', resolvedTenant))
         ? displayName
         : prevConv.contact;
 
@@ -235,7 +236,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
     return sortConversationsByRecentActivity(nextConversations);
   }
 
-  const [created] = eventsToConversations([event], resolvedTenant, [], kanbanColumns);
+  const [created] = eventsToConversations([event], resolvedTenant, teamAgents, kanbanColumns);
   if (created) {
     created.unread = isUnreadInboundEvent(event, { markIncomingAsRead }) ? 1 : 0;
     return sortConversationsByRecentActivity([created, ...(conversations || [])]);

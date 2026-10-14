@@ -774,6 +774,7 @@ export function Conversations({
         followUpCount={followUpCount}
         isSecondaryFilterActive={isSecondaryFilterActive}
         kanbanColumns={kanbanColumns}
+        kanbanCardsByConversationKey={kanbanCardsByConversationKey}
         onCloseSearch={handleCloseSearch}
         onOpenSearch={handleOpenSearch}
         onSearchKeyDown={handleSearchKeyDown}

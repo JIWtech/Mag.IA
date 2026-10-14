@@ -1,5 +1,46 @@
 import { isInternalOperationalEvent } from './eventClassification.js';
 
+export const VISIBILITY_REFRESH_STALE_AFTER_MS = 15 * 60 * 1000;
+
+export function createRefreshCoordinator({
+  now = () => Date.now(),
+  staleAfterMs = VISIBILITY_REFRESH_STALE_AFTER_MS,
+} = {}) {
+  const freshAtByScope = new Map();
+  const inFlightByScope = new Map();
+
+  return {
+    shouldRefreshOnVisibility(scope) {
+      if (!scope || inFlightByScope.has(scope)) return false;
+      const freshAt = freshAtByScope.get(scope);
+      return !freshAt || now() - freshAt >= staleAfterMs;
+    },
+    markFresh(scope) {
+      if (scope) freshAtByScope.set(scope, now());
+    },
+    run(scope, load) {
+      if (!scope) return Promise.resolve(false);
+      const existing = inFlightByScope.get(scope);
+      if (existing) return existing;
+
+      let task;
+      try {
+        task = Promise.resolve(load());
+      } catch (error) {
+        task = Promise.reject(error);
+      }
+      const tracked = task.then((result) => {
+        if (result !== false) freshAtByScope.set(scope, now());
+        return result;
+      }).finally(() => {
+        if (inFlightByScope.get(scope) === tracked) inFlightByScope.delete(scope);
+      });
+      inFlightByScope.set(scope, tracked);
+      return tracked;
+    },
+  };
+}
+
 export function shouldRefreshConversationState(event = {}) {
   return Boolean(event.handoff)
     || isInternalOperationalEvent(event)

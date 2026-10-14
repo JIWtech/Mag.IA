@@ -3,7 +3,10 @@ const fs=require('node:fs');
 const path=require('node:path');
 const assert=require('node:assert/strict');
 const os=require('node:os');
-const {chromium}=require(path.join(os.tmpdir(),'magia-diag-tools/node_modules/playwright'));
+let chromium;
+try { chromium = require('playwright').chromium; } catch (_) {
+  try { chromium = require(path.join(os.tmpdir(), 'magia-diag-tools/node_modules/playwright')).chromium; } catch (_) {}
+}
 const {spawn}=require('node:child_process');
 const sales=require('../../clients/wesley_automoveis/sales.json');
 const ref='sales-preview';
@@ -15,6 +18,10 @@ let lead={id:'lead-synthetic',tenant_id:tenant.id,revision:1,stage_key:'sales_ho
   chat_id:'5511000000000@s.whatsapp.net',state:{customer_name:'Cliente Sintetico'},product:{name:'Renault Sandero GT Line',year:2016,color:'Branco'},
   deposit_cents:1289400,updated_at:new Date().toISOString()};
 (async()=>{
+  if (!chromium) {
+    console.log('SKIPPED: Playwright indisponível no ambiente local.');
+    process.exit(0);
+  }
   const server=spawn(process.execPath,[path.join(__dirname,'../../app/node_modules/vite/bin/vite.js'),'--host','127.0.0.1','--port','5175','--strictPort'],{
     cwd:path.join(__dirname,'../../app'),windowsHide:true,stdio:'ignore',
     env:{...process.env,VITE_SUPABASE_URL:'https://sales-preview.supabase.co',VITE_SUPABASE_ANON_KEY:'synthetic-anon',VITE_REQUIRE_AUTH:'true'}});

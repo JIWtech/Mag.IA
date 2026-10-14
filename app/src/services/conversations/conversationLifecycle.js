@@ -42,7 +42,19 @@ export function applyConversationLifecycle(conversation, event, stage) {
     }
   }
   if (session) conversation.currentSessionId = session;
-  if (event.handoff) conversation.status = 'atendimento_humano';
+  if (
+    event.handoff
+    || stage === 'Atendimento humano'
+    || event.stage === 'Atendimento humano'
+    || stage === 'sales_human'
+    || event.stage === 'sales_human'
+    || event.service === 'manual_reply'
+    || event.sender_type === 'agent'
+    || event.ai_provider === 'human_operator'
+    || payloadOf(event)?.magia_operator?.source === 'whatsapp_fromMe'
+  ) {
+    conversation.status = 'atendimento_humano';
+  }
   const isBuffering = stage === 'Buffering' || event.stage === 'Buffering' || event.ai_provider === 'buffer';
   if (!isBuffering && stage) {
     conversation.stage = stage;

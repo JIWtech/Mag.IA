@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Building2,
   CalendarDays,
   KanbanSquare,
   LayoutDashboard,
   LogOut,
   Megaphone,
   MessageCircle,
+  RefreshCcw,
   Settings,
 } from 'lucide-react';
 import {
@@ -54,7 +56,12 @@ import {
   updateTeamAgentStatus,
   upsertConversationReadMarker,
 } from '../dataService';
+import { clearTenantSlug } from '../services/tenants/tenantStorage.js';
 import { isTenantAuthorized } from '../services/tenants/tenantAccess.js';
+import {
+  createRefreshCoordinator,
+  VISIBILITY_REFRESH_STALE_AFTER_MS,
+} from '../services/timeline/realtimeRefresh.js';
 import { Dashboard } from '../features/dashboard/components/Dashboard';
 import { Funnel } from '../features/kanban/components/Funnel';
 import { Conversations } from '../features/conversations/components/Conversations';
@@ -64,6 +71,7 @@ import { Appointments } from '../features/appointments/components/Appointments';
 import { SettingsPage } from '../features/settings/components/SettingsPage';
 import { AuthShell } from '../features/auth/components/AuthShell';
 import { LoginPage } from '../features/auth/components/LoginPage';
+import { NoriaSelect } from '../components/NoriaSelect';
 import {
   activePageStorageKey,
   appDataCachePrefix,
@@ -114,6 +122,89 @@ function formatCurrency(value) {
   }).format(value);
 }
 
+function reconcilePendingKanbanMoves(serverData, pendingMovesMap, confirmedMovesMap) {
+  if (!serverData?.kanbanColumns) {
+    return serverData;
+  }
+  const now = Date.now();
+  const activePending = new Map();
+
+  if (pendingMovesMap && pendingMovesMap.size > 0) {
+    for (const [cardId, move] of pendingMovesMap.entries()) {
+      const isExpired = !move.inFlight && (now - (move.completedAt || move.timestamp) >= 4000);
+      if (!isExpired) {
+        activePending.set(cardId, move);
+      } else {
+        pendingMovesMap.delete(cardId);
+      }
+    }
+  }
+
+  const activeConfirmed = new Map();
+  if (confirmedMovesMap && confirmedMovesMap.size > 0) {
+    for (const [cardId, confirmed] of confirmedMovesMap.entries()) {
+      if (now - confirmed.confirmedAt < 5000) {
+        activeConfirmed.set(cardId, confirmed);
+      } else {
+        confirmedMovesMap.delete(cardId);
+      }
+    }
+  }
+
+  if (activePending.size === 0 && activeConfirmed.size === 0) return serverData;
+
+  const nextColumns = serverData.kanbanColumns.map((col) => {
+    const colKey = col.automationKey || col.id;
+    const filteredCards = (col.cards || []).filter((c) => {
+      const pending = activePending.get(c.id);
+      if (pending) {
+        const targetMatches = pending.targetColumnKey === colKey
+          || (pending.targetColObj && (pending.targetColObj.id === col.id || pending.targetColObj.automationKey === colKey));
+        return targetMatches;
+      }
+      const confirmed = activeConfirmed.get(c.id);
+      if (confirmed) {
+        if (!c.salesRevision || (confirmed.salesRevision && c.salesRevision < confirmed.salesRevision) || (now - confirmed.confirmedAt < 4000)) {
+          const targetMatches = confirmed.targetColumnKey === colKey
+            || (confirmed.targetColObj && (confirmed.targetColObj.id === col.id || confirmed.targetColObj.automationKey === colKey));
+          return targetMatches;
+        }
+      }
+      return true;
+    });
+
+    for (const [cardId, pending] of activePending.entries()) {
+      const targetMatches = pending.targetColumnKey === colKey
+        || (pending.targetColObj && (pending.targetColObj.id === col.id || pending.targetColObj.automationKey === colKey));
+      if (targetMatches && !filteredCards.some((c) => c.id === cardId)) {
+        filteredCards.unshift({
+          ...pending.card,
+          stage: pending.targetStageLabel,
+          targetColumnId: col.automationKey || pending.targetColumnKey,
+        });
+      }
+    }
+
+    for (const [cardId, confirmed] of activeConfirmed.entries()) {
+      if (activePending.has(cardId)) continue;
+      const targetMatches = confirmed.targetColumnKey === colKey
+        || (confirmed.targetColObj && (confirmed.targetColObj.id === col.id || confirmed.targetColObj.automationKey === colKey));
+      if (targetMatches && !filteredCards.some((c) => c.id === cardId)) {
+        filteredCards.unshift({
+          ...confirmed.card,
+          stage: confirmed.targetStageLabel,
+          targetColumnId: col.automationKey || confirmed.targetColumnKey,
+          salesRevision: confirmed.salesRevision || confirmed.card?.salesRevision,
+        });
+      }
+    }
+
+    return { ...col, cards: filteredCards };
+  });
+
+  return { ...serverData, kanbanColumns: nextColumns };
+}
+
 function App() {
   const [active, setActive] = useState(getInitialActivePage);
   const [tenantSlug, setTenantSlug] = useState(getInitialTenantSlug);
@@ -158,6 +249,7 @@ function App() {
   const [initialConversationId, setInitialConversationId] = useState(null);
   const [prefilledAppointment, setPrefilledAppointment] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const refreshCoordinator = useMemo(() => createRefreshCoordinator(), []);
 
   const scheduleConversationRead = useCallback((conversation) => {
     const userId = session?.user?.id || null;
@@ -260,6 +352,8 @@ function App() {
     setDataScope('');
     setAppData(getInitialAppData('').data);
     setSession(null);
+    clearTenantSlug();
+    setTenantSlug(null);
     await signOut();
   };
 
@@ -289,6 +383,24 @@ function App() {
     ].join(':');
     if (kanbanMoveInFlightRef.current.has(moveKey)) return;
     kanbanMoveInFlightRef.current.add(moveKey);
+    const targetStageLabel = targetColObj?.title || getStageLabel(targetColumnKey, {
+      kanbanColumns: appData.kanbanColumns,
+      tenantSettings,
+      tenantSlug: activeTenantSlug,
+    });
+    if (!kanbanMoveInFlightRef.current.pendingMoves) {
+      kanbanMoveInFlightRef.current.pendingMoves = new Map();
+    }
+    const moveSeq = (kanbanMoveInFlightRef.current.moveSeq = (kanbanMoveInFlightRef.current.moveSeq || 0) + 1);
+    kanbanMoveInFlightRef.current.pendingMoves.set(card.id, {
+      targetColumnKey,
+      targetColObj,
+      targetStageLabel,
+      card,
+      moveSeq,
+      inFlight: true,
+      timestamp: Date.now(),
+    });
 
     // Atualização otimista no estado local
     setAppData((prev) => {
@@ -373,6 +485,22 @@ function App() {
 
     try {
       const [persistedMove] = await moveKanbanCard(activeTenantSlug, card, targetColumnKey, null, targetColObj);
+      const currentPending = kanbanMoveInFlightRef.current.pendingMoves?.get(card.id);
+      if (currentPending && currentPending.moveSeq === moveSeq) {
+        currentPending.inFlight = false;
+        currentPending.completedAt = Date.now();
+      }
+      if (!kanbanMoveInFlightRef.current.confirmedMoves) {
+        kanbanMoveInFlightRef.current.confirmedMoves = new Map();
+      }
+      kanbanMoveInFlightRef.current.confirmedMoves.set(card.id, {
+        targetColumnKey,
+        targetColObj,
+        targetStageLabel,
+        card,
+        salesRevision: persistedMove?.salesRevision,
+        confirmedAt: Date.now(),
+      });
       if (persistedMove?.salesLeadId) {
         setAppData((prev) => ({
           ...prev,
@@ -406,9 +534,22 @@ function App() {
       }
     } catch (err) {
       console.warn('Falha ao salvar movimentação de card no banco:', err);
+      const current = kanbanMoveInFlightRef.current.pendingMoves?.get(card.id);
+      if (current && current.moveSeq === moveSeq) {
+        kanbanMoveInFlightRef.current.pendingMoves.delete(card.id);
+      }
+      if (kanbanMoveInFlightRef.current.confirmedMoves?.has(card.id)) {
+        kanbanMoveInFlightRef.current.confirmedMoves.delete(card.id);
+      }
       refreshData({ showLoading: false });
     } finally {
       kanbanMoveInFlightRef.current.delete(moveKey);
+      window.setTimeout(() => {
+        const current = kanbanMoveInFlightRef.current.pendingMoves?.get(card.id);
+        if (current && current.moveSeq === moveSeq) {
+          kanbanMoveInFlightRef.current.pendingMoves.delete(card.id);
+        }
+      }, 2000);
     }
   };
 
@@ -573,12 +714,11 @@ function App() {
 
   useEffect(() => {
     if (!isAuthRequired()) return undefined;
-    for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(appDataCachePrefix) || key.startsWith('magia:team-agents')) localStorage.removeItem(key);
-    }
     let mounted = true;
+    let authSeq = 0;
+    const initialSeq = ++authSeq;
     getCurrentSession().then((currentSession) => {
-      if (!mounted) return;
+      if (!mounted || authSeq !== initialSeq) return;
       setSession(currentSession);
       setCheckingAuth(false);
       if (currentSession) {
@@ -587,13 +727,24 @@ function App() {
         clearSessionBootstrapped();
       }
     });
-    const unsubscribe = subscribeToAuthState((nextSession) => {
-      setSession(nextSession);
-      if (nextSession) {
-        setSessionBootstrapped();
-      } else {
+    const unsubscribe = subscribeToAuthState((nextSession, event) => {
+      if (!mounted) return;
+      authSeq += 1;
+      if (event === 'SIGNED_OUT' || !nextSession) {
+        setSession(null);
+        setCheckingAuth(false);
         clearSessionBootstrapped();
+        return;
       }
+      setSession((prevSession) => {
+        if (prevSession?.user?.id && nextSession?.user?.id && prevSession.user.id !== nextSession.user.id) {
+          setTenantAccess({ userId: nextSession.user.id, loaded: false, error: '' });
+          setAppDataReady(false);
+        }
+        return nextSession;
+      });
+      setCheckingAuth(false);
+      setSessionBootstrapped();
     });
     return () => {
       mounted = false;
@@ -602,34 +753,43 @@ function App() {
   }, []);
 
   async function refreshData({ showLoading = true } = {}) {
-    if (!hasTenantAccess) return;
+    if (!hasTenantAccess) return false;
     const requestedScope = scopeKey;
-    if (showLoading) setLoading(true);
-    try {
-      const data = await loadClientData({
-        conversations,
-        kanbanColumns,
-        funnelStages,
-        appointments: appData.appointments || [],
-        broadcastContacts: appData.broadcastContacts || [],
-        broadcastCampaigns: appData.broadcastCampaigns || [],
-        conversationReads: appData.conversationReads || [],
-        tenantId: appData.tenantId || null,
-      }, activeTenantSlug, session?.user?.id || null);
-      if (currentScope.current !== requestedScope) return;
-      setLoadError('');
-      cacheAppData(activeTenantSlug, data);
-      setAppData((previous) => (
-        appDataSignature(previous) === appDataSignature(data) ? previous : data
-      ));
-    } catch (error) {
-      if (currentScope.current === requestedScope) setLoadError(error.message || 'Falha ao carregar os dados.');
-    } finally {
-      if (currentScope.current === requestedScope) {
-        setAppDataReady(true);
-        if (showLoading) setLoading(false);
+    return refreshCoordinator.run(requestedScope, async () => {
+      if (showLoading) setLoading(true);
+      try {
+        const data = await loadClientData({
+          conversations,
+          kanbanColumns,
+          funnelStages,
+          appointments: appData.appointments || [],
+          broadcastContacts: appData.broadcastContacts || [],
+          broadcastCampaigns: appData.broadcastCampaigns || [],
+          conversationReads: appData.conversationReads || [],
+          tenantId: appData.tenantId || null,
+        }, activeTenantSlug, session?.user?.id || null);
+        if (currentScope.current !== requestedScope) return false;
+        setLoadError('');
+        const reconciled = reconcilePendingKanbanMoves(
+          data,
+          kanbanMoveInFlightRef.current.pendingMoves,
+          kanbanMoveInFlightRef.current.confirmedMoves
+        );
+        cacheAppData(activeTenantSlug, reconciled, session?.user?.id || null);
+        setAppData((previous) => (
+          appDataSignature(previous) === appDataSignature(reconciled) ? previous : reconciled
+        ));
+        return true;
+      } catch (error) {
+        if (currentScope.current === requestedScope) setLoadError(error.message || 'Falha ao carregar os dados.');
+        return false;
+      } finally {
+        if (currentScope.current === requestedScope) {
+          setAppDataReady(true);
+          if (showLoading) setLoading(false);
+        }
       }
-    }
+    });
   }
 
   const updateConversationMessageMedia = useCallback((eventId, nextMedia) => {
@@ -672,22 +832,44 @@ function App() {
     return false;
   }, [updateConversationMessageMedia]);
 
-  useEffect(() => {
+  const reloadTenants = useCallback(async () => {
     if (isAuthRequired() && !session) return;
-    let cancelled = false;
     const userId = session?.user?.id || null;
     setTenantAccess({ userId, loaded: false, error: '' });
-    loadAvailableTenants(mockTenants).then((tenantsFromDb) => {
-      if (cancelled) return;
-      setAvailableTenants(tenantsFromDb);
+    try {
+      const tenantsFromDb = await loadAvailableTenants(mockTenants);
+      const validTenants = Array.isArray(tenantsFromDb) ? tenantsFromDb : [];
+      setAvailableTenants(validTenants);
       setTenantAccess({ userId, loaded: true, error: '' });
-    }).catch((error) => {
-      if (cancelled) return;
+
+      setTenantSlug((prevSlug) => {
+        if (prevSlug && validTenants.some((t) => t.slug === prevSlug)) {
+          persistTenantSlug(prevSlug);
+          return prevSlug;
+        }
+        const storedSlug = getInitialTenantSlug();
+        if (storedSlug && validTenants.some((t) => t.slug === storedSlug)) {
+          persistTenantSlug(storedSlug);
+          return storedSlug;
+        }
+        if (validTenants.length > 0) {
+          const envSlug = typeof import.meta !== 'undefined' && import.meta.env?.VITE_TENANT_SLUG;
+          const preferred = (envSlug && validTenants.find((t) => t.slug === envSlug)) || validTenants[0];
+          persistTenantSlug(preferred.slug);
+          return preferred.slug;
+        }
+        clearTenantSlug();
+        return null;
+      });
+    } catch (error) {
       setAvailableTenants([]);
-      setTenantAccess({ userId, loaded: true, error: error.message });
-    });
-    return () => { cancelled = true; };
+      setTenantAccess({ userId, loaded: true, error: error.message || 'Erro ao carregar empresas' });
+    }
   }, [session?.user?.id]);
+
+  useEffect(() => {
+    reloadTenants();
+  }, [reloadTenants]);
 
   useEffect(() => {
     localStorage.setItem(activePageStorageKey, active);
@@ -699,7 +881,7 @@ function App() {
     setDataScope(scopeKey);
     setLoadError('');
     persistTenantSlug(activeTenantSlug);
-    const cached = loadCachedAppData(activeTenantSlug);
+    const cached = loadCachedAppData(activeTenantSlug, userId);
     if (cached) {
       setAppData(cached);
       setAppDataReady(true);
@@ -734,6 +916,7 @@ function App() {
             markIncomingAsRead,
             kanbanColumns: prev.kanbanColumns,
             tenantSettings,
+            teamAgents: prev.teamAgents,
           },
         );
         const nextKanbanColumns = applyIncomingEventToKanban(
@@ -803,7 +986,10 @@ function App() {
     }, userId);
 
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') refreshData({ showLoading: false });
+      if (document.visibilityState === 'visible'
+        && refreshCoordinator.shouldRefreshOnVisibility(scopeKey)) {
+        refreshData({ showLoading: false });
+      }
     };
     const refreshCatalogAfterWrite = (event) => {
       refreshFromRealtime();
@@ -811,11 +997,11 @@ function App() {
     document.addEventListener('visibilitychange', refreshWhenVisible);
     window.addEventListener('noria:catalog-cache-updated', refreshCatalogAfterWrite);
     // O Realtime é o mecanismo primário. Mantemos um fallback pouco frequente
-    // para tabelas ainda não cobertas pela subscription, sem recarregar todo o
-    // conjunto de dados a cada 10 segundos.
+    // para tabelas ainda não cobertas pela subscription. Enquanto a aba estiver
+    // oculta, não acumulamos uma carga completa para executar ao retornar.
     const fallbackPolling = window.setInterval(() => {
-      refreshData({ showLoading: false });
-    }, 5 * 60 * 1000);
+      if (document.visibilityState === 'visible') refreshData({ showLoading: false });
+    }, VISIBILITY_REFRESH_STALE_AFTER_MS);
 
     return () => {
       cancelled = true;
@@ -861,9 +1047,83 @@ function App() {
     return <AuthShell title="Verificando acesso..." />;
   }
   if (!hasTenantAccess) {
-    return <AuthShell title={tenantAccess.error || tenantSelectionError || 'Nenhuma empresa vinculada a esta conta'}>
-      <button className="secondary-button" onClick={handleSignOut}><LogOut size={16} /> Sair</button>
-    </AuthShell>;
+    if (tenantAccess.error) {
+      return (
+        <AuthShell
+          title="Erro ao verificar acesso"
+          description={tenantAccess.error}
+        >
+          <div className="auth-loading-actions">
+            <button className="primary-button" type="button" onClick={reloadTenants}>
+              <RefreshCcw size={15} /> Tentar novamente
+            </button>
+            <button className="secondary-button" type="button" onClick={handleSignOut}>
+              <LogOut size={15} /> Sair
+            </button>
+          </div>
+        </AuthShell>
+      );
+    }
+
+    if (tenantAccess.loaded && availableTenants.length === 0) {
+      return (
+        <AuthShell
+          title="Nenhuma empresa vinculada a esta conta"
+          description={`A conta ${session?.user?.email ? `(${session.user.email}) ` : ''}está autenticada, mas não possui nenhuma empresa ativa associada no banco de dados.`}
+        >
+          <div className="auth-loading-actions">
+            <button className="secondary-button" type="button" onClick={reloadTenants}>
+              <RefreshCcw size={15} /> Verificar novamente
+            </button>
+            <button className="secondary-button" type="button" onClick={handleSignOut}>
+              <LogOut size={15} /> Sair
+            </button>
+          </div>
+        </AuthShell>
+      );
+    }
+
+    return (
+      <AuthShell
+        title="Selecione uma empresa autorizada para continuar"
+        description="Escolha a empresa vinculada à sua conta para acessar o sistema:"
+      >
+        <div className="auth-tenant-selector">
+          <NoriaSelect
+            value={activeTenantSlug || availableTenants[0]?.slug}
+            onValueChange={(val) => {
+              setTenantSlug(val);
+              persistTenantSlug(val);
+            }}
+            options={availableTenants.map((t) => ({
+              value: t.slug,
+              label: t.name,
+            }))}
+            icon={Building2}
+            placeholder="Selecione uma empresa"
+            ariaLabel="Selecione uma empresa"
+          />
+          <div className="auth-loading-actions">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                const targetSlug = activeTenantSlug || availableTenants[0]?.slug;
+                if (targetSlug) {
+                  setTenantSlug(targetSlug);
+                  persistTenantSlug(targetSlug);
+                }
+              }}
+            >
+              Acessar empresa
+            </button>
+            <button className="secondary-button" type="button" onClick={handleSignOut}>
+              <LogOut size={15} /> Sair
+            </button>
+          </div>
+        </div>
+      </AuthShell>
+    );
   }
   if (dataScope !== scopeKey) return <AuthShell title="Carregando empresa..." />;
 
@@ -878,7 +1138,7 @@ function App() {
         selectedTenant={selectedTenant}
       />
 
-      <main className="main" style={{ position: 'relative' }}>
+      <main className="main" data-page={active} style={{ position: 'relative' }}>
         <div className={`refresh-progress-bar ${loading ? 'active' : ''}`} />
         {loadError && <div className="inline-error" role="alert">{loadError}</div>}
         <AppTopbar

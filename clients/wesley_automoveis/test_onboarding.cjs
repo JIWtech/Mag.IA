@@ -3,8 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { PGlite } = require(path.join(process.env.MAGIA_TEST_MODULES
-  || path.join(require('node:os').tmpdir(), 'magia-diag-tools/node_modules'), '@electric-sql/pglite'));
+const { PGlite } = require('../../scripts/tests/pglite_helper.cjs');
 const { scoreDeposit, purchaseEligibility } = require('./regras_sdr.cjs');
 const owner = '8fb2bc06-94d5-4abe-83b2-1aed41a346ae';
 const sql = fs.readFileSync(path.join(__dirname, '01_cadastro_inativo.sql'), 'utf8');

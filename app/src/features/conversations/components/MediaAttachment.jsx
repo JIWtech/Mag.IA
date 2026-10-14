@@ -36,6 +36,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
   const [viewerKind, setViewerKind] = useState(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [processingTimedOut, setProcessingTimedOut] = useState(false);
   const imageSource = `${media.thumbnailUrl || media.url || ''}\u0000${media.url || ''}`;
   const previousImageSourceRef = useRef(imageSource);
 
@@ -46,6 +47,24 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
     setImageLoaded(false);
     setViewerKind(null);
   }, [imageSource]);
+
+  const isStalePending = React.useMemo(() => {
+    if (media.status !== 'pending') return false;
+    const ts = media.createdAt || media.created_at || meta?.createdAt || meta?.created_at;
+    if (!ts) return false;
+    const parsed = Date.parse(ts);
+    return Number.isFinite(parsed) && (Date.now() - parsed > 90_000);
+  }, [media.status, media.createdAt, media.created_at, meta?.createdAt, meta?.created_at]);
+
+  useEffect(() => {
+    const isProcessing = (media.status === 'pending' && !isStalePending) || media.loadState === 'resolving';
+    if (!isProcessing) {
+      setProcessingTimedOut(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setProcessingTimedOut(true), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [media.status, media.loadState, media.storagePath, isStalePending]);
 
   const config = {
     image: { label: 'Imagem', icon: ImageIcon },
@@ -74,11 +93,14 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
       return <AudioRecoveryNotice state="resolving" />;
     }
     // Caso B: pending -> preparando
+    if (processingTimedOut || isStalePending) {
+      return <AudioRecoveryNotice state="missing_source" />;
+    }
     if (media.status === 'pending' || media.loadState === 'resolving') {
       return <AudioRecoveryNotice state="resolving" />;
     }
     // Caso C: erro com retry
-    if (['store_failed', 'storage_error', 'persistence_error', 'verification_failed', 'download_failed'].includes(media.status) || media.loadState === 'retryable_error') {
+    if (['store_failed', 'storage_error', 'persistence_error', 'verification_failed', 'download_failed', 'missing_binary', 'too_large', 'skipped_too_large'].includes(media.status) || media.loadState === 'retryable_error') {
       return <AudioRecoveryNotice state="retryable_error" onRetry={media.bucket && media.storagePath ? onRetry : undefined} />;
     }
     // Caso D: transcrição válida
@@ -90,20 +112,29 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
     return <AudioRecoveryNotice state="missing_source" />;
   }
 
-  if (media.status === 'pending' || media.loadState === 'resolving') {
+  if ((media.status === 'pending' || media.loadState === 'resolving') && !processingTimedOut && !isStalePending) {
     return (
       <div className="media-placeholder media-placeholder-loading" role="status" aria-live="polite">
         <Loader2 size={20} className="audio-spinner" aria-hidden="true" />
-        <span>Preparando {config.label.toLowerCase()}â€¦</span>
+        <span>Preparando {config.label.toLowerCase()}…</span>
       </div>
     );
   }
 
-  if (['store_failed', 'storage_error', 'persistence_error', 'skipped_too_large'].includes(media.status)) {
+  if (['store_failed', 'storage_error', 'persistence_error', 'download_failed', 'missing_binary', 'too_large', 'skipped_too_large', 'unavailable'].includes(media.status) || processingTimedOut || isStalePending) {
+    // The only retry handler currently available reloads a signed URL for an
+    // already stored audio file. Do not show a non-functional retry for videos
+    // pending re-ingestion (or for any other media type).
+    const canRetry = kind === 'audio' && media.status === 'stored' && Boolean(media.bucket && media.storagePath);
     return (
       <div className="media-placeholder" title={unavailableMediaLabel(kind)}>
         <Icon size={20} />
         <span>{unavailableMediaLabel(kind)}</span>
+        {canRetry && onRetry && (
+          <button type="button" className="media-retry-button" onClick={onRetry}>
+            Tentar novamente
+          </button>
+        )}
       </div>
     );
   }

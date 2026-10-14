@@ -1,19 +1,26 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const ts = require('../../../app/node_modules/typescript');
+const { applyFailureResilience, refreshFailureRuntime } = require('./whatsapp_failure_resilience.cjs');
+const { applyCommercialRegressions } = require('./whatsapp_commercial_regressions.cjs');
 
 // The generated runtime must start from the operationally reviewed Hotfix12
 // Core. Reassembling it from the legacy Telegram baseline silently discarded
 // catalog-reference, campaign and safe-dedup fixes.
 const root = path.resolve(__dirname, '../../..');
-const hotfixFile = path.join(root, 'n8n/workflows/NORIA_Hotfix12_CATALOGO_REFERENCIAS_PRODUTOS_LAYOUT.json');
+const hotfixFile = path.join(root, 'n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json');
 const workflow = JSON.parse(fs.readFileSync(hotfixFile, 'utf8'));
 const coreNode = workflow.nodes.find((node) => (
-  node.name === 'Processar Conversa WhatsApp' && typeof node?.parameters?.jsCode === 'string'
+  node.name === 'CORE | Motor conversacional único' && typeof node?.parameters?.jsCode === 'string'
 ));
-const revision = 'conversation_core_v2_1_9_hotfix12_catalog_referral_product_capture_2026_10_08';
+const legacyRevision = 'conversation_core_v2_1_21_failure_resilience_2026_10_13';
+const sourceRevision = 'conversation_core_v2_1_22_gemini_429_resilience_2026_10_13';
+const revision = 'conversation_core_v2_1_23_gemini_global_rate_control_2026_10_14';
 
-if (!coreNode) throw Error(`Hotfix12 conversation core missing from ${hotfixFile}`);
-if (!coreNode.parameters.jsCode.includes(revision)) throw Error('Unexpected Hotfix12 core revision');
+if (!coreNode) throw Error(`Conversation core missing from ${hotfixFile}`);
+if (![legacyRevision, sourceRevision, revision].some(value => coreNode.parameters.jsCode.includes(value))) {
+  throw Error('Unexpected conversation core revision');
+}
 
 const catalogProductColumns = 'tenant_id,instance_name,product_id,retailer_id,title,description,currency,regular_price_cents,sale_price_cents,effective_price_cents,price_source,availability,visibility,image_url,image_urls,collection_id,matched_inventory_id,match_status,active,price_evidence_source,price_observed_at,synced_at,updated_at';
 const catalogStateColumns = 'tenant_id,instance_name,status,last_attempt_at,last_success_at,product_count,reported_count,truncated,error_code,endpoint,updated_at';
@@ -38,6 +45,8 @@ function replaceCatalogProjection(source, table, columns) {
 }
 
 let code = coreNode.parameters.jsCode;
+code = code.includes(legacyRevision) ? applyFailureResilience(code, ts) : refreshFailureRuntime(code, ts);
+code = applyCommercialRegressions(code, ts);
 code = replaceCatalogProjection(code, 'whatsapp_catalog_products', catalogProductColumns);
 code = replaceCatalogProjection(code, 'whatsapp_catalog_sync_state', catalogStateColumns);
 // Deterministic Genesis priority: a current WhatsApp catalog selection plus an
@@ -126,4 +135,4 @@ fs.writeFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.
 // connections remain untouched.
 coreNode.parameters.jsCode = code;
 fs.writeFileSync(hotfixFile, `${JSON.stringify(workflow, null, 2)}\n`);
-console.log(`Built WhatsApp conversation core from Hotfix12 (${revision}).`);
+console.log(`Built WhatsApp conversation core (${revision}).`);
