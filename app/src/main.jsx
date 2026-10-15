@@ -5069,6 +5069,10 @@ function LoginPage() {
     setError('');
     try {
       await signInWithPassword(email.trim(), password);
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete('auth');
+      nextUrl.searchParams.set('app', '1');
+      window.location.replace(nextUrl.toString());
     } catch (loginError) {
       setError(loginError.message || 'Não foi possível entrar.');
     } finally {
