@@ -1,3 +1,5 @@
+import { canEventMoveOwnershipToAi, eventSessionId } from './ownershipEvidence.js';
+
 function payloadOf(event) {
   if (typeof event.raw_payload !== 'string') return event.raw_payload || {};
   try { return JSON.parse(event.raw_payload); } catch { return {}; }
@@ -7,7 +9,7 @@ function payloadOf(event) {
 export function applyConversationLifecycle(conversation, event, stage) {
   const closed = stage === 'Finalizado' || event.service === 'conversation_closed'
     || event.ai_provider === 'conversation_closed';
-  const session = payloadOf(event).conversation_session_id;
+  const session = eventSessionId(event);
 
   if (closed) {
     conversation.status = 'finalizado';
@@ -42,6 +44,18 @@ export function applyConversationLifecycle(conversation, event, stage) {
     }
   }
   if (session) conversation.currentSessionId = session;
+  // A persisted commercial event with AI control is authoritative for the
+  // current session. It must supersede an assignee retained from an older
+  // handoff; otherwise a reopened conversation keeps showing that agent.
+  if (canEventMoveOwnershipToAi(conversation, event, stage)) {
+    conversation.status = 'ia_ativa';
+    conversation.handoff = false;
+    conversation.owner = 'Assistente IA';
+    conversation.ownerId = null;
+    conversation.ownerKind = 'ai';
+    conversation.currentAssignee = null;
+    conversation.currentAssigneeId = null;
+  }
   if (
     event.handoff
     || stage === 'Atendimento humano'

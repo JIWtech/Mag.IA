@@ -51,3 +51,22 @@ test('6B.17: extracted Kanban applier keeps human assignment, media preview and 
   assert.equal(direct[0].cards[0].subtitle, '[image]');
   assert.equal(unchanged, direct);
 });
+
+test('6B.17: generic sales_core cannot overwrite a current human owner before canonical refresh', () => {
+  const aiCurrent = event({
+    id: 'card-ai-current', direction: 'outbound', sender_type: 'assistant', service: 'sales_qualification',
+    stage: 'IA - Qualificacao automotiva', handoff: false, ai_provider: 'sales_core',
+    created_at: '2026-10-09T10:05:00.000Z', raw_payload: { sales_lead_id: 'lead-current' },
+  });
+  const oldAssignment = event({
+    id: 'card-old-wesley', direction: 'outbound', sender_type: 'system', service: 'conversation_assigned',
+    stage: 'Atendimento humano', handoff: true, sent_by_user: 'Wesley',
+    created_at: '2026-10-09T10:00:00.000Z', raw_payload: { assignee: { id: 'agent-1', name: 'Wesley' } },
+  });
+
+  const withHuman = applyIncomingEventToKanban(columns, oldAssignment, 'wesley_automoveis');
+  const updated = applyIncomingEventToKanban(withHuman, aiCurrent, 'wesley_automoveis');
+
+  assert.equal(updated[0].cards[0].owner, 'Wesley');
+  assert.equal(updated[0].cards[0].ownerKind, 'agent');
+});

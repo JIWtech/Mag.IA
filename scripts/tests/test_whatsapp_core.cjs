@@ -7,12 +7,13 @@ const code = fs.readFileSync(path.join(__dirname,'../../n8n/code/whatsapp_conver
 const execute = new AsyncFunction('$json','$env','$vars','$getWorkflowStaticData',code);
 const services=[{external_id:'bronze',category:'Bronze',name:'Bronze Classico',description:'Bronze em maquina',price:99.99,billing_unit:'sessao',notes:'',active:true}];
 
-async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria Souza'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria Souza|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false, audio=false, transcript='Quero bronze', audioFailure='', audioCache=null, audioMedia=null, mediaFixtures={}, contact=null, contactExclusionEnabled=false, contactExclusion=null, failExclusion=false, exclusionBeforeSend=null,tenantSlug='clinic' }={}) {
+async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria Souza'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria Souza|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false, audio=false, transcript='Quero bronze', audioFailure='', audioCache=null, audioMedia=null, mediaFixtures={}, contact=null, contactExclusionEnabled=false, contactExclusion=null, failExclusion=false, exclusionBeforeSend=null,tenantSlug='clinic',inputPatch={} }={}) {
   const calls=[]; const events=[]; const saved=[]; const finishes=[]; const uploads=[]; let sent=0; let generated=0; let exclusionCalls=0;
   const input={tenant_id:'t-clinic',tenant_slug:tenantSlug,remoteJid:'5511111111111@s.whatsapp.net',instance:'clinic',
     noria_client_policy:{profile:'nb_bronze_v1',capability:'standard',contract:'noria_policy_v2',tenant_slug:tenantSlug,
       tenant_id:'t-clinic',audio_enabled:audio,scheduling_enabled:Boolean(scheduling?.enabled),modules:{messages:{
         home_booking:'',home_info:'',clinic_prefix:'',clinic_home_note:'',home_schedule:'',spray_schedule:''}}}};
+  Object.assign(input,inputPatch);
   const environment={SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake',GEMINI_ENABLED:'true',GEMINI_API_KEY:'fake',
     EVOLUTION_API_URL_CLINIC:'https://evo.test',EVOLUTION_API_KEY_CLINIC:'fake',EVOLUTION_INSTANCE_CLINIC:'clinic',
     EVOLUTION_API_URL_CLINICA_NUBIA_OFICIAL:'https://evo.test',EVOLUTION_API_KEY_CLINICA_NUBIA_OFICIAL:'fake',EVOLUTION_INSTANCE_CLINICA_NUBIA_OFICIAL:'clinic'};
@@ -424,6 +425,11 @@ test('capacity booking checks availability and uses atomic RPC, never plain appo
   assert.equal(r.calls.find(c=>c.url.includes('magia_reserve_appointment')).body.p_unit,'angra');
   assert.ok(!r.calls.some(c=>c.method==='POST'&&c.url.endsWith('/appointments')));
   assert.equal(r.sent,1);
+});
+
+test('EXT execution failure after a claim retries the real queue without sending',async()=>{
+  const r=await run({texts:['oi'],inputPatch:{noria_preclaimed_turn:{claimed:true,token:'claim-1',boundary_id:'initial',messages:[{event_id:'e0',id:'m0',text:'oi',name:'Cliente',received_at:new Date().toISOString()}]},error:{message:'subworkflow unavailable'}}});
+  assert.equal(r.sent,0);assert.deepEqual(r.finishes,['retry']);assert.equal(r.result.error,'NORIA_EXT_DISPATCH_UNAVAILABLE');
 });
 test('Núbia blocks only duplicate or overlapping future reservations before the reserve RPC',async()=>{
   const base={id:'existing',status:'pending_payment',starts_at:'2099-09-29T13:00:00Z',ends_at:'2099-09-29T14:30:00Z',metadata:{service_id:'bronze'}};

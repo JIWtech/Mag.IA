@@ -1,0 +1,47 @@
+{
+  "started_at": "2026-10-15T00:52:08.534Z",
+  "finished_at": "2026-10-15T00:54:19.652Z",
+  "model": "gemini-3.5-flash-lite",
+  "prompt_revision": "wesley-sales-v14.19-natural-dialogue-2026-10-11",
+  "prompt_sha256": "62D38DC2E6704E58619CA860E43107F99F0F4F600BA468F8B0B8CB24B8B9661C",
+  "prepared_cases": 67,
+  "executed_cases": 37,
+  "max_calls": 40,
+  "real_calls": 40,
+  "call_limit_reached": false,
+  "status_counts": {
+    "PARTIAL": 8,
+    "PASS": 27,
+    "FAIL": 2
+  },
+  "category_counts": {
+    "intent_change": 6,
+    "budget": 10,
+    "reference": 8,
+    "financing": 1,
+    "security_budget": 1,
+    "security_sold": 1,
+    "security_subjective": 1,
+    "security_tenant": 1,
+    "security_availability": 1,
+    "security_price": 1,
+    "purchase_indirect": 6
+  },
+  "operation_counts": {
+    "sales_generate": 40
+  },
+  "token_totals": {
+    "promptTokenCount": 363119,
+    "candidatesTokenCount": 32685,
+    "totalTokenCount": 401517,
+    "cachedContentTokenCount": 248467,
+    "thoughtsTokenCount": 5713
+  },
+  "latency_ms": {
+    "min": 2502,
+    "max": 5243,
+    "average": 3222
+  },
+  "http_errors": 0,
+  "schema_errors": 2
+}

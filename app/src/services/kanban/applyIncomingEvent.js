@@ -9,6 +9,7 @@ import { isGeneratedMediaLabel, mediaPreview } from '../media/mediaPresentation.
 import { extractPayloadAvatar } from '../contacts/contactPayload.js';
 import { normalizeAvatarUrl } from '../contacts/contactIdentity.js';
 import { cleanAgentName } from '../agents/agentNames.js';
+import { canEventMoveOwnershipToAi } from '../conversations/ownershipEvidence.js';
 
 export function applyIncomingEventToKanban(columns = [], event, tenantSlug = '', teamAgents = []) {
   if (!event || isInternalOperationalEvent(event) || !Array.isArray(columns)) return columns;
@@ -88,16 +89,28 @@ export function applyIncomingEventToKanban(columns = [], event, tenantSlug = '',
           || payload?.kanban_transition?.to_column === 'sales_human'
           || payload?.kanban_transition?.to_column === 'com_humano'
           || payload?.kanban_transition?.to_column === 'conversas_humanos';
+        const eventTime = Date.parse(event.created_at || '');
+        const cardTime = Date.parse(card.lastActivityAt || '');
+        const isNewerControl = !Number.isFinite(cardTime)
+          || (Number.isFinite(eventTime) && eventTime >= cardTime);
 
         let nextOwner = card.owner;
         let nextOwnerId = card.ownerId;
         let nextOwnerKind = card.ownerKind;
 
-        if (hasExplicitAssignment) {
+        if (isNewerControl && canEventMoveOwnershipToAi({
+          status: card.ownerKind === 'agent' ? 'atendimento_humano' : 'ia_ativa',
+          handoff: card.ownerKind === 'agent',
+          currentSessionId: card.sessionId || null,
+        }, event, event.stage)) {
+          nextOwner = 'Assistente IA';
+          nextOwnerId = null;
+          nextOwnerKind = 'ai';
+        } else if (isNewerControl && hasExplicitAssignment) {
           nextOwner = newAssigneeName;
           nextOwnerId = assignee.id ? String(assignee.id) : null;
           nextOwnerKind = 'agent';
-        } else if (isHandoff && (card.ownerKind === 'ai' || card.owner === 'Assistente IA')) {
+        } else if (isNewerControl && isHandoff && (card.ownerKind === 'ai' || card.owner === 'Assistente IA')) {
           let activeAgents = Array.isArray(teamAgents) && teamAgents.length ? teamAgents : null;
           if (!activeAgents && typeof window !== 'undefined' && window.localStorage && resolvedTenant) {
             try {

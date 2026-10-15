@@ -56,7 +56,7 @@ export function DashboardMetrics({ conversations = [], ready = true }) {
     {
       id: 'tempo-resposta',
       title: 'Tempo da 1ª resposta',
-      badge: 'Agilidade',
+      badge: 'IA',
       value: metrics.averageFirstResponseSeconds === null ? '—' : `${metrics.averageFirstResponseSeconds}s`,
       color: '#06b6d4',
       values: trendSeries.responseSeconds,

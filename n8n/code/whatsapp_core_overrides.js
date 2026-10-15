@@ -20,7 +20,17 @@ async function loadTenantContext() {
   const channelRows = await supabaseGet('/rest/v1/channels?select=*&tenant_id=eq.' + tenant.id
     + '&type=eq.whatsapp&status=eq.active&external_id=eq.' + encodeFilter($json.instance) + '&limit=1');
   if (!channelRows.length) throw new Error('Instance does not belong to tenant');
-  return { tenant, settings: settingRows[0], agent: agentRows[0] || {}, channel: channelRows[0] };
+  // Extension evidence is tenant-scoped. Reject malformed/cross-tenant data
+  // instead of silently dropping it while reconstructing CORE context.
+  const businessContext = $json.noria_business_context;
+  if (businessContext !== undefined && (!businessContext || typeof businessContext !== 'object'
+    || businessContext.contract !== 'noria_business_result_v1'
+    || businessContext.tenant_slug !== tenantSlug)) {
+    throw new Error('NORIA_BUSINESS_CONTEXT_INVALID');
+  }
+  return { tenant, settings: settingRows[0], agent: agentRows[0] || {}, channel: channelRows[0],
+    client_policy: tenantBusinessRules, noria_client_policy: tenantBusinessRules,
+    noria_business_context: businessContext || null, business_context: businessContext || null };
 }
 
 async function loadContact(context) {

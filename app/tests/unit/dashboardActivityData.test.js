@@ -96,17 +96,17 @@ test('dashboard metrics use real data and keep empty states at zero', () => {
   const metrics = getDashboardMetricsData(conversations, now);
   assert.equal(metrics.conversationsToday, 2);
   assert.equal(metrics.aiSharePct, 50);
-  assert.equal(metrics.averageFirstResponseSeconds, 45);
+  assert.equal(metrics.averageFirstResponseSeconds, 30);
   assert.equal(metrics.qualifiedLeads, 1);
   assert.equal(metrics.hourlyConversationCounts[2], 1);
   assert.equal(metrics.hourlyConversationCounts[8], 1);
   assert.equal(metrics.hourlyAiCounts[2], 1);
   assert.equal(metrics.hourlyQualifiedCounts[2], 1);
   assert.equal(metrics.hourlyResponseSeconds[2], 30);
-  assert.equal(metrics.hourlyResponseSeconds[8], 60);
+  assert.equal(metrics.hourlyResponseSeconds[8], 0);
   assert.deepEqual(metrics.trendSeries.conversations, [0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2]);
   assert.deepEqual(metrics.trendSeries.aiShare, [0, 0, 100, 100, 100, 100, 100, 100, 50, 50, 50]);
-  assert.deepEqual(metrics.trendSeries.responseSeconds, [0, 0, 30, 30, 30, 30, 30, 30, 45, 45, 45]);
+  assert.deepEqual(metrics.trendSeries.responseSeconds, [0, 0, 30, 30, 30, 30, 30, 30, 30, 30, 30]);
   assert.deepEqual(metrics.trendSeries.qualified, [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
 });
 

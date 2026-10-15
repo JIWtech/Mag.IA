@@ -2857,6 +2857,37 @@ test('getStageTone shares the canonical Genesis colors with Kanban', () => {
   assert.equal(getStageTone('sales_closed'), 'green');
 });
 
+test('ownership Alexandre: active sales_human survives a later generic commercial event in both views', () => {
+  const human = genesisLead('sales_human', { ai_locked: true, revision: 8, updated_at: '2026-10-14T12:21:00.000Z' });
+  const history = [...priorHumanPeriod(), event({ id: 'alexandre-question', direction: 'inbound', stage: 'Atendimento humano', handoff: true,
+    message_text: 'Olá! Vocês compram carro?', created_at: '2026-10-14T12:21:00.000Z' })];
+  const current = materializeSalesControl(history, human);
+  const staleAi = event({ id: 'alexandre-stale-ai', direction: 'outbound', sender_type: 'assistant', service: 'sales_qualification',
+    ai_provider: 'sales_core', handoff: false, stage: 'IA - Qualificacao automotiva', created_at: '2026-10-14T12:22:00.000Z',
+    raw_payload: { conversation_session_id: 'initial', sales_lead_id: human.id, sales_revision: 7, sales_stage: 'sales_qualifying' } });
+  const realtimeConversation = applyIncomingEventToConversations([current.conversation], staleAi, 'wesley_automoveis');
+  const realtimeCard = cardsFor(applyIncomingEventToKanban(current.columns, staleAi, 'wesley_automoveis', controlAgents))[0];
+  assert.equal(realtimeConversation[0].owner, 'Wesley');
+  assert.equal(realtimeConversation[0].status, 'atendimento_humano');
+  assert.equal(realtimeCard.owner, 'Wesley');
+  assert.equal(realtimeCard.ownerKind, 'agent');
+});
+
+test('ownership João Victor: closed session followed by canonical unlocked sales_new returns both views to AI', () => {
+  const old = [...priorHumanPeriod(), event({ id: 'joao-close', service: 'conversation_closed', stage: 'Finalizado',
+    created_at: '2026-10-14T12:10:39.000Z', raw_payload: { conversation_session_id: 'closed-1' } })];
+  const newSession = [
+    event({ id: 'joao-inbound', direction: 'inbound', sender_type: 'contact', stage: 'Patio - Novos contatos', handoff: false,
+      created_at: '2026-10-14T12:10:43.000Z', raw_payload: { conversation_session_id: 'joao-close' } }),
+    event({ id: 'joao-ai', direction: 'outbound', sender_type: 'assistant', service: 'sales_qualification', ai_provider: 'sales_core', handoff: false,
+      stage: 'Patio - Novos contatos', created_at: '2026-10-14T12:10:59.000Z',
+      raw_payload: { conversation_session_id: 'joao-close', sales_lead_id: 'lead-new', sales_revision: 1, sales_stage: 'sales_new' } }),
+  ];
+  const { card, conversation } = materializeSalesControl([...old, ...newSession], genesisLead('sales_new', { ai_locked: false, revision: 1 }));
+  assert.deepEqual({ owner: card.owner, kind: card.ownerKind, stage: card.salesStageKey }, { owner: 'Assistente IA', kind: 'ai', stage: 'sales_new' });
+  assert.deepEqual({ owner: conversation.owner, kind: conversation.ownerKind, status: conversation.status }, { owner: 'Assistente IA', kind: 'ai', status: 'ia_ativa' });
+});
+
 test('isTransientStorageError classifies retryable statuses and transport failures only', () => {
   assert.equal(isTransientStorageError({ status: 429 }), true);
   assert.equal(isTransientStorageError({ statusCode: 503 }), true);

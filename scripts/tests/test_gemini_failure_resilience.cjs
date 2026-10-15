@@ -165,9 +165,10 @@ test('13 deferred vehicle photos remain deterministic and preserved', () => {
   assert.match(code, /Continuamos a avaliação de onde paramos/);
 });
 
-test('14 spreadsheet price path remains present and isolated', () => {
+test('14 spreadsheet price authority is delegated to the Genesis EXT', () => {
   assert.match(code, /genesis_sheet/);
-  assert.match(code, /salesGenesisSheetPriceAuthorized/);
+  assert.match(code, /noria_business_context/);
+  assert.doesNotMatch(code, /salesGenesisSheetPriceAuthorized|sheets\.googleapis\.com|\/gviz\//);
 });
 
 test('15 financing deposit state remains deterministic', () => {
@@ -248,7 +249,7 @@ test('diagnostics include provider identifiers and quota metric without secrets'
 });
 
 test('Gemini call amplification is bounded to generation plus one local-validated composition', () => {
-  assert.match(code, /return \{\.\.\.checked,attempts:\[\{attempt:0,issues:\[\]\}\]\}/);
+  assert.match(code, /return \{\.\.\.plan,attempts:\[\{attempt:0,issues:\[\]\}\],semantic_source:/);
   assert.match(code, /for\(let i=0;i<1;i\+\+\)/);
   assert.doesNotMatch(code, /const review=await audit\(\{draft,plan,facts,execution\}\)/);
 });

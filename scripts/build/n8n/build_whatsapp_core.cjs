@@ -3,6 +3,7 @@ const path = require('node:path');
 const ts = require('../../../app/node_modules/typescript');
 const { applyFailureResilience, refreshFailureRuntime } = require('./whatsapp_failure_resilience.cjs');
 const { applyCommercialRegressions } = require('./whatsapp_commercial_regressions.cjs');
+const { applySemanticIntent } = require('./whatsapp_semantic_intent.cjs');
 
 // The generated runtime must start from the operationally reviewed Hotfix12
 // Core. Reassembling it from the legacy Telegram baseline silently discarded
@@ -45,8 +46,157 @@ function replaceCatalogProjection(source, table, columns) {
 }
 
 let code = coreNode.parameters.jsCode;
+// EXT workflows declare passthrough inputs.  An empty `defineBelow` mapping
+// replaces the item with `{}` in n8n, losing the validated tenant envelope.
+// Remove the stale UI mapping rather than manufacturing fields or coercing
+// types: passthrough preserves the complete original payload and its types.
+for (const node of workflow.nodes) {
+  if (['CORE | Executar EXT Royal 4x4 (CONFIGURAR ID)', 'Executar EXT Nubia (PREENCHER ID)'].includes(node.name)
+      && node.type === 'n8n-nodes-base.executeWorkflow') {
+    delete node.parameters.workflowInputs;
+  }
+}
+// Genesis has a second, bounded EXT call after the queue claim.  A Code node
+// cannot invoke a sub-workflow itself, so this node prepares only trusted
+// state and hands it to an explicit Execute Workflow node. It never sends,
+// persists commercial decisions, or retries a claim.
+const genesisPrepareName = 'CORE | Preparar dispatch Genesis';
+const genesisDispatchName = 'CORE | Executar EXT Genesis por turno';
+const genesisPrepareCode = `const input = $json || {};
+const policy = input.noria_client_policy || {};
+if (input.tenant_slug !== 'wesley_automoveis' || policy.contract !== 'noria_policy_v2'
+  || policy.tenant_id !== input.tenant_id || policy.tenant_slug !== input.tenant_slug) throw new Error('NORIA_TURN_DISPATCH_POLICY_INVALID');
+const base = String($env.SUPABASE_URL || '').replace(/\\/$/, ''), key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');
+if (!base || !key) throw new Error('NORIA_TURN_DISPATCH_DB_UNAVAILABLE');
+const headers={apikey:key,Authorization:'Bearer '+key};
+const post=(endpoint,body)=>this.helpers.httpRequest({method:'POST',url:base+'/rest/v1/'+endpoint,headers,body,json:true,timeout:7000});
+const get=endpoint=>this.helpers.httpRequest({method:'GET',url:base+'/rest/v1/'+endpoint,headers,json:true,timeout:7000});
+let claim=null;
+try {
+const claimResult=await post('rpc/magia_claim_turn',{p_tenant:input.tenant_id,p_chat:input.remoteJid});
+claim=claimResult;
+if (!claim?.claimed) return {json:{...input,noria_preclaimed_turn:claim,noria_dispatch_phase:'turn',noria_dispatch_skip:'queue_empty'}};
+const sessionId=String(claim.boundary_id||'');
+const messages=Array.isArray(claim.messages)?claim.messages:[];
+if (!sessionId || !messages.length || !String(claim.token||'')) throw new Error('NORIA_TURN_DISPATCH_CLAIM_INVALID');
+const leadRows=await get('sales_leads?select=id,stage_key,ai_locked,revision,state,product,session_id&tenant_id=eq.'+encodeURIComponent(input.tenant_id)+'&channel_type=eq.whatsapp&chat_id=eq.'+encodeURIComponent(input.remoteJid)+'&session_id=eq.'+encodeURIComponent(sessionId)+'&limit=1');
+const lead=Array.isArray(leadRows)?leadRows[0]||null:null;
+const eventRows=await get('channel_events?select=id,raw_payload,created_at,delivery_status&tenant_id=eq.'+encodeURIComponent(input.tenant_id)+'&channel_type=eq.whatsapp&external_conversation_id=eq.'+encodeURIComponent(input.remoteJid)+'&direction=eq.outbound&delivery_status=eq.sent&order=created_at.desc,id.desc&limit=31');
+const catalogEvent=(Array.isArray(eventRows)?eventRows:[]).find(row=>{
+  const raw=row?.raw_payload||{}, context=raw.catalog_context;
+  const delivered=row.delivery_status==='sent' && raw.conversation_session_id===sessionId;
+  const currentContext=context && context.contract==='noria_catalog_context_v1'
+    && context.session_id===sessionId && Array.isArray(context.products) && context.products.every(product=>String(product?.id||''));
+  // A legacy id-only payload needs durable proof of this exact session and a
+  // confirmed outbound event; a bare array must never cross session boundaries.
+  const verifiedLegacy=Array.isArray(raw.catalog_item_ids) && raw.catalog_item_ids.length>0
+    && Array.isArray(raw.grouped_message_ids) && raw.grouped_message_ids.length>0;
+  return delivered && (currentContext || verifiedLegacy);
+});
+const catalogContext=catalogEvent?.raw_payload?.catalog_context
+  || (catalogEvent?.raw_payload?.catalog_item_ids
+    ? {contract:'noria_catalog_context_v1',session_id:sessionId,displayed_at:catalogEvent.created_at||null,source:'verified_channel_event_catalog_item_ids_v1',products:catalogEvent.raw_payload.catalog_item_ids.map(id=>({id:String(id)}))}
+    : {products:[],displayed_at:null,source:'none'});
+const requestId=String(messages.at(-1)?.event_id||messages.at(-1)?.id||'')+':'+String(claim.token);
+return {json:{...input,noria_dispatch_phase:'turn',noria_preclaimed_turn:claim,noria_dispatch_skip:lead?.ai_locked===true?'human_locked':'',contract:'noria_business_operation_v1',operation:'conversation.evaluate',payload:{contract:'noria_business_operation_v1',operation:'conversation.evaluate',tenant_id:input.tenant_id,tenant_slug:input.tenant_slug,session_id:sessionId,request_id:requestId,turn:{message:messages.map(m=>String(m?.text||'')).join('\\n\\n'),grouped_messages:messages.map(m=>({id:m?.id||'',event_id:m?.event_id||'',text:String(m?.text||'')}))},commercial_state:{stage_key:lead?.stage_key||'',ai_locked:lead?.ai_locked===true,revision:Number(lead?.revision||0),state:lead?.state||{},product:lead?.product||null},catalog_context:catalogContext}}};
+} catch (error) {
+  // Return the claim through the existing queue contract. This makes a failed
+  // pre-dispatch retryable instead of leaving a processing lease behind.
+  if (claim?.claimed && String(claim.token||'')) {
+    try { await post('rpc/magia_finish_turn',{p_tenant:input.tenant_id,p_chat:input.remoteJid,p_token:claim.token,p_outcome:'retry'}); } catch (_) {}
+  }
+  return {json:{...input,noria_preclaimed_turn:{claimed:false,reason:'dispatch_preparation_failed'},noria_dispatch_phase:'turn',noria_dispatch_skip:'preparation_failed',noria_dispatch_error:{code:'TURN_DISPATCH_PREPARATION_FAILED',retryable:true}}};
+}`;
+new (Object.getPrototypeOf(async function(){}).constructor)('$json', '$env', '$vars', '$getWorkflowStaticData', genesisPrepareCode);
+let prepareNode = workflow.nodes.find(node => node.name === genesisPrepareName);
+if (!prepareNode) {
+  prepareNode = { id:'e31dc69b-23e6-4f95-8f42-dac70d6c7b10', name:genesisPrepareName,
+    type:'n8n-nodes-base.code', typeVersion:2, position:[1260,780],
+    parameters:{mode:'runOnceForEachItem',jsCode:genesisPrepareCode} };
+  workflow.nodes.push(prepareNode);
+} else prepareNode.parameters.jsCode = genesisPrepareCode;
+let dispatchNode = workflow.nodes.find(node => node.name === genesisDispatchName);
+if (!dispatchNode) {
+  dispatchNode = { id:'df82dc23-3ad7-442a-9275-d0d1fb80891f', name:genesisDispatchName,
+    type:'n8n-nodes-base.executeWorkflow', typeVersion:1.2, position:[1480,780],
+    parameters:{workflowId:{__rl:true,value:'fXGorIlPbyf9Qtsp',mode:'id',cachedResultUrl:'/workflow/fXGorIlPbyf9Qtsp'},mode:'each',options:{waitForSubWorkflow:true}} };
+  workflow.nodes.push(dispatchNode);
+}
+// Let the CORE observe a sub-workflow execution failure and return the
+// already-claimed messages through magia_finish_turn('retry').
+dispatchNode.onError = 'continueRegularOutput';
+workflow.connections[genesisPrepareName] = { main: [[{node:genesisDispatchName,type:'main',index:0}]] };
+workflow.connections[genesisDispatchName] = { main: [[{node:coreNode.name,type:'main',index:0}]] };
+if (workflow.connections['CORE | Executar EXT Gênesis']) workflow.connections['CORE | Executar EXT Gênesis'] = { main: [[{node:genesisPrepareName,type:'main',index:0}]] };
+const resolverNode = workflow.nodes.find(node => node.name === 'CORE - Resolver extensão do tenant');
+if (resolverNode?.parameters?.jsCode && !resolverNode.parameters.jsCode.includes("noria_dispatch_phase: 'bootstrap'")) {
+  resolverNode.parameters.jsCode = resolverNode.parameters.jsCode.replace("noria_router: 'core_3wf_v1'", "noria_router: 'core_3wf_v1', noria_dispatch_phase: 'bootstrap'");
+}
 code = code.includes(legacyRevision) ? applyFailureResilience(code, ts) : refreshFailureRuntime(code, ts);
 code = applyCommercialRegressions(code, ts);
+code = applySemanticIntent(code);
+// A failed post-claim EXT execution has no provider side effect. Preserve the
+// queue message for the next worker instead of treating it as a terminal core
+// processing failure. The generic stale fence remains terminal.
+const extDispatchRetryOld = "    const outcome = sendAttempted ? 'uncertain' : 'failed';";
+const extDispatchRetryNew = "    const outcome = sendAttempted ? 'uncertain'\n      : String(error?.message || '') === 'NORIA_EXT_DISPATCH_UNAVAILABLE' ? 'retry' : 'failed';";
+if (code.includes(extDispatchRetryOld)) code = code.replace(extDispatchRetryOld, extDispatchRetryNew);
+else if (!code.includes('NORIA_EXT_DISPATCH_UNAVAILABLE')) throw Error('EXT dispatch recovery insertion point missing');
+// "Disponível" must describe only the list shown, never guarantee stock.
+// Keep the familiar catalog lead while retaining the explicit confirmation
+// caveat required for announced (not verified) vehicles.
+const advertisedCatalogIntroOld = "if (advertised) intro='Estes são veículos anunciados pela loja (disponibilidade a confirmar):';";
+const advertisedCatalogIntroNew = "if (advertised) intro='Hoje temos estas opções de veículos disponíveis para consulta (disponibilidade a confirmar):';";
+if (code.includes(advertisedCatalogIntroOld)) code = code.replace(advertisedCatalogIntroOld, advertisedCatalogIntroNew);
+else if (!code.includes(advertisedCatalogIntroNew)) throw Error('Advertised catalog intro insertion point missing');
+// Preserve validated commercial evidence returned by an extension when the
+// shared CORE reloads live tenant settings.  This is deliberately a guarded
+// transformation because the reviewed workflow remains the base source.
+const businessContextMarker = '// core-extension-business-context-v1';
+if (!code.includes(businessContextMarker)) {
+  const contextReturn = '  return { tenant, settings: settingRows[0], agent: agentRows[0] || {}, channel: channelRows[0] };';
+  const contextReplacement = `  ${businessContextMarker}
+  const businessContext = inputJson.noria_business_context;
+  if (businessContext !== undefined && (!businessContext || typeof businessContext !== 'object'
+    || businessContext.contract !== 'noria_business_result_v1'
+    || businessContext.tenant_slug !== tenantSlug)) throw new Error('NORIA_BUSINESS_CONTEXT_INVALID');
+  return { tenant, settings: settingRows[0], agent: agentRows[0] || {}, channel: channelRows[0],
+    client_policy: tenantBusinessRules, noria_client_policy: tenantBusinessRules,
+    noria_business_context: businessContext || null, business_context: businessContext || null };`;
+  if (!code.includes(contextReturn)) throw Error('Tenant context return insertion point missing');
+  code = code.replace(contextReturn, contextReplacement);
+}
+const preclaimedTurnMarker = '// core-preclaimed-turn-dispatch-v1';
+const claimReplacement = `  ${preclaimedTurnMarker}
+  const preclaimed = inputJson.noria_preclaimed_turn;
+  if (preclaimed !== undefined) {
+    if (!preclaimed || typeof preclaimed !== 'object') throw new Error('NORIA_PRECLAIMED_TURN_INVALID');
+    turn = preclaimed;
+    if (turn.claimed === true) {
+      if (!Array.isArray(turn.messages) || !String(turn.token || '') || !String(turn.boundary_id || '')) throw new Error('NORIA_PRECLAIMED_TURN_INVALID');
+      const dispatched = inputJson.noria_business_context;
+      if (!dispatched || typeof dispatched !== 'object') {
+        if (inputJson.error) throw new Error('NORIA_EXT_DISPATCH_UNAVAILABLE');
+        throw new Error('NORIA_TURN_DISPATCH_STALE');
+      }
+      if (dispatched.phase === 'bootstrap' || dispatched.session_id !== turn.boundary_id
+        || !String(dispatched.request_id || '').endsWith(':' + String(turn.token))) throw new Error('NORIA_TURN_DISPATCH_STALE');
+    }
+  } else {
+    turn = await queueRpc('claim');
+  }
+  if (!turn.claimed) return { ok: true, skipped: true, reason: turn.reason };`;
+if (!code.includes(preclaimedTurnMarker)) {
+  const claimNeedle = "  turn = await queueRpc('claim');\n  if (!turn.claimed) return { ok: true, skipped: true, reason: turn.reason };";
+  if (!code.includes(claimNeedle)) throw Error('Queue claim insertion point missing');
+  code = code.replace(claimNeedle, claimReplacement);
+} else {
+  const existingStart = code.indexOf(preclaimedTurnMarker);
+  const existingEnd = code.indexOf("\n  if (!turn.claimed) return { ok: true, skipped: true, reason: turn.reason };", existingStart);
+  if (existingEnd < 0) throw Error('Existing preclaimed turn dispatch boundary missing');
+  const end = existingEnd + "\n  if (!turn.claimed) return { ok: true, skipped: true, reason: turn.reason };".length;
+  code = code.slice(0, existingStart - 2) + claimReplacement + code.slice(end);
+}
 code = replaceCatalogProjection(code, 'whatsapp_catalog_products', catalogProductColumns);
 code = replaceCatalogProjection(code, 'whatsapp_catalog_sync_state', catalogStateColumns);
 // Deterministic Genesis priority: a current WhatsApp catalog selection plus an

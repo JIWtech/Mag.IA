@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Clock3,
   Search,
@@ -6,6 +6,8 @@ import {
   X,
   Play,
   AlertTriangle,
+  RotateCcw,
+  CheckCircle2,
 } from 'lucide-react';
 import { Badge } from '../../../components/ui/Badge';
 import { PanelTitle } from '../../../components/ui/PanelTitle';
@@ -19,7 +21,14 @@ import {
   updateBroadcastRecipient,
   upsertBroadcastContacts,
 } from '../../../dataService';
-import { getAuthClient } from '../../../services/auth/authService.js';
+import { createBroadcastOperations } from '../../../services/broadcasts/broadcastOperations.js';
+import { executeBroadcastCampaign } from '../../../services/broadcasts/broadcastWorker.js';
+import {
+  RECIPIENT_STATUS,
+  CAMPAIGN_STATUS,
+  calculateCampaignCounters,
+} from '../../../services/broadcasts/broadcastStateMachine.js';
+import { getAuthClient, getCurrentSession } from '../../../services/auth/authService.js';
 import { sendN8nCommand } from '../../../services/integration.js';
 import { CHANNEL_OPTIONS } from '../../../services/tenants/tenantAccess.js';
 import {
@@ -42,6 +51,23 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
   const [stageFilter, setStageFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
+  const abortControllerRef = useRef(null);
+
+  const broadcastOps = useMemo(() => {
+    return createBroadcastOperations({
+      getClient: getAuthClient,
+      loadTenant: async (slug) => {
+        const supabase = getAuthClient();
+        if (!supabase) return null;
+        const { data } = await supabase.from('tenants').select('id, slug, status').eq('slug', slug).single();
+        return data || null;
+      },
+      currentUserId: async () => {
+        const session = await getCurrentSession();
+        return session?.user?.id || null;
+      },
+    });
+  }, []);
 
   const allContacts = useMemo(() => {
     const conversationContacts = conversations
@@ -135,15 +161,21 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
     setSelected(new Set());
   }
 
-  const interruptedCampaign = useMemo(() => {
-    return (campaigns || []).find((c) => c.status === 'sending');
+  // Detecta qualquer campanha em andamento, pausada ou com envios incertos a reconciliar
+  const recoverableCampaign = useMemo(() => {
+    return (campaigns || []).find((c) =>
+      c.status === CAMPAIGN_STATUS.SENDING ||
+      c.status === CAMPAIGN_STATUS.PAUSED ||
+      c.status === CAMPAIGN_STATUS.QUEUED ||
+      (c.status === CAMPAIGN_STATUS.PARTIAL_ERROR && (c.unknown_count > 0 || (c.sent_count || 0) < (c.total_recipients || 0)))
+    );
   }, [campaigns]);
 
   useEffect(() => {
     if (!busy) return undefined;
     const handleBeforeUnload = (event) => {
       event.preventDefault();
-      event.returnValue = 'Um disparo de mensagens está em andamento. Fechar a aba interromperá o envio, que poderá ser retomado depois.';
+      event.returnValue = 'Um disparo de mensagens está em processamento persistido. Fechar a aba pausará o envio local sem risco de duplicatas, e a campanha poderá ser retomada.';
       return event.returnValue;
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -153,93 +185,93 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
   async function resumeCampaign(campaignToResume) {
     if (busy || !campaignToResume) return;
     setBusy(true);
-    setStatus(`Retomando campanha "${campaignToResume.name}"...`);
-    let sent = campaignToResume.sent_count || 0;
-    let failed = campaignToResume.failed_count || 0;
-    const BROADCAST_TICKRATE_MS = 1200;
+    setStatus(`Retomando campanha "${campaignToResume.name}" de forma segura...`);
+
+    const abortController = typeof window !== 'undefined' && window.AbortController ? new window.AbortController() : null;
+    abortControllerRef.current = abortController;
 
     try {
-      const supabase = getAuthClient();
-      let dbRecipients = [];
-      if (supabase) {
-        const { data: recData } = await supabase
-          .from('broadcast_campaign_recipients')
-          .select('*')
-          .eq('campaign_id', campaignToResume.id);
-        dbRecipients = recData || [];
-      }
-      const pendingRecipients = dbRecipients.filter((r) => r.status !== 'sent');
+      // 1. Recupera leases órfãs ('claimed' -> 'queued'; 'sending' -> 'unknown')
+      await broadcastOps.recoverStaleLeases(campaignToResume.id);
 
-      if (!pendingRecipients.length) {
-        await updateBroadcastCampaign(campaignToResume.id, {
-          status: failed ? 'partial_error' : 'sent',
-          sent_count: sent,
-          failed_count: failed,
-          sent_at: new Date().toISOString(),
-        });
-        setStatus(`Campanha concluída: ${sent} enviados.`);
-        await onChanged?.();
-        return;
-      }
+      // 2. Dispara sinalização ao backend/n8n se disponível
+      sendN8nCommand('broadcast_resume', {
+        campaign_id: campaignToResume.id,
+        tenant_slug: tenantSlug,
+      }, tenantSlug).catch(() => {});
 
-      for (let i = 0; i < pendingRecipients.length; i += 1) {
-        const recipient = pendingRecipients[i];
-        if (recipient.status === 'sent') {
-          sent += 1;
-          continue;
-        }
-        if (i > 0) {
-          setStatus(`Intervalo anti-bloqueio... retomando ${i + 1} de ${pendingRecipients.length}`);
-          await new Promise((resolve) => window.setTimeout(resolve, BROADCAST_TICKRATE_MS));
-        }
-        try {
-          await updateBroadcastRecipient(campaignToResume.id, recipient.external_conversation_id, { status: 'sending' });
-          const result = await sendN8nCommand('broadcast_send', {
-            channel_type: recipient.channel_type || defaultChannel,
-            external_conversation_id: recipient.external_conversation_id,
-            contact_name: recipient.contact_name || 'Contato',
-            message_text: campaignToResume.message_text || campaignToResume.message_template || messageText,
-            sent_by_user: 'Disparo NORIA (Retomada)',
-          }, tenantSlug);
-          sent += 1;
-          await updateBroadcastRecipient(campaignToResume.id, recipient.external_conversation_id, {
-            status: 'sent',
-            sent_at: new Date().toISOString(),
-            external_message_id: result.external_message_id || null,
-          });
-          setStatus(`Retomando: ${sent} enviados, ${failed} falhas...`);
-        } catch (error) {
-          failed += 1;
-          await updateBroadcastRecipient(campaignToResume.id, recipient.external_conversation_id, {
-            status: 'failed',
-            error: error.message || String(error),
-          }).catch(() => {});
-        }
-      }
-
-      await updateBroadcastCampaign(campaignToResume.id, {
-        status: failed ? 'partial_error' : 'sent',
-        sent_count: sent,
-        failed_count: failed,
-        sent_at: new Date().toISOString(),
+      // 3. Executa o worker via leases atômicas estritas
+      const message = campaignToResume.message_text || campaignToResume.message_template || messageText;
+      await executeBroadcastCampaign({
+        campaignId: campaignToResume.id,
+        tenantSlug,
+        messageText: message,
+        defaultChannel: campaignToResume.channel_type || defaultChannel,
+        sendCommand: sendN8nCommand,
+        operations: broadcastOps,
+        abortSignal: abortController?.signal,
+        delayMs: 1200,
+        onProgress: ({ message: stepMessage }) => {
+          setStatus(stepMessage || 'Aguardando próximo envio...');
+        },
       });
-      setStatus(`Campanha concluída: ${sent} enviados, ${failed} falhas.`);
+
+      const finalRecipients = await broadcastOps.getBroadcastCampaignRecipients(campaignToResume.id);
+      const counters = calculateCampaignCounters(finalRecipients);
+
+      setStatus(`Retomada concluída: ${counters.sent} enviados, ${counters.failed} falhas${counters.unknown ? `, ${counters.unknown} incertos` : ''}.`);
       await onChanged?.();
     } catch (error) {
       setStatus(error.message || 'Falha ao retomar campanha.');
     } finally {
       setBusy(false);
+      abortControllerRef.current = null;
     }
   }
 
   async function cancelCampaign(campaignToCancel) {
     if (!campaignToCancel || busy) return;
+    setBusy(true);
     try {
-      await updateBroadcastCampaign(campaignToCancel.id, { status: 'cancelled' });
-      setStatus(`Campanha "${campaignToCancel.name}" cancelada.`);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const res = await broadcastOps.cancelBroadcastCampaign(campaignToCancel.id);
+
+      sendN8nCommand('broadcast_cancel', {
+        campaign_id: campaignToCancel.id,
+        tenant_slug: tenantSlug,
+      }, tenantSlug).catch(() => {});
+
+      setStatus(`Campanha "${campaignToCancel.name}" cancelada (${res.cancelled_recipients || 0} pendentes cancelados).`);
       await onChanged?.();
     } catch (error) {
-      setStatus('Erro ao cancelar campanha.');
+      setStatus(error.message || 'Erro ao cancelar campanha.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reconcileUnknownRecipients(campaignToReconcile, targetStatus = RECIPIENT_STATUS.FAILED) {
+    if (!campaignToReconcile || busy) return;
+    setBusy(true);
+    try {
+      const recipients = await broadcastOps.getBroadcastCampaignRecipients(campaignToReconcile.id);
+      const unknownList = recipients.filter((r) => r.status === RECIPIENT_STATUS.UNKNOWN);
+      for (const rec of unknownList) {
+        await broadcastOps.reconcileUnknownRecipient(
+          campaignToReconcile.id,
+          rec.id,
+          targetStatus,
+          'Reconciliado manualmente pelo operador no painel'
+        );
+      }
+      setStatus(`${unknownList.length} envio(s) incertos reconciliados como ${targetStatus === RECIPIENT_STATUS.SENT ? 'enviados' : 'falha'}.`);
+      await onChanged?.();
+    } catch (error) {
+      setStatus(error.message || 'Falha ao reconciliar envios incertos.');
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -247,89 +279,83 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
     const text = messageText.trim();
     if (!text || !selectedContacts.length || busy) return;
     setBusy(true);
-    setStatus('Preparando disparo...');
-    let sent = 0;
-    let failed = 0;
+    setStatus('Persistindo campanha e destinatários no servidor...');
+
     let campaign = null;
+    const abortController = typeof window !== 'undefined' && window.AbortController ? new window.AbortController() : null;
+    abortControllerRef.current = abortController;
+
     try {
       const savedContacts = await upsertBroadcastContacts(tenantSlug, selectedContacts);
       const recipients = mergeBroadcastContacts(savedContacts, selectedContacts);
+
       campaign = await createBroadcastCampaign(tenantSlug, {
         name: campaignName.trim() || `Disparo ${new Date().toLocaleDateString('pt-BR')}`,
         message_template: text,
+        messageText: text,
         channelType: defaultChannel,
         total_recipients: recipients.length,
-        status: 'sending',
+        status: CAMPAIGN_STATUS.SENDING,
       }, recipients);
 
-      const BROADCAST_TICKRATE_MS = 1200;
+      setStatus('Campanha persistida. Despachando lote com chave de idempotência...');
 
-      for (let i = 0; i < recipients.length; i += 1) {
-        const contact = recipients[i];
-        if (contact.status === 'sent' || contact.sent) {
-          sent += 1;
-          continue;
-        }
-        if (i > 0) {
-          setStatus(`Intervalo anti-bloqueio... enviando ${i + 1} de ${recipients.length}`);
-          await new Promise((resolve) => window.setTimeout(resolve, BROADCAST_TICKRATE_MS));
-        }
-        try {
-          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, { status: 'sending' });
-          const result = await sendN8nCommand('broadcast_send', {
-            channel_type: contact.channel_type || contact.channelType || defaultChannel,
-            external_conversation_id: contact.external_conversation_id || contact.externalConversationId,
-            contact_name: contact.name || contact.contact_name || 'Contato',
-            message_text: text,
-            sent_by_user: 'Disparo NORIA',
-          }, tenantSlug);
-          sent += 1;
-          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
-            status: 'sent',
-            sent_at: new Date().toISOString(),
-            external_message_id: result.external_message_id || null,
-          });
-          setStatus(`Enviando ${i + 1} de ${recipients.length} (${sent} enviados, ${failed} falhas)...`);
-        } catch (error) {
-          failed += 1;
-          await updateBroadcastRecipient(campaign.id, contact.external_conversation_id || contact.externalConversationId, {
-            status: 'failed',
-            error: error.message || String(error),
-          }).catch(() => {});
-        }
-      }
+      // Dispara sinalização ao backend/n8n se disponível
+      sendN8nCommand('broadcast_start', {
+        campaign_id: campaign.id,
+        tenant_slug: tenantSlug,
+      }, tenantSlug).catch(() => {});
 
-      await updateBroadcastCampaign(campaign.id, {
-        status: failed ? 'partial_error' : 'sent',
-        sent_count: sent,
-        failed_count: failed,
-        sent_at: new Date().toISOString(),
+      // Executa o processador durável via leases atômicas
+      await executeBroadcastCampaign({
+        campaignId: campaign.id,
+        tenantSlug,
+        messageText: text,
+        defaultChannel,
+        sendCommand: sendN8nCommand,
+        operations: broadcastOps,
+        abortSignal: abortController.signal,
+        delayMs: 1200,
+        onProgress: ({ phase, message: stepMessage }) => {
+          if (phase === 'pacing' || phase === 'sending') {
+            setStatus(stepMessage || 'Aguardando próximo envio...');
+          } else if (phase === 'item_completed') {
+            setStatus('Processando destinatários persistidos...');
+          }
+        },
       });
-      setStatus(`Disparo concluido: ${sent} enviados, ${failed} falhas.`);
+
+      const finalRecipients = await broadcastOps.getBroadcastCampaignRecipients(campaign.id);
+      const finalCounters = calculateCampaignCounters(finalRecipients);
+
+      setStatus(`Disparo concluído: ${finalCounters.sent} enviados, ${finalCounters.failed} falhas${finalCounters.unknown ? `, ${finalCounters.unknown} incertos` : ''}.`);
       setMessageText('');
       setCampaignName('');
       setSelected(new Set());
       await onChanged?.();
     } catch (error) {
       if (campaign?.id) {
-        await updateBroadcastCampaign(campaign.id, { status: 'failed', failed_count: selectedContacts.length }).catch(() => {});
+        await broadcastOps.updateBroadcastCampaign(campaign.id, {
+          status: CAMPAIGN_STATUS.PARTIAL_ERROR,
+        }).catch(() => {});
       }
       setStatus(error.message || 'Falha ao executar disparo.');
     } finally {
       setBusy(false);
+      abortControllerRef.current = null;
     }
   }
 
   return (
     <section className="broadcast-page">
       <section className="panel broadcast-campaign-panel">
-        {interruptedCampaign && (
+        {recoverableCampaign && (
           <div className="broadcast-interrupted-banner" style={{
             margin: '0 0 1.25rem 0',
             padding: '1rem 1.25rem',
             borderRadius: '10px',
-            background: 'rgba(59, 130, 246, 0.08)',
-            border: '1px solid rgba(59, 130, 246, 0.25)',
+            background: recoverableCampaign.unknown_count > 0 ? 'rgba(245, 158, 11, 0.08)' : 'rgba(59, 130, 246, 0.08)',
+            border: recoverableCampaign.unknown_count > 0 ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid rgba(59, 130, 246, 0.25)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -338,27 +364,57 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
           }}>
             <div>
               <div style={{ fontWeight: 600, color: '#f1f5f9', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Clock3 size={16} color="#3b82f6" />
-                <span>Campanha em andamento / recuperada: <strong>{interruptedCampaign.name}</strong></span>
+                {recoverableCampaign.unknown_count > 0 ? (
+                  <AlertTriangle size={16} color="#f59e0b" />
+                ) : (
+                  <Clock3 size={16} color="#3b82f6" />
+                )}
+                <span>
+                  {recoverableCampaign.unknown_count > 0
+                    ? `Campanha com envios incertos: ${recoverableCampaign.name}`
+                    : `Campanha em andamento / recuperável: ${recoverableCampaign.name}`}
+                </span>
               </div>
               <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: '#94a3b8' }}>
-                {interruptedCampaign.sent_count || 0} de {interruptedCampaign.total_recipients || 0} enviados. A campanha foi preservada com segurança e pode ser retomada sem duplicar mensagens.
+                {recoverableCampaign.sent_count || 0} de {recoverableCampaign.total_recipients || 0} enviados
+                {recoverableCampaign.failed_count ? `, ${recoverableCampaign.failed_count} falhas` : ''}
+                {recoverableCampaign.unknown_count ? `, ${recoverableCampaign.unknown_count} incertos` : ''}.
+                Destinatários já processados são preservados e nunca serão duplicados.
               </p>
+              {recoverableCampaign.unknown_count > 0 && (
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: '#fbbf24' }}>
+                  Aviso: {recoverableCampaign.unknown_count} destinatário(s) tiveram envio incerto. Para prevenir mensagens repetidas no WhatsApp, eles não serão reenviados automaticamente.
+                </p>
+              )}
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => resumeCampaign(interruptedCampaign)}
-                disabled={busy}
-                style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
-              >
-                <Play size={13} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Retomar envio
-              </button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {(recoverableCampaign.sent_count || 0) < (recoverableCampaign.total_recipients || 0) && (
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => resumeCampaign(recoverableCampaign)}
+                  disabled={busy}
+                  style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
+                >
+                  <Play size={13} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Retomar envio
+                </button>
+              )}
+              {recoverableCampaign.unknown_count > 0 && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => reconcileUnknownRecipients(recoverableCampaign, RECIPIENT_STATUS.FAILED)}
+                  disabled={busy}
+                  style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem', borderColor: 'rgba(245, 158, 11, 0.4)' }}
+                  title="Conclui os envios incertos marcando-os como falha para não reenviar"
+                >
+                  <RotateCcw size={13} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Concluir incertos
+                </button>
+              )}
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => cancelCampaign(interruptedCampaign)}
+                onClick={() => cancelCampaign(recoverableCampaign)}
                 disabled={busy}
                 style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
               >
@@ -369,7 +425,7 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
         )}
         <div className="broadcast-campaign-heading">
           <h2>Nova campanha</h2>
-          <p>Defina o público, escreva sua mensagem e prepare o envio.</p>
+          <p>Defina o público, escreva sua mensagem e prepare o envio persistido.</p>
         </div>
         <div className="broadcast-grid">
           <div className="broadcast-contacts">
@@ -407,9 +463,25 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
               {campaigns.map((campaign) => {
                 const date = campaign.sent_at || campaign.created_at;
                 const metadata = date ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(date)) : 'Sem data';
-                const statusLabel = campaign.status === 'sent' ? 'Concluída' : campaign.status === 'partial_error' ? 'Parcial' : campaign.status === 'failed' ? 'Falhou' : 'Enviando';
-                const statusTone = campaign.status === 'sent' ? 'ia_ativa' : campaign.status === 'failed' ? 'humano' : 'channel';
-                return <article className="campaign-card" key={campaign.id}><div><strong>{campaign.name}</strong><span>{metadata} · {campaign.total_recipients || 0} destinatários</span></div><Badge value={statusLabel} status={statusTone} /></article>;
+                const statusLabel =
+                  campaign.status === 'sent' ? 'Concluída' :
+                  campaign.status === 'partial_error' ? 'Parcial' :
+                  campaign.status === 'failed' ? 'Falhou' :
+                  campaign.status === 'cancelled' ? 'Cancelada' :
+                  campaign.status === 'paused' ? 'Pausada' : 'Enviando';
+                const statusTone =
+                  campaign.status === 'sent' ? 'ia_ativa' :
+                  campaign.status === 'failed' || campaign.status === 'cancelled' ? 'humano' :
+                  campaign.status === 'partial_error' ? 'qualificacao' : 'channel';
+                return (
+                  <article className="campaign-card" key={campaign.id}>
+                    <div>
+                      <strong>{campaign.name}</strong>
+                      <span>{metadata} · {campaign.total_recipients || 0} destinatários{campaign.unknown_count ? ` (${campaign.unknown_count} incertos)` : ''}</span>
+                    </div>
+                    <Badge value={statusLabel} status={statusTone} />
+                  </article>
+                );
               })}
               {!campaigns.length && <EmptyState title="Sem campanhas" text="Os disparos realizados ficarão registrados aqui." compact />}
             </>}

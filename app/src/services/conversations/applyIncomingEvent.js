@@ -226,7 +226,11 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
       latestFollowUpAt: nextFollowUpAt,
     };
 
-    applyConversationLifecycle(updated, event, stageName);
+    // Realtime can deliver old assignment events after newer AI activity. They
+    // remain in the timeline, but must not replace the current control state.
+    if (isNewer || Number.isNaN(eventTime)) {
+      applyConversationLifecycle(updated, event, stageName);
+    }
 
     updated.waitingForFollowUp = isConversationWaitingForFollowUp(updated);
     updated.waitingSince = updated.waitingForFollowUp ? updated.latestFollowUpAt : null;

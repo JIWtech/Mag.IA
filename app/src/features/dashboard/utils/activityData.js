@@ -68,7 +68,8 @@ function getFirstResponseSeconds(conversation) {
   const inboundIndex = orderedMessages.findIndex((message) => message.from === 'contact');
   if (inboundIndex < 0) return null;
   const inbound = orderedMessages[inboundIndex];
-  const response = orderedMessages.slice(inboundIndex + 1).find((message) => message.from === 'ai' || message.from === 'agent');
+  // Exclusivo da IA: mede o tempo até a primeira resposta da IA
+  const response = orderedMessages.slice(inboundIndex + 1).find((message) => message.from === 'ai');
   if (!response) return null;
   return Math.max(0, Math.round((response.parsedAt - inbound.parsedAt) / 1000));
 }

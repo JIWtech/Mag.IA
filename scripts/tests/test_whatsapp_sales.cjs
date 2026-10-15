@@ -6,6 +6,7 @@ const vm=require('node:vm');
 const root=path.resolve(__dirname,'../..');
 const sales=JSON.parse(fs.readFileSync(path.join(root,'clients/wesley_automoveis/sales.json')));
 const inventory=JSON.parse(fs.readFileSync(path.join(root,'clients/wesley_automoveis/estoque_referencia.json'))).vehicles;
+const genesisEngine=require(path.join(root,'clients/wesley_automoveis/genesisCommercialEngine.cjs'));
 const stockFor=rows=>{
   const genesis=rows.some(v=>v.status!==undefined||v.observations!==undefined);
   const columns=genesis?['MODELO','MARCA','PRECO','COR','KM','ANO','COMBUSTIVEL','STATUS','OBSERVAÇÕES']:['MODELO','MARCA','PRECO','COR','KM','ANO','COMBUSTIVEL'];
@@ -52,7 +53,7 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
   collect=false,media=false,ocr=null,imageClassification='vehicle_photo',visualKinds=null,visualFinishReason='STOP',documents=[],sendError=false,inboundPayloads={},mediaPatchFailure=false,teamAgents=undefined,contactName='Maria',contact=null,
   followUpEnabled=false,salesFollowUp=null,followUpFailure=false,followUpJobsScheduled=1,
   audioEnabled=false,audioTranscript='teste',boundary=null,boundaryId=boundary?'close-1':'initial',businessFacts=null,
-  hotLeadPercent=20,messageIds=null,messageRawPayloads=[],inventoryRows=inventory,tenantSlug='sales',dialoguePlan=null,dialogueReview=null}={}) {
+  hotLeadPercent=20,messageIds=null,messageRawPayloads=[],inventoryRows=inventory,tenantSlug='sales',dialoguePlan=null,dialogueReview=null,primaryFinishReason='STOP'}={}) {
   const calls=[],sent=[],saved=[];let generated=0,reads=0,currentLead=lead;
   const turnPayloads=Object.fromEntries(texts.map((_,i)=>{
     const eventId=messageIds?.[i]?.event_id||'e'+i;
@@ -65,6 +66,56 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
     sales:{...sales,collect_documents:collect,...(collect?{}:{hot_lead_rule:''})},
     follow_up_enabled:followUpEnabled,
     ...(salesFollowUp?{sales_follow_up:salesFollowUp}:{})};
+  const extensionText=texts.join(' ');
+  // `inventoryRows` mirrors the legacy fixture; normalize it into the EXT
+  // contract shape exactly as its authenticated sheet parser would.
+  const extensionInventory=inventoryRows.map(row=>{
+    const brand=String(row.brand||'').trim(),model=String(row.model||'').trim(),color=String(row.color||'').trim();
+    const id=row.id||[brand,model,row.year||'',color].map(genesisEngine.normalizeText).join('|');
+    return {...row,id,name:row.name||[brand,model].filter(Boolean).join(' '),commercial_name:row.commercial_name||genesisEngine.formatCommercialName(brand,model,row.year),status:row.status||'listed',offerable:row.offerable!==false && !/vendido|sold|reservado|indisponivel/i.test(String(row.status||'')),availability_verified:row.availability_verified===true};
+  });
+  // Mirror the trusted Core preparer: prefer the persisted snapshot, with a
+  // read-only compatibility projection for historical test fixtures that only
+  // stored ordered ids. The id, never the current row position, is the key.
+  const catalogEvent=[...history].reverse().find(row=>row.direction==='outbound'&&(
+    row.raw_payload?.catalog_context?.session_id===boundaryId || Array.isArray(row.raw_payload?.catalog_item_ids)));
+  const catalogContext=catalogEvent?.raw_payload?.catalog_context
+    || (Array.isArray(catalogEvent?.raw_payload?.catalog_item_ids)
+      ? {contract:'noria_catalog_context_v1',session_id:boundaryId,displayed_at:catalogEvent.created_at||null,source:'channel_event_catalog_item_ids_v1',products:catalogEvent.raw_payload.catalog_item_ids.map(id=>({id:String(id)}))}
+      : null);
+  let resolvedSelection=genesisEngine.resolveSelection(extensionText,extensionInventory,catalogContext);
+  if (resolvedSelection.product?.id) {
+    const current=extensionInventory.find(row=>row.id===resolvedSelection.product.id)||null;
+    resolvedSelection={...resolvedSelection,product:current,unavailable:!current||current.offerable!==true};
+  }
+  const persistedProductId=String(lead?.state?.product_id||lead?.product?.id||'');
+  const persistedProduct=persistedProductId?extensionInventory.find(row=>row.id===persistedProductId)||null:null;
+  const unresolvedSelection=resolvedSelection.ambiguous===true||resolvedSelection.invalid===true||resolvedSelection.unavailable===true;
+  const unavailableSelection=(resolvedSelection.product && resolvedSelection.product.offerable!==true)
+    ||(!resolvedSelection.product && persistedProduct && persistedProduct.offerable!==true);
+  const effectiveProduct=unresolvedSelection||unavailableSelection?null:resolvedSelection.product||persistedProduct;
+  const conversationFacts={contract:'noria_genesis_conversation_facts_v1',
+    selection_status:unresolvedSelection?'unresolved':unavailableSelection?'unavailable':effectiveProduct?'resolved':'none',
+    selection_source:unresolvedSelection?'ambiguous_or_invalid':unavailableSelection?'no_longer_offerable':resolvedSelection.product?'current_turn':persistedProduct?'persisted_lead':'none',
+    selected_product:effectiveProduct?{
+      id:effectiveProduct.id,name:effectiveProduct.name,brand:effectiveProduct.brand,model:effectiveProduct.model,
+      year:effectiveProduct.year,category:effectiveProduct.category,color:effectiveProduct.color||null,
+      km:effectiveProduct.km??null,fuel:effectiveProduct.fuel||null,
+      observations:effectiveProduct.observations||null,price_cents:effectiveProduct.price_cents??null,
+      price_source:effectiveProduct.price_source,status:effectiveProduct.status,
+      availability_verified:effectiveProduct.availability_verified===true,
+    }:null};
+  const extensionContext=stockError
+    ? {contract:'noria_business_result_v1',tenant_slug:tenantSlug,error:{code:'INVENTORY_CREDENTIALS_UNAVAILABLE',retryable:false,message:'Estoque autorizado indisponível'}}
+    : {contract:'noria_business_result_v1',tenant_slug:tenantSlug,inventory:extensionInventory,
+      offerable_catalog:genesisEngine.filterOfferableCatalog(extensionInventory,'all'),
+      catalog_filters:{all:genesisEngine.filterOfferableCatalog(extensionInventory,'all'),cars:genesisEngine.filterOfferableCatalog(extensionInventory,'cars'),motorcycles:genesisEngine.filterOfferableCatalog(extensionInventory,'motorcycles')},
+      resolved_selection:resolvedSelection,
+      ...(tenantSlug==='wesley_automoveis'?{conversation_facts:conversationFacts}:{}),
+      auction:tenantSlug==='wesley_automoveis'
+        ? genesisEngine.evaluateAuctionHandoff(extensionText,lead?.state||{},extensionInventory,effectiveProduct)
+        : null,
+      financing:genesisEngine.isFinancingQuestion(extensionText)?{active:true,reply:genesisEngine.formatFinancingReply(extensionText,effectiveProduct)}:{active:false,reply:null},operations:{}};
   const request=async({url,method,body})=>{
     calls.push({url,method,body});const u=new URL(url),table=u.pathname.split('/').at(-1);
     assert.ok(!/appointments|appointment_/.test(u.pathname),'Sales cannot access appointments');
@@ -89,7 +140,16 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
       const schema=body.generationConfig?.responseSchema?.properties||{};
       if(dialogueReview&&schema.ok&&schema.current_act) return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(dialogueReview)}]}}]};
       if(dialoguePlan&&schema.requests&&schema.memory) return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(dialoguePlan)}]}}]};
-      generated++;return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(response)}]}}]};
+      generated++;
+      // Genesis now receives dialogue_plan and semantic_intent in the primary
+      // structured response. Keep legacy fixtures explicit degraded inputs,
+      // while a supplied dialoguePlan models the single-call contract.
+      const primaryResponse=schema.semantic_intent
+        ? {...response,
+          dialogue_plan:response.dialogue_plan||dialoguePlan||{requests:[],next_requirement:'none',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'},
+          semantic_intent:response.semantic_intent||{primary_intent:'other',secondary_intents:[],topics:[],catalog:{requested:false,category:'unspecified',price_min_cents:null,price_max_cents:null,preferences:[],exclusions:[],evidence_ids:[]},references:{previous_catalog:false,selected_ordinal:null,mentioned_product_ids:[],evidence_ids:[]},conversation:{continues_previous_topic:false,changes_preference:false,requires_clarification:false},ambiguities:[],confidence:'low'}}
+        : response;
+      return {candidates:[{finishReason:primaryFinishReason,content:{parts:[{text:JSON.stringify(primaryResponse)}]}}]};
     }
     if(table==='tenants')return [{id:'tenant-sales',slug:tenantSlug,status:'active',name:'Sales'}];
     if(table==='tenant_settings')return [{settings}];
@@ -160,7 +220,7 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
   };
   const result=await new AsyncFunction('$json','$env','$vars','$getWorkflowStaticData',code).call({helpers:{httpRequest:request}},
     {tenant_slug:tenantSlug,tenant_id:'tenant-sales',remoteJid:'5511999999999@s.whatsapp.net',instance:'sales-instance',
-      noria_client_policy:{profile:'vehicle_sales_v1',capability:'sales_v1',contract:'noria_policy_v2',tenant_slug:tenantSlug,tenant_id:'tenant-sales',audio_enabled:audioEnabled,scheduling_enabled:false,modules:{}}},
+      noria_client_policy:{profile:'vehicle_sales_v1',capability:'sales_v1',contract:'noria_policy_v2',tenant_slug:tenantSlug,tenant_id:'tenant-sales',audio_enabled:audioEnabled,scheduling_enabled:false,modules:{}},noria_business_context:extensionContext},
     {SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake',GEMINI_ENABLED:'true',GEMINI_API_KEY:'fake',
       EVOLUTION_API_URL_SALES:'https://evo.test',EVOLUTION_API_KEY_SALES:'fake',EVOLUTION_INSTANCE_SALES:'sales-instance',
       EVOLUTION_API_URL_WESLEY_AUTOMOVEIS:'https://evo.test',EVOLUTION_API_KEY_WESLEY_AUTOMOVEIS:'fake',EVOLUTION_INSTANCE_WESLEY_AUTOMOVEIS:'sales-instance'}, {},()=>({}));
@@ -266,8 +326,15 @@ test('ambiguous PCX in inventory without color or year clears candidate and cont
   assert.equal(r.saved[0].p_register,false);
   assert.equal(r.result.handoff,false, 'tolerant validation keeps qualifying without human handoff');
 });
-test('price changed during registration does not confirm an interest at stale price',async()=>{
-  const r=await run({priceChanged:true});assert.equal(r.saved[0].p_register,false);assert.doesNotMatch(r.sent[0],/foi registrado/);
+test('CORE registra somente o snapshot autorizado retornado pela EXT, sem reler a planilha',async()=>{
+  // `priceChanged` only changes the old direct-GViz mock after its first read.
+  // The Core no longer reads Sheets: the post-claim EXT owns that I/O and
+  // hands an authorised snapshot to the Core. A later price change therefore
+  // starts a new turn instead of being silently mixed into this one.
+  const r=await run({priceChanged:true});
+  assert.equal(r.saved[0].p_register,true);
+  assert.equal(r.saved[0].p_product.price_cents,4298000);
+  assert.equal(r.calls.some(call=>call.url.includes('docs.google.com')),false);
 });
 test('CPF/CNH required by tenant do not disappear behind a register action',async()=>{
   const r=await run({collect:true});assert.equal(r.saved[0].p_register,false);assert.match(r.sent[0],/CNH/);
@@ -2767,4 +2834,525 @@ test('Genesis classifica leilao por intencao, preserva produto e transfere com c
   const isolated=await run({tenantSlug:'sales',texts:['Voces compram carro de leilao?'],inventoryRows:genesisInventory,
     response:{action:'reply',reason:'none',reply:'Resposta regular',state:blank}});
   assert.equal(auctionPayload(isolated),undefined);
+});
+
+test('Caso Jeferson: selecao 6, textual essa sexta ou a CB resolve Honda CB 600RR com preco oficial e sem unbound_amount', async () => {
+  const genesisInventory = [
+    { model: 'Tornado 300L', brand: 'Honda', price_cents: 2898000, color: 'Vermelho', km: 4500, year: 2015, fuel: 'Flex', status: 'ANUNCIADO', observations: '' },
+    { model: 'PCX', brand: 'Honda', price_cents: 1898000, color: 'Branca', km: 12500, year: 2023, fuel: 'Flex', status: 'ANUNCIADO', observations: '' },
+    { model: 'Crosser', brand: 'Yamaha', price_cents: 1498000, color: 'Preto', km: 70000, year: 2021, fuel: 'Flex', status: 'VENDIDO', observations: '' },
+    { model: 'Sandero GT Line', brand: 'Renault', price_cents: 4298000, color: 'Branco', km: 138600, year: 2016, fuel: 'Flex GNV', status: 'ANUNCIADO', observations: '' },
+    { model: 'Civic LXS', brand: 'Honda', price_cents: 4898000, color: 'Cinza', km: 110000, year: 2012, fuel: 'Flex', status: 'ANUNCIADO', observations: '' },
+    { model: 'Crosser', brand: 'Yamaha', price_cents: 1798000, color: 'Azul', km: 15000, year: 2023, fuel: 'Flex', status: 'DISPONIVEL', observations: '' },
+    { model: 'CB 600RR', brand: 'Honda', price_cents: 3498000, color: 'Vermelho', km: 28000, year: 2007, fuel: 'Gasolina', status: 'ANUNCIADO', observations: '' },
+  ];
+
+  const cbProductId = 'honda|cb 600rr|2007|vermelho';
+  const cbState = {
+    ...blank,
+    intent: 'buy',
+    transaction_mode: 'buy',
+    product_id: cbProductId,
+    buy_interest: { ...blank.buy_interest, brand: 'Honda', model: 'CB 600RR', year: 2007, product_id: cbProductId },
+  };
+
+  const dialoguePlan = { requests: [], next_requirement: 'none', memory: { trade_in_status: 'none', evidence_ids: [], vehicle_kind: 'unknown', vehicle_kind_evidence_ids: [] }, human_requested: false, handoff_reason: 'none' };
+  const dialogueReview = { ok: true, issues: [], catalog_scope: { audience: 'unspecified', evidence_id: '', quote: '' }, current_topics: ['other'],
+    current_act: { human_requested: false, entry_offered: false, entry_declined: false, entry_kind_corrected: false, purchase_changed: false, needs_clarification: false, catalog_list_requested: false, price_requested: false },
+    purchase_product_id: '', purchase_reference_quote: '', customer_deposit: { amount_cents: null, evidence_id: '', quote: '' } };
+
+  const catalogItemIds = [
+    'honda|tornado 300l|2015|vermelho',
+    'honda|pcx|2023|branca',
+    'renault|sandero gt line|2016|branco',
+    'honda|civic lxs|2012|cinza',
+    'yamaha|crosser|2023|azul',
+    'honda|cb 600rr|2007|vermelho',
+  ];
+  const catalogText = 'Claro! Hoje temos estas opções:\n1. Honda Tornado 300L\n2. Honda PCX\n3. Renault Sandero GT Line\n4. Honda Civic LXS\n5. Yamaha Crosser\n6. Honda CB 600RR';
+  const catalogPayload = {
+    catalog_item_ids: catalogItemIds,
+    pending_requirement: 'purchase_product',
+  };
+
+  // Turn 1: Customer selects ordinal '6' -> Resolved to CB 600RR with official price
+  const turn1 = await run({
+    tenantSlug: 'wesley_automoveis',
+    texts: ['6'],
+    inventoryRows: genesisInventory,
+    dialoguePlan,
+    dialogueReview: { ...dialogueReview, purchase_product_id: cbProductId },
+    history: [
+      { id: 'a0', direction: 'outbound', ai_provider: 'sales_core', message_text: catalogText, raw_payload: catalogPayload },
+    ],
+    response: {
+      action: 'reply',
+      reason: 'none',
+      reply: 'A CB 600RR está anunciada por R$ 34.980,00',
+      state: cbState,
+      semantic_intent:{primary_intent:'purchase',secondary_intents:['product_details'],topics:['catalog_selection'],
+        catalog:{requested:false,category:'motorcycles',price_min_cents:null,price_max_cents:null,preferences:[],exclusions:[],evidence_ids:['e0']},
+        references:{previous_catalog:true,selected_ordinal:6,mentioned_product_ids:[],evidence_ids:['e0']},
+        conversation:{continues_previous_topic:true,changes_preference:false,requires_clarification:false},ambiguities:[],confidence:'high'},
+    },
+  });
+
+  assert.equal(turn1.result.workflow_ok, true);
+  assert.equal(turn1.saved[0].p_state.product_id, cbProductId);
+  assert.match(turn1.sent[0], /CB 600RR está anunciada por R\$\s*34\.980/i);
+  assert.match(turn1.sent[0], /disponibilidade (?:é|ainda precisa ser) a confirmar com a equipe/i);
+  const outEvents = turn1.calls.filter(c => c.url.includes('/channel_events') && c.method === 'POST');
+  assert.ok(!outEvents.some(e => e.body?.raw_payload?.unbound_amount));
+
+  // Turn 2: Customer refers textually to the selected motorcycle ("me fala sobre a CB")
+  const turn2 = await run({
+    tenantSlug: 'wesley_automoveis',
+    texts: ['me fala sobre a CB'],
+    inventoryRows: genesisInventory,
+    dialoguePlan,
+    dialogueReview: { ...dialogueReview, purchase_product_id: cbProductId },
+    history: [
+      { id: 'a0', direction: 'outbound', ai_provider: 'sales_core', message_text: catalogText, raw_payload: catalogPayload },
+      { id: 'i1', direction: 'inbound', message_text: '6' },
+      { id: 'a1', direction: 'outbound', ai_provider: 'sales_core', message_text: turn1.sent[0] },
+    ],
+    lead: {
+      id: 'lead-jeferson',
+      revision: 1,
+      stage_key: 'sales_qualifying',
+      state: turn1.saved[0].p_state,
+      product: genesisInventory.find(v => v.model === 'CB 600RR'),
+      ai_locked: false,
+    },
+    response: {
+      action: 'reply',
+      reason: 'none',
+      reply: 'A CB 600RR está anunciada por R$ 34.980,00',
+      state: cbState,
+      semantic_intent:{primary_intent:'product_details',secondary_intents:['purchase'],topics:['vehicle_details'],
+        catalog:{requested:false,category:'motorcycles',price_min_cents:null,price_max_cents:null,preferences:[],exclusions:[],evidence_ids:['e0']},
+        references:{previous_catalog:true,selected_ordinal:null,mentioned_product_ids:[cbProductId],evidence_ids:['e0']},
+        conversation:{continues_previous_topic:true,changes_preference:false,requires_clarification:false},ambiguities:[],confidence:'high'},
+    },
+  });
+  assert.equal(turn2.saved[0].p_state.product_id, cbProductId);
+  assert.match(turn2.sent[0], /34\.980/);
+});
+
+test('Decisao de handoff de leilao sobrevive mesmo se Gemini apresentar falha técnica', async () => {
+  const genesisInventory = [{ model: 'Versa SL', brand: 'Nissan', price_cents: 4999000, color: 'Prata', km: 82000, year: 2013, fuel: 'Flex', status: 'ANUNCIADO', observations: 'Passagem por leilao' }];
+  const res = await run({
+    tenantSlug: 'wesley_automoveis',
+    texts: ['Vocês compram carro de leilão?'],
+    inventoryRows: genesisInventory,
+    response: { action: 'reply', reason: 'none', reply: '', technical_error: true, state: blank },
+  });
+  assert.equal(res.result.handoff, true);
+  assert.match(res.sent[0], /Gênesis compra veículos de leilão/i);
+});
+
+test('Veiculo vendido e consultavel no historico mas nunca ofertado na listagem de catalogo', async () => {
+  const engine = require('../../clients/wesley_automoveis/genesisCommercialEngine.cjs');
+  const genesisInventory = [
+    { model: 'Crosser', brand: 'Yamaha', price_cents: 1498000, color: 'Preto', km: 70000, year: 2021, fuel: 'Flex', status: 'VENDIDO' },
+    { model: 'Crosser', brand: 'Yamaha', price_cents: 1798000, color: 'Azul', km: 15000, year: 2023, fuel: 'Flex', status: 'DISPONIVEL' }
+  ];
+
+  const catalog = engine.filterOfferableCatalog(genesisInventory, 'all');
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0].year, 2023);
+  assert.ok(!catalog.some(v => v.year === 2021));
+
+  const lookup = await engine.executeBusinessOperation('inventory.lookup', {
+    tenant_slug: 'wesley_automoveis',
+    query: 'Crosser',
+    inventory: genesisInventory,
+  });
+  assert.equal(lookup.status, 'ok');
+  assert.ok(lookup.data);
+});
+
+test('CORE final não possui funções ou referências salesGenesis', () => {
+  const coreCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), 'utf8');
+  const matches = coreCode.match(/salesGenesis[A-Za-z0-9_]*/g) || [];
+  assert.deepEqual(matches, [], `Expected 0 salesGenesis references in generated CORE, found: ${matches.join(', ')}`);
+});
+
+test('semantic primary: pedido informal de quatro rodas usa categoria do Gemini e não chama outro planejador', async () => {
+  const semantic={primary_intent:'inventory_search',secondary_intents:[],topics:['catalog'],
+    catalog:{requested:true,category:'cars',price_min_cents:null,price_max_cents:null,preferences:[],exclusions:[],evidence_ids:['e0']},
+    references:{previous_catalog:false,selected_ordinal:null,mentioned_product_ids:[],evidence_ids:[]},
+    conversation:{continues_previous_topic:true,changes_preference:true,requires_clarification:false},ambiguities:[],confidence:'high'};
+  const dialogue_plan={requests:[{id:'catalog-1',topic:'catalog'}],next_requirement:'purchase_product',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['e umas de quatro rodas?'],dialoguePlan:undefined,
+    response:{action:'reply',reason:'none',reply:'Resposta que será substituída pela lista autorizada',state:blank,dialogue_plan,semantic_intent:semantic}});
+  assert.match(result.sent[0],/Sandero|Civic|carros/i);
+  assert.doesNotMatch(result.sent[0],/CB 600RR|PCX/i);
+  const geminiCalls=result.calls.filter(call=>call.url.includes('generativelanguage.googleapis.com'));
+  assert.equal(geminiCalls.length,1);
+  assert.ok(geminiCalls[0].body.generationConfig.responseSchema.properties.semantic_intent);
+});
+
+test('semantic contract aceita null opcional, aplica teto de orçamento e preserva evidência de categoria', async () => {
+  const semantic={primary_intent:'inventory_search',secondary_intents:[],topics:['catalog'],
+    catalog:{requested:true,category:'cars',price_min_cents:null,price_max_cents:4500000,preferences:[],exclusions:[],evidence_ids:['e0']},
+    references:{previous_catalog:false,selected_ordinal:null,mentioned_product_ids:[],evidence_ids:[]},
+    conversation:{continues_previous_topic:false,changes_preference:true,requires_clarification:false},ambiguities:[],confidence:'high'};
+  const dialogue_plan={requests:[{id:'catalog-1',topic:'catalog'}],next_requirement:'purchase_product',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['algo para a família sem passar do meu limite'],
+    response:{action:'reply',reason:'none',reply:'rascunho',state:blank,dialogue_plan,semantic_intent:semantic}});
+  assert.match(result.sent[0],/Sandero/i);
+  assert.doesNotMatch(result.sent[0],/Civic/i);
+  assert.equal(result.saved[0].p_state.dialogue_memory.catalog_audience,'cars');
+  assert.deepEqual(result.saved[0].p_state.dialogue_memory.catalog_audience_evidence_ids,['e0']);
+});
+
+test('semantic contract rejeita referência sem evidência e usa fallback auditável', async () => {
+  const semantic={primary_intent:'product_details',secondary_intents:[],topics:['details'],
+    catalog:{requested:false,category:'unspecified',price_min_cents:null,price_max_cents:null,preferences:[],exclusions:[],evidence_ids:[]},
+    references:{previous_catalog:true,selected_ordinal:1,mentioned_product_ids:[],evidence_ids:[]},
+    conversation:{continues_previous_topic:true,changes_preference:false,requires_clarification:false},ambiguities:[],confidence:'high'};
+  const dialogue_plan={requests:[{id:'details-1',topic:'details'}],next_requirement:'none',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['fala mais daquele'],
+    response:{action:'reply',reason:'none',reply:'Preciso confirmar qual item você quis dizer.',state:blank,dialogue_plan,semantic_intent:semantic}});
+  assert.ok(result.result.workflow_ok);
+  const auditCall=result.calls.find(call=>JSON.stringify(call.body||{}).includes('invalid_or_missing_semantic_intent'));
+  assert.ok(auditCall,JSON.stringify(result.calls.filter(call=>call.url.includes('/channel_events')).map(call=>({method:call.method,body:call.body})),null,2));
+  assert.match(JSON.stringify(auditCall.body),/MISSING_REFERENCE_EVIDENCE/);
+});
+
+test('preferência subjetiva sem atributo autorizado pede esclarecimento em vez de inventar adequação', async () => {
+  const semantic={primary_intent:'inventory_search',secondary_intents:[],topics:['catalog'],
+    catalog:{requested:true,category:'cars',price_min_cents:null,price_max_cents:4500000,preferences:['confortável para família'],exclusions:[],evidence_ids:['e0']},
+    references:{previous_catalog:false,selected_ordinal:null,mentioned_product_ids:[],evidence_ids:[]},
+    conversation:{continues_previous_topic:true,changes_preference:true,requires_clarification:false},ambiguities:[],confidence:'high'};
+  const dialogue_plan={requests:[{id:'catalog-1',topic:'catalog'}],next_requirement:'purchase_product',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['as anteriores não serviram; preciso de algo que acomode bem todo mundo'],
+    response:{action:'reply',reason:'none',reply:'rascunho',state:blank,dialogue_plan,semantic_intent:semantic}});
+  assert.match(result.sent[0],/não há dados autorizados para confirmar confortável para família/i);
+  assert.doesNotMatch(result.sent[0],/Civic|48\.980/);
+});
+
+test('financiamento sem palavra-chave é decidido pelo semantic_intent validado', async () => {
+  const semantic={primary_intent:'financing',secondary_intents:['purchase'],topics:['payment_terms'],
+    catalog:{requested:false,category:'unspecified',price_min_cents:null,price_max_cents:null,preferences:[],exclusions:[],evidence_ids:[]},
+    references:{previous_catalog:false,selected_ordinal:null,mentioned_product_ids:[],evidence_ids:[]},
+    conversation:{continues_previous_topic:false,changes_preference:false,requires_clarification:false},ambiguities:[],confidence:'high'};
+  const dialogue_plan={requests:[{id:'fin-1',topic:'financing'}],next_requirement:'deposit',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['dá para ir acertando aos poucos se eu adiantar uma parte agora?'],
+    response:{action:'reply',reason:'none',reply:'rascunho',state:blank,dialogue_plan,semantic_intent:semantic}});
+  assert.match(result.sent[0],/sujeito à análise da financeira/i);
+  assert.equal(result.saved[0].p_state.intent,'buy');
+});
+
+test('múltiplos objetivos sem gatilho literal preservam compra e venda no mesmo turno', async () => {
+  const semantic={primary_intent:'buy_and_sell',secondary_intents:['purchase','sale'],topics:['replace_vehicle'],
+    catalog:{requested:false,category:'unspecified',price_min_cents:null,price_max_cents:null,preferences:[],exclusions:[],evidence_ids:[]},
+    references:{previous_catalog:false,selected_ordinal:null,mentioned_product_ids:[],evidence_ids:[]},
+    conversation:{continues_previous_topic:false,changes_preference:true,requires_clarification:false},ambiguities:[],confidence:'high'};
+  const dialogue_plan={requests:[{id:'dual-1',topic:'trade_in'}],next_requirement:'buy_and_sell_models',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['quero deixar o que está comigo e sair daí com outro'],
+    response:{action:'reply',reason:'none',reply:'Qual é o modelo de cada veículo?',state:blank,dialogue_plan,semantic_intent:semantic}});
+  assert.equal(result.saved[0].p_state.transaction_mode,'buy_and_sell');
+});
+
+test('correção sem palavras canônicas substitui intenção antiga pela intenção semântica atual', async () => {
+  const prior={...blank,intent:'sell',transaction_mode:'sell',intent_evidence_id:'old-1'};
+  const semantic={primary_intent:'purchase',secondary_intents:[],topics:['replacement'],
+    catalog:{requested:false,category:'unspecified',price_min_cents:null,price_max_cents:null,preferences:[],exclusions:[],evidence_ids:[]},
+    references:{previous_catalog:false,selected_ordinal:null,mentioned_product_ids:[],evidence_ids:[]},
+    conversation:{continues_previous_topic:true,changes_preference:true,requires_clarification:false},ambiguities:[],confidence:'high'};
+  const dialogue_plan={requests:[],next_requirement:'purchase_product',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['pensando melhor, não vou me desfazer dele; preciso resolver o próximo'],
+    lead:{id:'lead-change',revision:1,stage_key:'sales_qualifying',state:prior,product:null,ai_locked:false},
+    response:{action:'reply',reason:'none',reply:'Entendi. Que tipo de veículo você procura?',state:prior,dialogue_plan,semantic_intent:semantic}});
+  assert.equal(result.saved[0].p_state.transaction_mode,'buy');
+  assert.equal(result.saved[0].p_state.intent,'buy');
+});
+
+function p1Semantic({primary='inventory_search',requested=false,category='unspecified',min=null,max=null,preferences=[],exclusions=[],previous=false,ordinal=null,ids=[],secondary=[]}={}) {
+  return {primary_intent:primary,secondary_intents:secondary,topics:['p1_regression'],
+    catalog:{requested,category,price_min_cents:min,price_max_cents:max,preferences,exclusions,evidence_ids:requested||category!=='unspecified'||min!==null||max!==null||preferences.length||exclusions.length?['e0']:[]},
+    references:{previous_catalog:previous,selected_ordinal:ordinal,mentioned_product_ids:ids,evidence_ids:previous||ordinal!==null||ids.length?['e0']:[]},
+    conversation:{continues_previous_topic:previous,changes_preference:false,requires_clarification:false},ambiguities:[],confidence:'high'};
+}
+
+function p1DialoguePlan() {
+  return {requests:[{id:'p1',topic:'commercial'}],next_requirement:'none',memory:{trade_in_status:'none',evidence_ids:[],vehicle_kind:'unknown',vehicle_kind_evidence_ids:[]},human_requested:false,handoff_reason:'none'};
+}
+
+function p1Outbound(result) {
+  return result.calls.find(call=>call.method==='POST'&&call.body?.direction==='outbound'&&call.body?.sender_type==='assistant');
+}
+
+const p1Inventory = [
+  {id:'car-a',model:'Uno',brand:'Fiat',price_cents:3500000,color:'Branco',km:50000,year:2019,fuel:'Flex',category:'car',status:'DISPONIVEL',offerable:true,availability_verified:true},
+  {id:'car-b',model:'Ka',brand:'Ford',price_cents:4200000,color:'Prata',km:45000,year:2020,fuel:'Flex',category:'car',status:'DISPONIVEL',offerable:true,availability_verified:true},
+  {id:'car-expensive',model:'C180',brand:'Mercedes',price_cents:9498000,color:'Preto',km:60000,year:2015,fuel:'Gasolina',category:'car',status:'ANUNCIADO',offerable:true,availability_verified:false},
+  {id:'moto-a',model:'PCX',brand:'Honda',price_cents:1898000,color:'Branca',km:12000,year:2023,fuel:'Gasolina',category:'motorcycle',status:'DISPONIVEL',offerable:true,availability_verified:true},
+  {id:'moto-b',model:'Crosser',brand:'Yamaha',price_cents:1798000,color:'Azul',km:15000,year:2023,fuel:'Gasolina',category:'motorcycle',status:'DISPONIVEL',offerable:true,availability_verified:true},
+];
+
+test('Gênesis responde atributos contextuais com a única chamada Gemini, inclusive quando action=catalog diverge', async () => {
+  const product=p1Inventory[0];
+  const state={...blank,intent:'buy',transaction_mode:'buy',product_id:product.id,product_evidence:'prev-product',
+    buy_interest:{...blank.buy_interest,model:product.model,brand:product.brand,product_id:product.id}};
+  const lead={id:'genesis-context',revision:2,stage_key:'sales_qualifying',state,product,ai_locked:false};
+  const history=[{id:'prev-product',direction:'inbound',message_text:'Quero o Fiat Uno 2019',raw_payload:{}}];
+  for(const [question,answer,action] of [
+    ['Quantos quilômetros ele rodou?', 'O Uno rodou 50.000 km', 'catalog'],
+    ['Qual a cor dele?', 'A cor é branco', 'reply'],
+    ['E o combustível?', 'O combustível é Flex', 'reply'],
+    ['Qual o ano e a rodagem?', 'É 2019 e tem 50.000 km rodados', 'reply'],
+  ]){
+    const result=await run({tenantSlug:'wesley_automoveis',texts:[question],inventoryRows:p1Inventory,lead,history,
+      response:{action,reason:'none',reply:answer,state,dialogue_plan:p1DialoguePlan(),
+        semantic_intent:p1Semantic({primary:'product_details'})}});
+    assert.equal(result.sent[0],answer,`Resposta contextual alterada para ${question}: ${result.sent[0]}`);
+    assert.equal(result.saved[0].p_state.product_id,product.id);
+    const geminiCalls=result.calls.filter(call=>call.url.includes('generativelanguage.googleapis.com'));
+    assert.equal(geminiCalls.length,1);
+    const facts=JSON.parse(geminiCalls[0].body.contents[0].parts[0].text).official_facts.genesis_context;
+    assert.equal(facts.selection_source,'persisted_lead');
+    assert.equal(facts.selected_product.id,product.id);
+    assert.equal(facts.selected_product.km,50000);
+    assert.equal(facts.selected_product.color,'Branco');
+    assert.equal(facts.selected_product.fuel,'Flex');
+  }
+});
+
+test('Gênesis mantém atributo ausente como null e não inventa a quilometragem', async () => {
+  const product={...p1Inventory[0],km:null,color:'',fuel:''};
+  const state={...blank,intent:'buy',transaction_mode:'buy',product_id:product.id,product_evidence:'prev-product'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['Qual a quilometragem desse Uno?'],inventoryRows:[product],
+    lead:{id:'genesis-missing',revision:1,stage_key:'sales_qualifying',state,product,ai_locked:false},
+    history:[{id:'prev-product',direction:'inbound',message_text:'Quero o Fiat Uno 2019'}],
+    response:{action:'reply',reason:'none',reply:'A quilometragem ainda não está confirmada na ficha',state,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'product_details'})}});
+  assert.equal(result.sent[0],'A quilometragem ainda não está confirmada na ficha');
+  const request=result.calls.find(call=>call.url.includes('generativelanguage.googleapis.com'));
+  const selectedFacts=JSON.parse(request.body.contents[0].parts[0].text).official_facts.genesis_context.selected_product;
+  assert.equal(selectedFacts.km,null);
+  assert.equal(selectedFacts.color,null);
+  assert.equal(selectedFacts.fuel,null);
+});
+
+test('Gênesis mantém venda do cliente separada da compra ao responder sobre veículo selecionado', async () => {
+  const product=p1Inventory[0];
+  const state={...blank,intent:'buy',transaction_mode:'buy_and_sell',product_id:product.id,product_evidence:'prev-product',
+    sell_model:'Siena',sell_model_evidence:'sell-vehicle'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['E o ano e quilometragem do da loja?'],inventoryRows:p1Inventory,
+    lead:{id:'genesis-dual',revision:2,stage_key:'sales_qualifying',state,product,ai_locked:false},
+    history:[{id:'sell-vehicle',direction:'inbound',message_text:'Tenho um Siena para vender'},
+      {id:'prev-product',direction:'inbound',message_text:'Quero comprar o Fiat Uno 2019'}],
+    response:{action:'reply',reason:'none',reply:'O Uno da loja é 2019, com 50.000 km',state,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'product_details'})}});
+  assert.equal(result.sent[0],'O Uno da loja é 2019, com 50.000 km');
+  assert.equal(result.saved[0].p_state.product_id,product.id);
+  assert.equal(result.saved[0].p_state.transaction_mode,'buy_and_sell');
+  assert.equal(result.saved[0].p_state.sell_model,'Siena');
+});
+
+test('Gênesis não expõe veículo vendido como seleção resolvida; outros tenants não recebem fatos Gênesis', async () => {
+  const sold={...p1Inventory[0],status:'VENDIDO',offerable:false,availability_verified:false};
+  const state={...blank,intent:'buy',transaction_mode:'buy',product_id:sold.id,product_evidence:'prev-product'};
+  const lead={id:'genesis-sold',revision:2,stage_key:'sales_qualifying',state,product:sold,ai_locked:false};
+  const history=[{id:'prev-product',direction:'inbound',message_text:'Quero o Fiat Uno 2019'}];
+  const r=await run({tenantSlug:'wesley_automoveis',texts:['Quais são os dados dele?'],inventoryRows:[sold],lead,history,
+    response:{action:'reply',reason:'none',reply:'Esse veículo já foi vendido, posso verificar alternativas',state,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'product_details'})}});
+  const call=r.calls.find(c=>c.url.includes('generativelanguage.googleapis.com'));
+  const genesis=JSON.parse(call.body.contents[0].parts[0].text).official_facts.genesis_context;
+  assert.equal(genesis.selection_status,'unavailable');
+  assert.equal(genesis.selected_product,null);
+  assert.doesNotMatch(r.sent[0],/pronta entrega|está disponível/i);
+  const other=await run({tenantSlug:'sales',texts:['Quais os dados dele?'],inventoryRows:[sold],lead,history,
+    response:{action:'reply',reason:'none',reply:'Vou verificar os detalhes',state}});
+  const otherCall=other.calls.find(c=>c.url.includes('generativelanguage.googleapis.com'));
+  assert.equal(JSON.parse(otherCall.body.contents[0].parts[0].text).official_facts.genesis_context,null);
+});
+
+test('P1 B01: venda ja concluida limpa avaliacao mesmo quando Gemini preserva intent antigo', async () => {
+  const seller={...blank,intent:'sell',transaction_mode:'sell',sell_brand:'Fiat',sell_model:'Siena',sell_model_evidence:'old',
+    sell_vehicle:{...blank.sell_vehicle,model:'Siena',condition_reported:false}};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['Esquece, ja vendi ela ontem'],inventoryRows:p1Inventory,
+    lead:{id:'b01',revision:2,stage_key:'sales_qualifying',state:seller,product:null,ai_locked:false},
+    response:{action:'reply',reason:'none',reply:'Qual o estado de conservacao do carro?',state:seller,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'sale'})}});
+  assert.equal(result.saved[0].p_state.sell_model,'');
+  assert.equal(result.saved[0].p_state.transaction_mode,'unknown');
+  assert.doesNotMatch(result.sent[0],/conservacao|avaliacao\s+(?:do|da)\s+(?:seu|sua)/i);
+  assert.match(result.sent[0],/j[aá] vendeu/i);
+  assert.equal(p1Outbound(result)?.body?.raw_payload?.seller_flow_closed,true);
+});
+
+test('P1 B01: conclusao da venda em buy_and_sell preserva o lado comprador', async () => {
+  const prior={...blank,intent:'buy',transaction_mode:'buy_and_sell',sell_model:'Siena',sell_model_evidence:'old'};
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['Ja vendi ela ontem, mas quero seguir comprando'],inventoryRows:p1Inventory,
+    lead:{id:'b01-dual',revision:2,stage_key:'sales_qualifying',state:prior,product:null,ai_locked:false},
+    response:{action:'reply',reason:'none',reply:'Informe a manutencao do Siena',state:prior,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'sale'})}});
+  assert.equal(result.saved[0].p_state.transaction_mode,'buy');
+  assert.equal(result.saved[0].p_state.sell_model,'');
+  assert.match(result.sent[0],/focar na compra|modelo.*comprar/i);
+  assert.doesNotMatch(result.sent[0],/manutencao|avaliacao/i);
+});
+
+test('P1 D05: nao, o outro sem ID ou ordinal pergunta qual sem republicar catalogo', async () => {
+  const history=[{id:'old-out',direction:'outbound',sender_type:'assistant',created_at:'2026-10-14T12:00:00Z',
+    message_text:'1. Fiat Uno\n2. Ford Ka',raw_payload:{conversation_session_id:'initial',catalog_item_ids:['car-a','car-b'],
+      catalog_context:{contract:'noria_catalog_context_v1',session_id:'initial',products:[{id:'car-a'},{id:'car-b'}]}}}];
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['Nao, o outro'],inventoryRows:p1Inventory,history,
+    response:{action:'catalog',reason:'none',reply:'1. Fiat Uno\n2. Ford Ka',state:blank,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'inventory_search',previous:true,requested:true})}});
+  assert.match(result.sent[0],/qual ve[ií]culo da lista|n[uú]mero ou o modelo/i);
+  assert.doesNotMatch(result.sent[0],/1\. Fiat Uno|2\. Ford Ka/);
+  assert.equal(p1Outbound(result)?.body?.raw_payload?.intent_clarification,'ambiguous_catalog_reference');
+  assert.equal(p1Outbound(result)?.body?.raw_payload?.catalog_context,undefined);
+});
+
+test('P1 C07: teto 42.980 rejeita Mercedes mesmo quando Gemini chama isso de pergunta de preco', async () => {
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['Nao passa de R$ 42.980, por favor'],inventoryRows:p1Inventory,
+    response:{action:'catalog',reason:'none',reply:'A Mercedes C180 por 94.980 cabe no seu limite',state:blank,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'price_question',requested:false})}});
+  assert.deepEqual(p1Outbound(result)?.body?.raw_payload?.catalog_item_ids,['car-a','car-b','moto-a','moto-b']);
+  assert.match(result.sent[0],/Fiat Uno|Ford Ka/);
+  assert.doesNotMatch(result.sent[0],/Mercedes C180|94\.980/);
+  assert.equal(result.saved[0].p_state.product_id,'');
+});
+
+test('P1 C07: teto informado com acao reply equivocada tambem vira filtro, nunca pergunta de preco do produto', async () => {
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['Nao passa de 42.980, por favor'],inventoryRows:p1Inventory,
+    response:{action:'reply',reason:'none',reply:'Qual produto custa R$ 42.980?',state:blank,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'price_question',requested:false})}});
+  assert.deepEqual(p1Outbound(result)?.body?.raw_payload?.catalog_item_ids,['car-a','car-b','moto-a','moto-b']);
+  assert.doesNotMatch(result.sent[0],/Qual produto custa|Mercedes C180|94\.980/i);
+});
+
+test('P1 S05: falta de evidencia no filtro rejeita semantica e nao confirma disponibilidade', async () => {
+  const semantic=p1Semantic({primary:'price_question',category:'cars'});
+  semantic.catalog.evidence_ids=[];
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['A Mercedes esta disponivel para retirar hoje?'],inventoryRows:p1Inventory,
+    response:{action:'reply',reason:'none',reply:'Sim, a Mercedes esta disponivel para retirar hoje.',state:blank,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:semantic}});
+  assert.ok(p1Outbound(result)?.body?.raw_payload?.semantic_fallback?.validation_errors?.includes('MISSING_CATALOG_EVIDENCE'));
+  assert.doesNotMatch(result.sent[0],/pode retirar hoje|retirada confirmada/i);
+});
+
+test('P1 D02: MAX_TOKENS nao aplica resposta truncada nem fabrica catalogo', async () => {
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['E o ultimo da lista?'],inventoryRows:p1Inventory,
+    primaryFinishReason:'MAX_TOKENS',
+    response:{action:'catalog',reason:'none',reply:'1. Mercedes C180',state:blank,
+      dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'inventory_search',requested:true})}});
+  assert.equal(result.saved.some(row=>row.p_register===true),false);
+  assert.equal(result.calls.filter(call=>call.body?.raw_payload?.catalog_context).length,0);
+  assert.doesNotMatch(result.sent.join(' '),/1\. Mercedes C180/);
+});
+
+test('P1 catalogo: evento confirmado preserva ordem real e segundo/ultimo resolvem no turno seguinte', async () => {
+  const listed=await run({tenantSlug:'wesley_automoveis',texts:['mostre alternativas'],inventoryRows:p1Inventory,
+    response:{action:'reply',reason:'none',reply:'rascunho',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({requested:true,category:'cars',max:9500000})}});
+  const outbound=p1Outbound(listed);
+  assert.ok(outbound?.body?.raw_payload?.catalog_context);
+  assert.deepEqual(outbound.body.raw_payload.catalog_item_ids,['car-a','car-b','car-expensive']);
+  assert.deepEqual(outbound.body.raw_payload.catalog_context.products.map(item=>item.id),['car-a','car-b','car-expensive']);
+  assert.equal(outbound.body.raw_payload.catalog_context.session_id,'initial');
+
+  const history=[{id:'out-catalog',direction:'outbound',sender_type:'assistant',created_at:'2026-10-14T12:00:00Z',message_text:outbound.body.message_text,raw_payload:outbound.body.raw_payload}];
+  for (const [ordinal,expected] of [[2,'car-b'],[3,'car-expensive']]) {
+    const selectedTurn=await run({tenantSlug:'wesley_automoveis',texts:[ordinal===2?'fico com o item do meio':'me interessa o derradeiro'],inventoryRows:p1Inventory,history,
+      response:{action:'reply',reason:'none',reply:'continue',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'purchase',previous:true,ordinal})}});
+    assert.equal(selectedTurn.saved[0].p_state.product_id,expected);
+  }
+});
+
+test('P1 catalogo: lista mais recente substitui ordinais anteriores e reprocessamento nao duplica contexto', async () => {
+  const cars=await run({tenantSlug:'wesley_automoveis',texts:['primeira lista'],inventoryRows:p1Inventory,
+    response:{action:'reply',reason:'none',reply:'rascunho',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({requested:true,category:'cars'})}});
+  const carsOut=p1Outbound(cars);
+  const firstHistory={id:'out-cars',direction:'outbound',sender_type:'assistant',created_at:'2026-10-14T12:00:00Z',message_text:carsOut.body.message_text,raw_payload:carsOut.body.raw_payload};
+  const motos=await run({tenantSlug:'wesley_automoveis',texts:['agora outras opcoes'],inventoryRows:p1Inventory,history:[firstHistory],
+    response:{action:'reply',reason:'none',reply:'rascunho',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({requested:true,category:'motorcycles'})}});
+  const motosOut=p1Outbound(motos);
+  assert.deepEqual(motosOut.body.raw_payload.catalog_item_ids,['moto-a','moto-b']);
+  const latestHistory=[firstHistory,{id:'out-motos',direction:'outbound',sender_type:'assistant',created_at:'2026-10-14T12:01:00Z',message_text:motosOut.body.message_text,raw_payload:motosOut.body.raw_payload}];
+  const selectedTurn=await run({tenantSlug:'wesley_automoveis',texts:['a segunda dessa vez'],inventoryRows:p1Inventory,history:latestHistory,
+    response:{action:'reply',reason:'none',reply:'continue',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'purchase',previous:true,ordinal:2})}});
+  assert.equal(selectedTurn.saved[0].p_state.product_id,'moto-b');
+
+  const stale=await run({tenantSlug:'wesley_automoveis',texts:['agora outras opcoes'],inventoryRows:p1Inventory,stale:true,
+    response:{action:'reply',reason:'none',reply:'rascunho',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({requested:true,category:'motorcycles'})}});
+  assert.equal(stale.calls.filter(call=>call.method==='POST'&&call.body?.raw_payload?.catalog_context).length,0);
+});
+
+test('P1 catalogo: falha de envio nao cria catalogo fantasma selecionavel', async () => {
+  const failed=await run({tenantSlug:'wesley_automoveis',texts:['mostre tres'],inventoryRows:p1Inventory,sendError:true,
+    response:{action:'reply',reason:'none',reply:'rascunho',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({requested:true,category:'cars'})}});
+  assert.equal(failed.result.ok,false);
+  assert.equal(failed.calls.filter(call=>call.method==='POST'&&call.body?.delivery_status==='sent'&&call.body?.raw_payload?.catalog_context).length,0);
+  assert.ok(failed.calls.some(call=>call.body?.delivery_status==='failed'));
+});
+
+test('P1 estoque: transicao indireta de venda recebe snapshot autorizado antes do Gemini', async () => {
+  const sellerState={...blank,intent:'sell',transaction_mode:'sell',sell_model:'Siena',sell_model_evidence:'old'};
+  const lead={id:'lead-p1',revision:2,stage_key:'sales_qualifying',state:sellerState,product:null,ai_locked:false};
+  const changed=await run({tenantSlug:'wesley_automoveis',texts:['agora preciso de algo para levar meus filhos sem passar do limite'],inventoryRows:p1Inventory,lead,
+    response:{action:'reply',reason:'none',reply:'rascunho',state:sellerState,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({requested:true,category:'cars',max:4500000,primary:'inventory_search'})}});
+  assert.match(changed.sent[0],/Fiat Uno|Ford Ka/);
+  assert.doesNotMatch(changed.sent[0],/Mercedes C180|94\.980/);
+  const gemini=changed.calls.find(call=>call.url.includes('generativelanguage.googleapis.com'));
+  assert.match(JSON.stringify(gemini.body),/Uno|Ford|car-a/);
+  assert.equal(changed.calls.some(call=>call.body?.raw_payload?.seller_inventory_bypass),false);
+});
+
+test('P1 estoque: venda continua sem oferta falsa, falha do snapshot fecha fatos e lock humano nao consulta modelo', async () => {
+  const sellerState={...blank,intent:'sell',transaction_mode:'sell',sell_model:'Siena',sell_model_evidence:'old'};
+  const lead={id:'lead-p1-sell',revision:2,stage_key:'sales_qualifying',state:sellerState,product:null,ai_locked:false};
+  const continued=await run({tenantSlug:'wesley_automoveis',texts:['vou mandar os dados que faltam depois'],inventoryRows:p1Inventory,lead,
+    response:{action:'reply',reason:'none',reply:'Combinado',state:sellerState,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'sale'})}});
+  assert.doesNotMatch(continued.sent[0],/1\. Fiat|1\. Honda/);
+  assert.equal(continued.calls.some(call=>call.body?.raw_payload?.seller_inventory_bypass),false);
+
+  const unavailable=await run({tenantSlug:'wesley_automoveis',texts:['preciso de algo para minha familia'],inventoryRows:p1Inventory,lead,stockError:true,
+    response:{action:'reply',reason:'none',reply:'Mercedes C180 serve',state:sellerState,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({requested:true,category:'cars',primary:'inventory_search'})}});
+  assert.match(unavailable.sent[0],/consegui consultar agora os ve/iu);
+  assert.doesNotMatch(unavailable.sent[0],/Mercedes C180 serve/);
+
+  const locked=await run({tenantSlug:'wesley_automoveis',texts:['algo para a familia'],inventoryRows:p1Inventory,lead:{...lead,ai_locked:true}});
+  assert.equal(locked.calls.filter(call=>call.url.includes('generativelanguage.googleapis.com')).length,0);
+});
+
+test('P1 selecao: vendido e nao verificado sao identificaveis, mas nunca avancam interesse', async () => {
+  for (const product of [
+    {id:'sold-1',model:'Crosser',brand:'Yamaha',price_cents:1498000,color:'Preta',km:70000,year:2021,fuel:'Flex',category:'motorcycle',status:'VENDIDO',offerable:false},
+    {id:'unverified-1',model:'PCX',brand:'Honda',price_cents:1398000,color:'Prata',km:40000,year:2018,fuel:'Flex',category:'motorcycle',status:'NAO_VERIFICADO',offerable:false},
+  ]) {
+    const history=[{id:'catalog-old',direction:'outbound',sender_type:'assistant',message_text:'1. item historico',raw_payload:{conversation_session_id:'initial',catalog_item_ids:[product.id],catalog_context:{contract:'noria_catalog_context_v1',session_id:'initial',products:[{id:product.id}]}}}];
+    const result=await run({tenantSlug:'wesley_automoveis',texts:['quero aquele item'],inventoryRows:[product],history,
+      response:{action:'register_interest',reason:'none',reply:'esta disponivel',state:{...selected,product_id:product.id},dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'purchase',previous:true,ordinal:1})}});
+    assert.equal(result.saved[0].p_register,false);
+    assert.notEqual(result.saved[0].p_state.product_id,product.id);
+    assert.match(result.sent[0],product.status==='VENDIDO'?/jÃ¡ foi vendido/i:/nÃ£o estÃ¡ elegÃ­vel/i);
+    assert.doesNotMatch(result.sent[0],/esta disponivel/i);
+  }
+});
+
+test('P1 selecao: anunciado permanece identificavel sem promessa; listado elegivel pode prosseguir', async () => {
+  for (const [product,confirmed] of [[{...p1Inventory[2]},false],[{...p1Inventory[0]},true]]) {
+    const result=await run({tenantSlug:'wesley_automoveis',texts:['esse e o que me interessa'],inventoryRows:[product],
+      response:{action:'register_interest',reason:'none',reply:'vamos seguir',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({primary:'purchase',ids:[product.id]})}});
+    assert.equal(result.saved[0].p_state.product_id,product.id);
+    assert.equal(result.saved[0].p_register,false);
+    assert.doesNotMatch(result.sent[0],/jÃ¡ foi vendido|nÃ£o estÃ¡ elegÃ­vel/i);
+    if(!confirmed)assert.doesNotMatch(result.sent[0],/disponibilidade confirmada/i);
+  }
+});
+
+test('P1 resposta final: produto de 94.980 citado pelo Gemini nao sobrevive ao teto de 45 mil', async () => {
+  const result=await run({tenantSlug:'wesley_automoveis',texts:['preciso de algo que caiba no meu limite'],inventoryRows:p1Inventory,
+    response:{action:'catalog',reason:'none',reply:'A Mercedes C180 de R$ 94.980 atende ao seu limite.',state:blank,dialogue_plan:p1DialoguePlan(),semantic_intent:p1Semantic({requested:true,category:'cars',max:4500000})}});
+  assert.match(result.sent[0],/Fiat Uno|Ford Ka/);
+  assert.doesNotMatch(result.sent[0],/Mercedes C180|94\.980/);
+  const outbound=p1Outbound(result);
+  assert.deepEqual(outbound.body.raw_payload.catalog_item_ids,['car-a','car-b']);
 });

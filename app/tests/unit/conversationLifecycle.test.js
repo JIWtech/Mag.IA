@@ -107,6 +107,42 @@ test('handoff keeps the close action available and closing finalizes attendance'
   assert.equal(canCloseConversation(conversation), true);
 });
 
+test('generic sales_core does not clear a confirmed human assignee', () => {
+  const conversation = {
+    status: 'atendimento_humano',
+    stage: 'Atendimento humano',
+    handoff: true,
+    owner: 'Wesley',
+    ownerId: 'agent-1',
+    ownerKind: 'agent',
+    currentAssignee: 'Wesley',
+    currentAssigneeId: 'agent-1',
+  };
+
+  apply(conversation, {
+    direction: 'outbound',
+    sender_type: 'assistant',
+    service: 'sales_qualification',
+    handoff: false,
+    ai_provider: 'sales_core',
+    raw_payload: { sales_lead_id: 'lead-current' },
+  }, 'IA - Qualificacao automotiva');
+
+  assert.equal(conversation.status, 'atendimento_humano');
+  assert.equal(conversation.handoff, true);
+  assert.equal(conversation.owner, 'Wesley');
+  assert.equal(conversation.ownerKind, 'agent');
+  assert.equal(conversation.currentAssignee, 'Wesley');
+});
+
+test('explicit resume_ai releases a human assignee', () => {
+  const conversation = { status: 'atendimento_humano', handoff: true, owner: 'Wesley', ownerKind: 'agent' };
+  apply(conversation, { direction: 'outbound', service: 'resume_ai', handoff: false, raw_payload: {} }, 'Qualificacao');
+  assert.equal(conversation.status, 'ia_ativa');
+  assert.equal(conversation.owner, 'Assistente IA');
+  assert.equal(conversation.ownerKind, 'ai');
+});
+
 test('ciclo completo: IA ativa -> humano assume -> operador envia mensagem -> encerrar -> nova sessao', () => {
   // 1. IA ativa -> Encerrar disponível
   const conversation = { status: 'ia_ativa' };

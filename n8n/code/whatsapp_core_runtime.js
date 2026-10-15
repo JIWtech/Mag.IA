@@ -221,7 +221,10 @@ try {
 } catch (error) {
   if (turn?.claimed) {
     // Provider timeouts have unknown delivery state. Do not retry them blindly.
-    const outcome = sendAttempted ? 'uncertain' : 'failed';
+    // A failed EXT dispatch has not contacted the provider; put this claimed
+    // batch back through the queue rather than discarding it as a generic error.
+    const outcome = sendAttempted ? 'uncertain'
+      : String(error?.message || '') === 'NORIA_EXT_DISPATCH_UNAVAILABLE' ? 'retry' : 'failed';
     const errorCode=String(error.message || 'processing_failed').slice(0,300);
     await supabasePost('/rest/v1/channel_events', {
       tenant_id:$json.tenant_id,tenant_slug:tenantSlug,channel_type:'whatsapp',external_conversation_id:chatId,

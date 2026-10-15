@@ -63,3 +63,23 @@ test('6B.16: extracted incremental applier preserves operational rejection, medi
   assert.equal(direct[0].unread, 1);
   assert.equal(unchanged, direct);
 });
+
+test('6B.16: a generic sales_core event cannot clear a confirmed human owner', () => {
+  const aiCurrent = event({
+    id: 'ai-current', direction: 'outbound', sender_type: 'assistant', service: 'sales_qualification',
+    stage: 'IA - Qualificacao automotiva', handoff: false, ai_provider: 'sales_core',
+    created_at: '2026-10-09T10:05:00.000Z', raw_payload: { sales_lead_id: 'lead-current' },
+  });
+  const delayedAssignment = event({
+    id: 'old-wesley', direction: 'outbound', sender_type: 'system', service: 'conversation_assigned',
+    stage: 'Atendimento humano', handoff: true, sent_by_user: 'Wesley',
+    created_at: '2026-10-09T10:00:00.000Z', raw_payload: { assignee: { id: 'agent-1', name: 'Wesley' } },
+  });
+
+  const current = applyIncomingEventToConversations([], delayedAssignment, 'tenant-a');
+  const updated = applyIncomingEventToConversations(current, aiCurrent, 'tenant-a');
+
+  assert.equal(updated[0].status, 'atendimento_humano');
+  assert.equal(updated[0].owner, 'Wesley');
+  assert.equal(updated[0].ownerKind, 'agent');
+});
