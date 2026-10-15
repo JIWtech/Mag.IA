@@ -140,6 +140,8 @@ import {
 } from './audioUtils';
 import '@fontsource-variable/manrope';
 import './styles.css';
+import { HomePage } from './LandingPage.jsx';
+import './landing.css';
 
 const menu = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -846,6 +848,11 @@ function App() {
   const hasBootstrapped = isSessionBootstrapped();
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const authPreviewMode = urlParams?.get('auth');
+  const showHome = !urlParams?.get('app') && !authPreviewMode;
+
+  if (showHome) {
+    return <HomePage />;
+  }
 
   if (authPreviewMode === 'loading' || checkingAuth) {
     return <AuthShell title="Carregando NORIA..." />;
