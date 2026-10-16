@@ -81,6 +81,7 @@ import {
   signOut,
   subscribeToAuthState,
 } from './authService';
+import { TenantOnboardingWizard } from './components/TenantOnboardingWizard';
 import { applyKanbanFlowOrder, getIntegrationStatus, integrationTargets, requestKanbanFlowSuggestion, sendN8nCommand } from './integration';
 import {
   createBroadcastCampaign,
@@ -871,9 +872,37 @@ function App() {
     return <AuthShell title="Verificando acesso..." />;
   }
   if (!hasTenantAccess) {
-    return <AuthShell title={tenantAccess.error || 'Nenhuma empresa vinculada a esta conta'}>
-      <button className="secondary-button" onClick={handleSignOut}><LogOut size={16} /> Sair</button>
-    </AuthShell>;
+    return (
+      <main className="auth-page auth-loading-page" style={{ padding: 24, overflowY: 'auto' }}>
+        <div className="auth-visual-ambient-aurora cyan auth-loading-aurora" />
+        <div className="auth-visual-ambient-aurora violet auth-loading-aurora" />
+        <div style={{ maxWidth: 660, width: '100%', margin: 'auto', background: 'rgba(11, 18, 33, 0.88)', backdropFilter: 'blur(20px)', borderRadius: 18, border: '1px solid rgba(242, 244, 247, 0.08)', padding: 32, position: 'relative', zIndex: 10, boxShadow: '0 24px 56px -12px rgba(0, 0, 0, 0.55)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <img src={noriaLogo} alt="NORIA" style={{ height: 26 }} />
+              <span style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '0.08em', fontWeight: 600 }}>ONBOARDING SAAS</span>
+            </div>
+            <button className="secondary-button" onClick={handleSignOut} style={{ padding: '6px 12px', fontSize: 12 }}>
+              <LogOut size={14} /> Sair
+            </button>
+          </div>
+          <TenantOnboardingWizard
+            requireAuthFields={false}
+            initialEmail={session?.user?.email || ''}
+            onSuccess={() => {
+              loadAvailableTenants(mockTenants).then((tenantsFromDb) => {
+                setAvailableTenants(tenantsFromDb);
+                if (tenantsFromDb[0]) {
+                  setTenantSlug(tenantsFromDb[0].slug);
+                  persistTenantSlug(tenantsFromDb[0].slug);
+                }
+                setTenantAccess({ userId: session?.user?.id, loaded: true, error: '' });
+              });
+            }}
+          />
+        </div>
+      </main>
+    );
   }
   if (dataScope !== scopeKey) return <AuthShell title="Carregando empresa..." />;
 
@@ -5535,6 +5564,7 @@ function AuthShell({ title, children }) {
 }
 
 function LoginPage() {
+  const [mode, setMode] = useState('login'); // 'login' | 'signup'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -5736,7 +5766,7 @@ function LoginPage() {
         <div className="auth-form-ambient-glow" />
         <div className="auth-form-decor-orbit" aria-hidden="true" />
 
-        <div className="auth-form-container">
+        <div className={`auth-form-container ${mode === 'signup' ? 'auth-form-container-wide' : ''}`}>
           {/* Top Accent Line Sutil com Pulso Móvel Mobile */}
           <div className="auth-card-top-accent" aria-hidden="true">
             <div className="auth-card-top-pulse" />
@@ -5747,69 +5777,154 @@ function LoginPage() {
             <span className="auth-mobile-tagline">INTELIGÊNCIA EM MOVIMENTO</span>
           </div>
 
-          <h1 className="auth-title">Bem-vindo</h1>
-
-          <form className="auth-form" onSubmit={handleSubmit} noValidate={false}>
-            <label className="auth-label">
-              <span>E-mail</span>
-              <div className="auth-input-wrapper">
-                <Mail size={17} className="auth-input-icon" />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="nome@empresa.com"
-                  autoComplete="email"
-                  required
-                />
-              </div>
-            </label>
-
-            <label className="auth-label">
-              <span>Senha</span>
-              <div className="auth-input-wrapper auth-password-input-wrapper">
-                <Lock size={17} className="auth-input-icon" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                  required
-                />
-                <button
-                  type="button"
-                  className="auth-password-toggle"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  title={showPassword ? 'Ocultar senha' : 'Exibir senha'}
-                  aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
-                >
-                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
-                </button>
-              </div>
-            </label>
-
-            {error && (
-              <div className="inline-error auth-error-box" role="alert">
-                {error}
-              </div>
-            )}
-
-            <button className="primary-button auth-submit-btn" type="submit" disabled={loading}>
-              <span className="auth-submit-shine" aria-hidden="true" />
-              {loading ? (
-                <>
-                  <RefreshCcw size={16} className="spin" />
-                  <span>Entrando...</span>
-                </>
-              ) : (
-                <>
-                  <span>Entrar</span>
-                  <ArrowRight size={17} className="auth-submit-arrow" />
-                </>
-              )}
+          {/* Abas Alternadoras: Entrar vs Criar Conta SaaS */}
+          <div
+            className="auth-mode-tabs"
+            style={{
+              display: 'flex',
+              gap: 6,
+              padding: 4,
+              background: 'rgba(255, 255, 255, 0.04)',
+              borderRadius: 10,
+              border: '1px solid var(--line)',
+              marginBottom: 20,
+            }}
+          >
+            <button
+              type="button"
+              className={`auth-tab-btn ${mode === 'login' ? 'active' : ''}`}
+              onClick={() => {
+                setMode('login');
+                setError('');
+              }}
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: 'none',
+                background: mode === 'login' ? 'var(--surface-elevated)' : 'transparent',
+                color: mode === 'login' ? 'var(--brand)' : 'var(--muted)',
+                fontWeight: mode === 'login' ? 600 : 450,
+                cursor: 'pointer',
+                fontSize: 13,
+                transition: 'all 0.2s',
+              }}
+            >
+              Entrar na Plataforma
             </button>
-          </form>
+            <button
+              type="button"
+              className={`auth-tab-btn ${mode === 'signup' ? 'active' : ''}`}
+              onClick={() => {
+                setMode('signup');
+                setError('');
+              }}
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: 'none',
+                background: mode === 'signup' ? 'var(--surface-elevated)' : 'transparent',
+                color: mode === 'signup' ? 'var(--brand)' : 'var(--muted)',
+                fontWeight: mode === 'signup' ? 600 : 450,
+                cursor: 'pointer',
+                fontSize: 13,
+                transition: 'all 0.2s',
+              }}
+            >
+              Criar Conta SaaS
+            </button>
+          </div>
+
+          {mode === 'signup' ? (
+            <TenantOnboardingWizard
+              requireAuthFields={true}
+              onCancel={() => setMode('login')}
+            />
+          ) : (
+            <>
+              <h1 className="auth-title">Bem-vindo</h1>
+
+              <form className="auth-form" onSubmit={handleSubmit} noValidate={false}>
+                <label className="auth-label">
+                  <span>E-mail</span>
+                  <div className="auth-input-wrapper">
+                    <Mail size={17} className="auth-input-icon" />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="nome@empresa.com"
+                      autoComplete="email"
+                      required
+                    />
+                  </div>
+                </label>
+
+                <label className="auth-label">
+                  <span>Senha</span>
+                  <div className="auth-input-wrapper auth-password-input-wrapper">
+                    <Lock size={17} className="auth-input-icon" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="••••••••"
+                      autoComplete="current-password"
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="auth-password-toggle"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      title={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+                      aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+                    >
+                      {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                    </button>
+                  </div>
+                </label>
+
+                {error && (
+                  <div className="inline-error auth-error-box" role="alert">
+                    {error}
+                  </div>
+                )}
+
+                <button className="primary-button auth-submit-btn" type="submit" disabled={loading}>
+                  <span className="auth-submit-shine" aria-hidden="true" />
+                  {loading ? (
+                    <>
+                      <RefreshCcw size={16} className="spin" />
+                      <span>Entrando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Entrar</span>
+                      <ArrowRight size={17} className="auth-submit-arrow" />
+                    </>
+                  )}
+                </button>
+
+                <div style={{ textAlign: 'center', marginTop: 16 }}>
+                  <button
+                    type="button"
+                    onClick={() => setMode('signup')}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--muted)',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                    }}
+                  >
+                    Novo na plataforma? Criar empresa e ativar IA
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
         </div>
       </section>
     </main>

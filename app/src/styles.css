@@ -12393,3 +12393,99 @@ button:disabled {
 .location-copied-icon {
   color: var(--green);
 }
+
+/* ==========================================================================
+   NORIA SaaS - Self-Service Onboarding Wizard Styles
+   ========================================================================== */
+.auth-form-container-wide {
+  max-width: 660px !important;
+  transition: max-width 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.onboarding-wizard-container {
+  width: 100%;
+}
+
+.onboarding-wizard-header {
+  margin-bottom: 22px;
+}
+
+.onboarding-wizard-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 224, 255, 0.1);
+  border: 1px solid rgba(0, 224, 255, 0.2);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.onboarding-wizard-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 6px 0;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-wizard-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 16px 0;
+  line-height: 1.45;
+}
+
+.onboarding-steps-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.onboarding-step-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted-soft);
+  font-weight: 500;
+}
+
+.onboarding-step-pill span:first-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.onboarding-step-pill.active {
+  color: var(--brand);
+}
+
+.onboarding-step-pill.active span:first-child {
+  background: var(--brand);
+  color: #070d18;
+}
+
+.onboarding-step-divider {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.onboarding-segment-card:hover {
+  border-color: rgba(0, 224, 255, 0.4) !important;
+  background: rgba(0, 224, 255, 0.04) !important;
+  transform: translateY(-1px);
+}
+
