@@ -68,7 +68,7 @@ begin
   threshold:=coalesce((cfg->'sdr_rules'->>'hot_lead_percent')::numeric,30);
   if threshold<0 or threshold>100 then raise exception 'INVALID_HOT_LEAD_THRESHOLD'; end if;
   hot:=coalesce(price>0 and deposit::numeric*100>=price::numeric*threshold,false);
-  financing_rule:=coalesce(cfg#>>'{sales,hot_lead_rule}'='deposit_30_and_financing_documents_v1',false);
+  financing_rule:=coalesce(cfg#>>'{sales,hot_lead_rule}' in ('deposit_30_and_financing_documents_v1', 'deposit_and_financing_documents_v2'),false);
   purchase:=coalesce(coalesce(nullif(p_state->>'transaction_mode','unknown'),p_state->>'intent')='buy',false);
 
   if financing_rule then

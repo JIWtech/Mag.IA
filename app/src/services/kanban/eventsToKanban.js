@@ -18,6 +18,7 @@ import { findKanbanColumn, getStageLabel } from './stageResolution.js';
 import { sortKanbanCardsByConversationActivity } from './applyIncomingEvent.js';
 import { emptyFunnel, formatCurrency } from '../funnel/funnelHelpers.js';
 import { buildSalesLeadIndex as buildSalesLeadIndexWithHelpers, resolveSalesControlMode } from '../leads/leadDataReads.js';
+import { resolveContactCategory } from '../contacts/contactCategory.js';
 
 export function eventsToKanban(
   events,
@@ -185,6 +186,18 @@ export function eventsToKanban(
       targetColumnId: target,
     });
 
+    const contactCategory = resolveContactCategory({
+      ...identityEvent,
+      ...activityEvent,
+      ...event,
+      contact_name: resolveConversationDisplayName(identityEvent, ''),
+    });
+
+    // Contatos comerciais / não-clientes não devem poluir o funil de vendas do Kanban
+    if (contactCategory.category === 'commercial' || event.service === 'non_customer' || event.ai_provider === 'non_customer_suppression') {
+      continue;
+    }
+
     const card = {
       id: `card-${event.id}`,
       canonicalKey: key,
@@ -203,6 +216,8 @@ export function eventsToKanban(
       owner: ownerMetadata.name,
       ownerId: ownerMetadata.id,
       ownerKind: ownerMetadata.kind,
+      contactCategory: contactCategory.category,
+      contactCategoryLabel: contactCategory.label,
       salesLeadId: salesLead?.id || null,
       salesStageKey: salesLead?.stage_key || null,
       salesRevision: Number.isInteger(salesLead?.revision) ? salesLead.revision : null,
@@ -340,6 +355,8 @@ function mergeAppointmentCard(appointmentCard, eventCard) {
     owner: eventCard.owner || appointmentCard.owner,
     ownerId: eventCard.ownerId || null,
     ownerKind: eventCard.ownerKind || null,
+    contactCategory: eventCard.contactCategory || appointmentCard.contactCategory || 'customer',
+    contactCategoryLabel: eventCard.contactCategoryLabel || appointmentCard.contactCategoryLabel || 'Cliente',
     schedulingLink: eventCard.schedulingLink,
     hasSchedulingLink: eventCard.hasSchedulingLink || appointmentCard.targetColumnId === 'agendamentos',
   };
@@ -403,7 +420,7 @@ function isKnownKanbanTestArtifact(event) {
 export function salesFinancingSummary(lead, tenantSlug) {
   if (!isGenesisSalesTenant(tenantSlug)) return '';
   const qualification = lead?.state?.financing_qualification;
-  if (qualification?.rule !== 'deposit_30_and_financing_documents_v1') return '';
+  if (!['deposit_30_and_financing_documents_v1', 'deposit_and_financing_documents_v2'].includes(qualification?.rule)) return '';
 
   const labels = {
     ready: 'Entrada e documentos recebidos',

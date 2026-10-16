@@ -18,6 +18,7 @@ import { normalizeMedia } from '../media/mediaNormalization.js';
 import { resolveSalesControlMode } from '../leads/leadDataReads.js';
 import { getStageLabel, findKanbanColumn } from '../kanban/stageResolution.js';
 import { shouldHideGenericLeadInquiry, isCustomerInboundEvent, isFollowUpOutboundEvent } from './conversationEventState.js';
+import { resolveContactCategory } from '../contacts/contactCategory.js';
 
 export function eventsToConversations(events = [], tenantSlug = '', teamAgents = [], kanbanColumns = []) {
   if (!Array.isArray(events)) return [];
@@ -316,6 +317,17 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
     }
     conversation.waitingForFollowUp = isConversationWaitingForFollowUp(conversation);
     conversation.waitingSince = conversation.waitingForFollowUp ? conversation.latestFollowUpAt : null;
+    const cat = resolveContactCategory(conversation);
+    conversation.contactCategory = cat.category;
+    conversation.contactCategoryLabel = cat.label;
+    if (cat.category === 'commercial') {
+      conversation.status = 'comercial';
+      conversation.stage = 'Número comercial';
+      if (conversation.ownerKind === 'ai' || conversation.owner === 'Assistente IA') {
+        conversation.owner = null;
+        conversation.ownerKind = null;
+      }
+    }
   }
 
   return sortConversationsByRecentActivity(Array.from(byChat.values()));

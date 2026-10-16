@@ -627,6 +627,28 @@ export function deriveConversationPresentationState(conversation, options = {}) 
     };
   }
 
+  // 1.1 Contato comercial / Telefone fixo / Não-cliente (IA desativada)
+  const isCommercial = conversation.contactCategory === 'commercial'
+    || conversation.service === 'non_customer'
+    || conversation.ai_provider === 'non_customer_suppression';
+
+  if (isCommercial) {
+    return {
+      lifecycle: 'commercial',
+      ownerMode: 'none',
+      assignee: null,
+      assigneeId: null,
+      stageKey: null,
+      stageLabel: 'Número comercial',
+      isClosed: false,
+      isHuman: false,
+      isAiActive: false,
+      statusKind: 'commercial',
+      statusText: 'Número comercial · IA desativada',
+      badgeLabel: 'Comercial',
+    };
+  }
+
   // 2. Follow-up ativo na sessão
   const waitingForFollowUp = Boolean(conversation.waitingForFollowUp);
   if (waitingForFollowUp) {

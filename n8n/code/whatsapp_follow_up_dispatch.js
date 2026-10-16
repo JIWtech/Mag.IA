@@ -151,10 +151,10 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
       continue;
     }
     const tenantSuffix = suffix(job.tenant_slug);
-    const base = env('EVOLUTION_API_URL_' + tenantSuffix).replace(/\/$/, '');
-    const key = env('EVOLUTION_API_KEY_' + tenantSuffix);
-    const instance = env('EVOLUTION_INSTANCE_' + tenantSuffix);
-    if (!base || !key || instance !== channel.external_id) throw new Error('Credenciais Evolution do tenant nao configuradas');
+    const base = (env('EVOLUTION_API_URL_' + tenantSuffix) || env('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+    const key = env('EVOLUTION_API_KEY_' + tenantSuffix) || env('EVOLUTION_API_KEY');
+    const instance = env('EVOLUTION_INSTANCE_' + tenantSuffix) || channel.external_id;
+    if (!base || !key || !instance || (channel?.external_id && instance !== channel.external_id)) throw new Error('Credenciais Evolution do tenant nao configuradas');
     if (!await protectedEligibility(job, settings)) {
       await finish(job, 'cancelled', null, 'contact_or_sales_blocked_before_send');
       outcome.push({ id: job.id, status: 'cancelled', reason: 'contact_or_sales_blocked_before_send' });

@@ -17,6 +17,7 @@ import { isConversationWaitingForFollowUp } from '../timeline/conversationFilter
 import { sortConversationsByRecentActivity } from '../timeline/conversationOrdering.js';
 import { eventsToConversations } from './eventsToConversations.js';
 import { isCustomerInboundEvent, isFollowUpOutboundEvent, isGenericLeadInquiry, isShortlyAfter, isSubstantiveInboundFollowUp } from './conversationEventState.js';
+import { resolveContactCategory } from '../contacts/contactCategory.js';
 
 export function applyIncomingEventToConversations(conversations = [], event, tenantSlug = '', { markIncomingAsRead = false, kanbanColumns = [], tenantSettings = null, teamAgents = [] } = {}) {
   if (!event || isInternalOperationalEvent(event)) return conversations;
@@ -234,6 +235,17 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
 
     updated.waitingForFollowUp = isConversationWaitingForFollowUp(updated);
     updated.waitingSince = updated.waitingForFollowUp ? updated.latestFollowUpAt : null;
+    const cat = resolveContactCategory(updated);
+    updated.contactCategory = cat.category;
+    updated.contactCategoryLabel = cat.label;
+    if (cat.category === 'commercial') {
+      updated.status = 'comercial';
+      updated.stage = 'Número comercial';
+      if (updated.ownerKind === 'ai' || updated.owner === 'Assistente IA') {
+        updated.owner = null;
+        updated.ownerKind = null;
+      }
+    }
 
     const nextConversations = [...conversations];
     nextConversations[existingIndex] = updated;

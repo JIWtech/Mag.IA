@@ -15,7 +15,7 @@
   .kanban-title-block h1 {
     font-size: 22px;
     line-height: 1.35;
-    padding-bottom: 8px;
+    padding-bottom: 0;
     margin-bottom: 0;
     overflow: visible;
   }

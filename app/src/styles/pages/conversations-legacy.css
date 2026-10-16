@@ -1207,6 +1207,71 @@
 .chat-header-stage-chip.stage-tone-green { color: #bbf7d0; background: rgba(34, 197, 94, .15); border-color: rgba(74, 222, 128, .28); }
 .chat-header-stage-chip.stage-tone-slate { color: #cbd5e1; background: rgba(148, 163, 184, .10); border-color: rgba(148, 163, 184, .20); }
 
+.chat-header-category-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4.5px;
+  min-width: 0;
+  border-radius: 999px;
+  padding: 2.5px 8.5px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+  border: 1px solid transparent;
+}
+
+.chat-header-category-chip.category-commercial {
+  color: #fed7aa;
+  background: rgba(249, 115, 22, 0.16);
+  border-color: rgba(251, 146, 60, 0.32);
+}
+
+.chat-header-category-chip.category-saved {
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(96, 165, 250, 0.32);
+}
+
+.chat-header-category-chip.category-customer {
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(74, 222, 128, 0.28);
+}
+
+/* Sidebar Contact Category Pill */
+.contact-category-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 4px;
+  line-height: 1.2;
+  white-space: nowrap;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.contact-category-pill.pill-commercial {
+  color: #fb923c;
+  background: rgba(249, 115, 22, 0.14);
+  border: 1px solid rgba(249, 115, 22, 0.25);
+}
+
+.contact-category-pill.pill-saved {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.contact-category-pill.pill-customer {
+  color: #4ade80;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.22);
+}
+
 .status-indicator-dot {
   width: 7px;
   height: 7px;

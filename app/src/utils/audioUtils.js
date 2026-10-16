@@ -162,6 +162,10 @@ export const TECHNICAL_MEDIA_LABELS = {
   '[localizacao]': 'Localização',
   '[localização]': 'Localização',
   '[localização recebida]': 'Localização',
+
+  // Modelo / Template
+  '[template]': 'Mensagem de modelo',
+  '[modelo]': 'Mensagem de modelo',
 };
 
 /**
@@ -177,6 +181,7 @@ export const PLACEHOLDERS_BY_KIND = {
   product: ['[product]', '[produto]'],
   album: ['[album]', '[álbum]'],
   location: ['[location]', 'location', '[localização]', '[localizacao]', '[localização recebida]'],
+  template: ['[template]', '[modelo]'],
 };
 
 /**

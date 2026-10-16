@@ -3,6 +3,56 @@ import { REAL_MEDIA_KINDS, isMediaPlaceholderForKind } from '../../utils/audioUt
 import { isExplicitOutboundMedia } from './mediaDirection.js';
 import { productSnapshotMedia } from './productSnapshot.js';
 
+export function isUsableBrowserUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  if (lower.includes('whatsapp.net') || lower.includes('.enc')) return false;
+  return lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:') || lower.startsWith('blob:');
+}
+
+export function extensionForKind(kind, mimeType = '', fileName = '') {
+  const fromName = String(fileName || '').match(/\.([a-z0-9]{1,12})$/i)?.[1];
+  if (fromName) return fromName.toLowerCase();
+  const mime = String(mimeType || '').toLowerCase().split(';')[0].trim();
+  const byMime = {
+    'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+    'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/webm': 'webm',
+    'video/mp4': 'mp4', 'video/webm': 'webm', 'video/3gpp': '3gp',
+    'application/pdf': 'pdf',
+  };
+  if (byMime[mime]) return byMime[mime];
+  if (kind === 'image') return 'jpg';
+  if (kind === 'audio') return 'ogg';
+  if (kind === 'video') return 'mp4';
+  if (kind === 'sticker') return 'webp';
+  if (kind === 'document') return 'pdf';
+  return 'bin';
+}
+
+export function unwrapWhatsAppMessage(raw = {}) {
+  let message = raw?.data?.message || raw?.message || raw || {};
+  for (const key of ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage']) {
+    if (message?.[key]?.message) message = message[key].message;
+  }
+  return message;
+}
+
+function deriveWhatsAppStorage(event, payload, kind, mimeType = '', fileName = '') {
+  const messageId = event?.external_message_id || payload?.key?.id || payload?.external_message_id || payload?.message_id;
+  const convId = event?.external_conversation_id || payload?.external_conversation_id || payload?.key?.remoteJid;
+  const tenant = event?.tenant_slug || event?.tenantId || payload?.tenant_slug || '';
+  if (!messageId || !convId || !tenant) return null;
+  const cleanChat = String(convId).replace(/@/g, '_');
+  const safeMessageId = String(messageId).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const ext = extensionForKind(kind, mimeType, fileName);
+  return {
+    bucket: 'channel-media',
+    storagePath: `${tenant}/whatsapp/${cleanChat}/${safeMessageId}.${ext}`,
+  };
+}
+
 export function normalizeMedia(rawPayload, event = null) {
   const payload = asObject(rawPayload);
   const isOutboundEvent = String(event?.direction || '').toLowerCase() === 'outbound';
@@ -31,7 +81,7 @@ export function normalizeMedia(rawPayload, event = null) {
 
   const operatorMedia = asObject(payload.magia_operator?.media);
   const normalized = asObject(payload.media);
-  const evolutionMessage = asObject(payload.data?.message || payload.message);
+  const evolutionMessage = asObject(unwrapWhatsAppMessage(payload));
   const telegramMessage = asObject(payload.telegram_update).message || {};
 
   // Hotfix12 product contracts. product_snapshot is produced for a manual
@@ -65,7 +115,7 @@ export function normalizeMedia(rawPayload, event = null) {
         kind,
         category: operatorMedia.category,
         caption: operatorMedia.caption || '',
-        url: operatorMedia.url || '',
+        url: isUsableBrowserUrl(operatorMedia.url) ? operatorMedia.url : '',
         fileName: operatorMedia.fileName || '',
         mimeType: operatorMedia.mimetype || '',
         size: Number(operatorMedia.fileSize || operatorMedia.size || 0),
@@ -82,18 +132,36 @@ export function normalizeMedia(rawPayload, event = null) {
     // do inbound. Ela só pode renderizar mídia direta quando o payload declara
     // que o arquivo pertence ao próprio evento outbound.
     if (REAL_MEDIA_KINDS.has(kind) && (!isOutboundEvent || isExplicitOutboundMedia(normalized, payload, event))) {
+      let bucket = normalized.bucket || '';
+      let storagePath = normalized.storagePath || '';
+      let status = normalized.status || '';
+
+      if ((!storagePath || !bucket) && !isOutboundEvent) {
+        const derived = deriveWhatsAppStorage(event, payload, kind, normalized.mimeType || normalized.mime_type, normalized.fileName || normalized.file_name);
+        if (derived) {
+          bucket = bucket || derived.bucket;
+          storagePath = storagePath || derived.storagePath;
+          if (!status) status = 'stored';
+        }
+      }
+
+      const rawUrl = normalized.url || '';
+      const url = isUsableBrowserUrl(rawUrl) ? rawUrl : '';
+      const rawThumb = normalized.thumbnailUrl || normalized.thumbnail_url || '';
+      const thumbnailUrl = isUsableBrowserUrl(rawThumb) ? rawThumb : '';
+
       return {
         kind,
         category: normalized.category || kind,
-        status: normalized.status || '',
+        status: status || (storagePath ? 'stored' : ''),
         verified: normalized.verified === true,
         origin: normalized.origin || normalized.source || '',
         loadState: normalized.loadState || '',
-        bucket: normalized.bucket || '',
-        storagePath: normalized.storagePath || '',
+        bucket,
+        storagePath,
         caption: normalized.caption || '',
-        url: normalized.url || '',
-        thumbnailUrl: normalized.thumbnailUrl || normalized.thumbnail_url || '',
+        url,
+        thumbnailUrl,
         fileName: normalized.fileName || normalized.file_name || '',
         mimeType: normalized.mimeType || normalized.mime_type || '',
         encoding: normalized.encoding || '',
@@ -110,23 +178,84 @@ export function normalizeMedia(rawPayload, event = null) {
   // normalizados acima (media/magia_operator).
   if (!isOutboundEvent && evolutionMessage.imageMessage) {
     const img = evolutionMessage.imageMessage;
-    return { kind: 'image', caption: img.caption || '', mimeType: img.mimetype || 'image/jpeg', url: img.url || '' };
+    const mimeType = img.mimetype || 'image/jpeg';
+    const derived = deriveWhatsAppStorage(event, payload, 'image', mimeType);
+    return {
+      kind: 'image',
+      category: 'image',
+      caption: img.caption || '',
+      mimeType,
+      url: isUsableBrowserUrl(img.url) ? img.url : '',
+      bucket: derived?.bucket || '',
+      storagePath: derived?.storagePath || '',
+      status: derived ? 'stored' : '',
+      size: Number(img.fileLength || 0),
+    };
   }
   if (!isOutboundEvent && evolutionMessage.audioMessage) {
     const aud = evolutionMessage.audioMessage;
-    return { kind: 'audio', duration: Number(aud.seconds || 0), mimeType: aud.mimetype || 'audio/ogg', url: aud.url || '' };
+    const mimeType = aud.mimetype || 'audio/ogg';
+    const derived = deriveWhatsAppStorage(event, payload, 'audio', mimeType);
+    return {
+      kind: 'audio',
+      category: 'audio',
+      duration: Number(aud.seconds || 0),
+      mimeType,
+      url: isUsableBrowserUrl(aud.url) ? aud.url : '',
+      bucket: derived?.bucket || '',
+      storagePath: derived?.storagePath || '',
+      status: derived ? 'stored' : '',
+      size: Number(aud.fileLength || 0),
+    };
   }
   if (!isOutboundEvent && evolutionMessage.videoMessage) {
     const vid = evolutionMessage.videoMessage;
-    return { kind: 'video', caption: vid.caption || '', duration: Number(vid.seconds || 0), mimeType: vid.mimetype || 'video/mp4', url: vid.url || '' };
+    const mimeType = vid.mimetype || 'video/mp4';
+    const derived = deriveWhatsAppStorage(event, payload, 'video', mimeType);
+    return {
+      kind: 'video',
+      category: 'video',
+      caption: vid.caption || '',
+      duration: Number(vid.seconds || 0),
+      mimeType,
+      url: isUsableBrowserUrl(vid.url) ? vid.url : '',
+      bucket: derived?.bucket || '',
+      storagePath: derived?.storagePath || '',
+      status: derived ? 'stored' : '',
+      size: Number(vid.fileLength || 0),
+    };
   }
   if (!isOutboundEvent && evolutionMessage.documentMessage) {
     const doc = evolutionMessage.documentMessage;
-    return { kind: 'document', fileName: doc.fileName || 'Documento', mimeType: doc.mimetype || 'application/octet-stream', size: Number(doc.fileLength || 0), url: doc.url || '' };
+    const fileName = doc.fileName || 'Documento';
+    const mimeType = doc.mimetype || 'application/octet-stream';
+    const derived = deriveWhatsAppStorage(event, payload, 'document', mimeType, fileName);
+    return {
+      kind: 'document',
+      category: 'document',
+      fileName,
+      mimeType,
+      size: Number(doc.fileLength || 0),
+      url: isUsableBrowserUrl(doc.url) ? doc.url : '',
+      bucket: derived?.bucket || '',
+      storagePath: derived?.storagePath || '',
+      status: derived ? 'stored' : '',
+    };
   }
   if (!isOutboundEvent && evolutionMessage.stickerMessage) {
     const stk = evolutionMessage.stickerMessage;
-    return { kind: 'sticker', mimeType: stk.mimetype || 'image/webp', url: stk.url || '' };
+    const mimeType = stk.mimetype || 'image/webp';
+    const derived = deriveWhatsAppStorage(event, payload, 'sticker', mimeType);
+    return {
+      kind: 'sticker',
+      category: 'sticker',
+      mimeType,
+      url: isUsableBrowserUrl(stk.url) ? stk.url : '',
+      bucket: derived?.bucket || '',
+      storagePath: derived?.storagePath || '',
+      status: derived ? 'stored' : '',
+      size: Number(stk.fileLength || 0),
+    };
   }
 
   // 5. Mídia Telegram
@@ -144,33 +273,44 @@ export function normalizeMedia(rawPayload, event = null) {
 
   // 6. Mídia WhatsApp armazenada em Storage cujo raw_payload.media foi sobrescrito por patch posterior
   if (!isOutboundEvent && (!normalized.kind && !normalized.category)) {
-    const isImagePlaceholder = isMediaPlaceholderForKind(event?.message_text, 'image')
+    const text = String(event?.message_text || '').trim();
+    let detectedKind = null;
+    let detectedMime = '';
+
+    if (isMediaPlaceholderForKind(text, 'image') || isMediaPlaceholderForKind(text, 'album')
       || (payload.sales_media && (
         Array.isArray(payload.sales_media)
           ? payload.sales_media.some((m) => m.kind === 'vehicle_photo' && m.readable !== false)
           : payload.sales_media.kind === 'vehicle_photo' && payload.sales_media.readable !== false
-      ));
-    const isAudioPlaceholder = isMediaPlaceholderForKind(event?.message_text, 'audio')
-      || Boolean(payload.audio_transcriptions || payload.audio_processing);
+      ))) {
+      detectedKind = 'image';
+      detectedMime = 'image/jpeg';
+    } else if (isMediaPlaceholderForKind(text, 'video')) {
+      detectedKind = 'video';
+      detectedMime = 'video/mp4';
+    } else if (isMediaPlaceholderForKind(text, 'sticker')) {
+      detectedKind = 'sticker';
+      detectedMime = 'image/webp';
+    } else if (isMediaPlaceholderForKind(text, 'document')) {
+      detectedKind = 'document';
+      detectedMime = 'application/pdf';
+    } else if (isMediaPlaceholderForKind(text, 'audio') || Boolean(payload.audio_transcriptions || payload.audio_processing)) {
+      detectedKind = 'audio';
+      detectedMime = 'audio/ogg';
+    }
 
-    const messageId = event?.external_message_id || payload?.key?.id || payload?.external_message_id || payload?.message_id;
-    const convId = event?.external_conversation_id || payload?.external_conversation_id || payload?.key?.remoteJid;
-
-    if ((isImagePlaceholder || isAudioPlaceholder) && messageId && convId) {
-      const tenant = event?.tenant_slug || event?.tenantId || payload?.tenant_slug || '';
-      if (tenant) {
-        const cleanChat = String(convId).replace(/@/g, '_');
-        const ext = isImagePlaceholder ? 'jpg' : 'ogg';
-        const kind = isImagePlaceholder ? 'image' : 'audio';
+    if (detectedKind) {
+      const derived = deriveWhatsAppStorage(event, payload, detectedKind, detectedMime);
+      if (derived) {
         return {
-          kind,
-          category: kind,
+          kind: detectedKind,
+          category: detectedKind,
           status: 'stored',
-          bucket: 'channel-media',
-          storagePath: `${tenant}/whatsapp/${cleanChat}/${messageId}.${ext}`,
+          bucket: derived.bucket,
+          storagePath: derived.storagePath,
           url: '',
           caption: '',
-          mimeType: isImagePlaceholder ? 'image/jpeg' : 'audio/ogg',
+          mimeType: detectedMime,
         };
       }
     }
@@ -184,9 +324,9 @@ export function hasStoredMediaNeedingUrl(event) {
   const payload = asObject(event?.raw_payload);
   const media = normalizeMedia(payload, event) || asObject(payload.media);
   const kind = String(media.kind || media.category || '').toLowerCase();
-  if (kind === 'text' || kind === 'conversation') return false;
+  if (kind === 'text' || kind === 'conversation' || kind === 'none') return false;
   if (!REAL_MEDIA_KINDS.has(kind)) return false;
   if (String(event?.direction || '').toLowerCase() === 'outbound'
     && !isExplicitOutboundMedia(media, payload, event)) return false;
-  return media.status === 'stored' && Boolean(media.bucket) && Boolean(media.storagePath) && !media.url;
+  return media.status === 'stored' && Boolean(media.bucket) && Boolean(media.storagePath) && !isUsableBrowserUrl(media.url);
 }

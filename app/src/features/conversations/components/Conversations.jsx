@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
+  BookmarkCheck,
   Bot,
+  Building2,
   Check,
   CheckCircle2,
   Clock3,
@@ -19,6 +21,7 @@ import {
   Smile,
   Sparkles,
   Trash2,
+  User,
   UserRound,
   Video,
   X,
@@ -39,6 +42,7 @@ import {
   isConversationClosed,
   matchesConversationTab,
 } from '../../../dataService.js';
+import { loadConversationFullHistory } from '../../../services/conversations/conversationHistoryReads.js';
 import {
   ContactAvatar,
   ContactAvatarBadge,
@@ -412,12 +416,49 @@ export function Conversations({
     });
   }, [selected, matchingKanbanCard, agentsList, currentStageLabel, kanbanColumns, tenantSlug, tenantSettings]);
 
+  const [fullHistoryByChat, setFullHistoryByChat] = useState({});
+  const loadedChatHistoryRef = useRef(new Set());
+
+  useEffect(() => {
+    const extId = selected?.externalConversationId;
+    if (!extId || !tenantSlug || loadedChatHistoryRef.current.has(extId)) return;
+
+    let cancelled = false;
+    async function fetchFullHistory() {
+      try {
+        const fullMessages = await loadConversationFullHistory(tenantSlug, extId);
+        if (!cancelled && Array.isArray(fullMessages) && fullMessages.length > 0) {
+          setFullHistoryByChat((prev) => ({
+            ...prev,
+            [extId]: fullMessages,
+          }));
+        }
+        loadedChatHistoryRef.current.add(extId);
+      } catch (err) {
+        console.warn('Falha ao carregar histórico completo:', err);
+      }
+    }
+
+    fetchFullHistory();
+    return () => { cancelled = true; };
+  }, [selected?.externalConversationId, tenantSlug]);
+
+  const activeMessages = useMemo(() => {
+    const full = selected?.externalConversationId ? fullHistoryByChat[selected.externalConversationId] : null;
+    if (!full || !full.length) return selected?.messages || [];
+    const existingKeys = new Set(full.map((m) => m.eventId || `${m.at}-${m.text}`));
+    const newRealtime = (selected?.messages || []).filter(
+      (m) => !existingKeys.has(m.eventId || `${m.at}-${m.text}`)
+    );
+    return newRealtime.length ? [...full, ...newRealtime] : full;
+  }, [selected?.externalConversationId, selected?.messages, fullHistoryByChat]);
+
   const groupedMessages = useMemo(() => {
-    return groupTimelineMessages(selected?.messages || [], {
+    return groupTimelineMessages(activeMessages, {
       selectedContact: selected?.contact || 'Cliente',
       selectedOwner: validOwnerAgent?.name || selected?.owner || 'Operador',
     });
-  }, [selected?.messages, selected?.contact, validOwnerAgent?.name, selected?.owner]);
+  }, [activeMessages, selected?.contact, validOwnerAgent?.name, selected?.owner]);
 
   const composerInputRef = useRef(null);
 
@@ -686,7 +727,7 @@ export function Conversations({
     const timer = window.setTimeout(() => scrollToLatest(isNewConversation), 120);
 
     return () => window.clearTimeout(timer);
-  }, [selected?.id, selected?.messages?.length]);
+  }, [selected?.id, activeMessages.length]);
 
   async function sendManualReply() {
     const text = draft.trim();
@@ -832,9 +873,11 @@ export function Conversations({
                   <strong className="chat-header-name">{selected.contact}</strong>
                 </div>
                 <div className="chat-header-sub">
-                  <span className={`chat-header-stage-chip stage-tone-${currentStageTone}`} title={currentStageLabel}>
-                    {currentStageLabel}
-                  </span>
+                  {selected.contactCategory !== 'commercial' && (
+                    <span className={`chat-header-stage-chip stage-tone-${currentStageTone}`} title={currentStageLabel}>
+                      {currentStageLabel}
+                    </span>
+                  )}
                   {headerSubtitleInfo.isHuman && headerSubtitleInfo.assignee ? (
                     <span className="chat-header-owner-chip" title={`Responsável: ${headerSubtitleInfo.assignee}`}>
                       <UserRound size={12} aria-hidden="true" /> {headerSubtitleInfo.assignee}
@@ -842,6 +885,15 @@ export function Conversations({
                   ) : headerSubtitleInfo.isAiActive ? (
                     <span className="chat-header-ai-indicator"><Bot size={12} aria-hidden="true" /> IA ativa</span>
                   ) : null}
+                  <span
+                    className={`chat-header-category-chip category-${selected.contactCategory || 'customer'}`}
+                    title={selected.contactCategoryLabel || 'Cliente'}
+                  >
+                    {selected.contactCategory === 'commercial' && <Building2 size={11} aria-hidden="true" />}
+                    {selected.contactCategory === 'saved' && <BookmarkCheck size={11} aria-hidden="true" />}
+                    {(!selected.contactCategory || selected.contactCategory === 'customer') && <User size={11} aria-hidden="true" />}
+                    <span>{selected.contactCategoryLabel || 'Cliente'}</span>
+                  </span>
                 </div>
               </div>
             </div>

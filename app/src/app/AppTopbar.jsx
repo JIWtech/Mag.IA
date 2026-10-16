@@ -45,15 +45,6 @@ export function AppTopbar({
           <span className="kanban-title-accent" aria-hidden="true" />
           <h1>{menu?.find((item) => item.id === active)?.label}</h1>
         </div>
-        <div className="kanban-title-context page-context">
-          <div className="page-context-tenant">
-            <Building2 size={14} aria-hidden="true" />
-            <strong>{selectedTenant?.name}</strong>
-          </div>
-          {selectedTenant?.industry && (
-            <div className="page-context-segment">{selectedTenant.industry}</div>
-          )}
-        </div>
       </div>
       <div className="topbar-actions">
         <NoriaSelect

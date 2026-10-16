@@ -433,6 +433,14 @@ export function ConversationSidebar({
                     <div className="conversation-item-top">
                       <div className="contact-name-group">
                         <strong className="contact-name" title={conversation.contact}>{conversation.contact}</strong>
+                        {conversation.contactCategory && (
+                          <span
+                            className={`contact-category-pill pill-${conversation.contactCategory}`}
+                            title={conversation.contactCategoryLabel || 'Cliente'}
+                          >
+                            {conversation.contactCategory === 'commercial' ? 'Comercial' : conversation.contactCategory === 'saved' ? 'Salvo' : 'Cliente'}
+                          </span>
+                        )}
                       </div>
                       <small className="timestamp">{conversation.lastAt}</small>
                     </div>

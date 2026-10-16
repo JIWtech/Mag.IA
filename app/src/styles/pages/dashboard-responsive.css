@@ -148,26 +148,11 @@
     font-size: 20px;
     line-height: 1.35;
     margin: 0;
-    padding-bottom: 8px;
+    padding-bottom: 0;
     margin-bottom: 0;
     white-space: nowrap;
     overflow: visible;
     text-overflow: ellipsis;
-  }
-
-  .topbar-title-row h1::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    height: 2px;
-    width: 36px;
-    border-radius: 999px;
-    background: linear-gradient(90deg, var(--brand), #489cff 54%, var(--violet));
-    -webkit-background-clip: border-box;
-    background-clip: border-box;
-    -webkit-text-fill-color: initial;
-    pointer-events: none;
   }
 
   .topbar-subtitle {

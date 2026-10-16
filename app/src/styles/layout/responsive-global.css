@@ -13,7 +13,7 @@
 
   .kanban-title-block h1 {
     font-size: 22px;
-    padding-bottom: 4px;
+    padding-bottom: 0;
   }
 
   .kanban-title-accent {

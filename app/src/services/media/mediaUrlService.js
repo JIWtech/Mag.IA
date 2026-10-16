@@ -1,6 +1,6 @@
 import { asObject } from '../../utils/asObject.js';
 import { isExplicitOutboundMedia } from './mediaDirection.js';
-import { normalizeMedia } from './mediaNormalization.js';
+import { normalizeMedia, isUsableBrowserUrl } from './mediaNormalization.js';
 import { isTransientStorageError } from './storageErrors.js';
 
 export const SIGNED_URL_EXPIRES_IN = 86400;
@@ -134,12 +134,13 @@ async function resolveStoredMediaUrl(media, supabase) {
 }
 
 export async function enrichMediaUrls(events, supabase) {
+  if (!Array.isArray(events) || !events.length || !supabase) return events || [];
   const targets = new Map();
 
   for (const event of events) {
     const payload = asObject(event?.raw_payload);
     const media = normalizeMedia(payload, event) || asObject(payload.media);
-    if (media.status !== 'stored' || !media.bucket || !media.storagePath || media.url) continue;
+    if (media.status !== 'stored' || !media.bucket || !media.storagePath || isUsableBrowserUrl(media.url)) continue;
     if (String(event?.direction || '').toLowerCase() === 'outbound'
       && !isExplicitOutboundMedia(media, payload, event)) continue;
     targets.set(`${media.bucket}:${media.storagePath}`, media);
@@ -184,13 +185,14 @@ export async function enrichMediaUrls(events, supabase) {
     if (!url) return event;
     const updatedPayload = {
       ...payload,
-      media: { ...media, url },
+      media: { ...media, url, status: 'stored' },
       ...(payload.magia_operator ? {
         magia_operator: {
           ...payload.magia_operator,
           media: {
             ...asObject(payload.magia_operator.media),
             url,
+            status: 'stored',
           },
         },
       } : {}),

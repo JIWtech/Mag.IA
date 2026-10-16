@@ -111,10 +111,9 @@ test('6B.31 contratos funcionais de AppTopbar: título, tenant, seleção, refre
   assert.equal(titles.length, 1, 'Deve renderizar título h1');
   assert.equal(titles[0].props.children, 'Conversas', 'h1 deve conter o label da página ativa');
 
-  // Contexto de tenant e segmento
+  // Contexto de tenant redundante abaixo do título foi removido (já presente no seletor NoriaSelect)
   const segment = findElements(vnode, n => n.props?.className === 'page-context-segment');
-  assert.equal(segment.length, 1, 'Deve renderizar segmento do tenant');
-  assert.equal(segment[0].props.children, 'Veículos');
+  assert.equal(segment.length, 0, 'Não deve renderizar contexto de tenant duplicado abaixo do título');
 
   // Botão mobile abre navegação
   const mobileBtn = findElements(vnode, n => n.props?.className?.includes('mobile-menu-btn'))[0];

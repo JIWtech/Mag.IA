@@ -634,6 +634,11 @@ export function Kanban({
                                 <ChannelIcon channel={card.channelType || card.channel} size={12} />
                               </span>
                               <strong className="contact-name">{card.title}</strong>
+                              {card.contactCategoryLabel && (
+                                <span className={`contact-category-pill contact-category-pill--${card.contactCategory || 'customer'}`}>
+                                  {card.contactCategoryLabel}
+                                </span>
+                              )}
                             </div>
                             <small className="card-time">{card.lastAt}</small>
                           </div>
