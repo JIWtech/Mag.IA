@@ -1,0 +1,154 @@
+.mobile-menu-btn {
+  display: none !important;
+}
+
+/* Mobile Navigation Drawer Base */
+.mobile-nav-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 9, 17, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 1040;
+  animation: fadeIn 180ms ease;
+}
+
+.mobile-nav-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(82vw, 290px);
+  background: var(--surface-elevated);
+  border-right: 1px solid var(--line-strong);
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+  animation: drawerSlideIn 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  overflow-y: auto;
+}
+
+@keyframes drawerSlideIn {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+.mobile-nav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mobile-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mobile-nav-brand .brand-logo-img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.mobile-brand-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-brand-text strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+.mobile-brand-text small {
+  font-size: 10.5px;
+  color: var(--text);
+}
+
+.close-drawer-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.close-drawer-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.mobile-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.mobile-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 140ms ease;
+  width: 100%;
+}
+
+.mobile-nav-item:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.mobile-nav-item.active {
+  background: var(--brand-soft);
+  border-color: rgba(0, 224, 255, 0.35);
+  color: var(--brand);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 224, 255, 0.12);
+}
+
+.mobile-nav-footer {
+  padding: 14px 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+}
+
+.mobile-tenant-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
