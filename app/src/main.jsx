@@ -36,6 +36,7 @@ import './styles/components/attachments-location.css';
 
 import './styles.css';
 import './conversations.css';
+import './landing.css';
 
 createRoot(document.getElementById('root')).render(
   <AppErrorBoundary><App /></AppErrorBoundary>,

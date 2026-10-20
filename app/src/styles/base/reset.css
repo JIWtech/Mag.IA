@@ -9,12 +9,36 @@ img {
 
 html,
 body {
+  min-height: 100%;
+  margin: 0;
+}
+
+/* O dashboard logado (.app-shell) necessita de viewport 100% travada */
+html:has(.app-shell),
+body:has(.app-shell) {
   height: 100%;
   overflow: hidden;
 }
 
+/* Landing Page / Homepage: rolagem natural total no documento */
+html.home-view,
+body.home-view,
+body:has(.home-wrapper) {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+#root {
+  min-height: 100%;
+}
+
+body:has(.app-shell) #root {
+  height: 100%;
+}
+
 body {
-  margin: 0;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans, "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
@@ -24,21 +48,22 @@ body {
 
 /* Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: #070b12;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1b2942;
+  background: #233554;
   border-radius: 999px;
+  border: 2px solid #070b12;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #25395c;
+  background: #00d4ff;
 }
 
 button,
