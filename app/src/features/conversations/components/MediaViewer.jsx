@@ -1,41 +1,63 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  ZoomOut,
-  ZoomIn,
-  RotateCcw,
-  X,
+  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   Download,
   ExternalLink,
   Image as ImageIcon,
-  Video,
+  Loader2,
   Play,
+  RotateCcw,
+  RotateCw,
+  Video,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { resolveSingleMediaUrl, getMediaUrlFromCache } from '../../../services/media/mediaUrlService.js';
 
+const EXTENSION_BY_TYPE = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+};
+
 export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], initialIndex = 0, onClose }) {
-  const mediaGallery = gallery.length ? gallery : [{ src, alt, kind, poster }];
-  const [activeIndex, setActiveIndex] = useState(Math.max(0, Math.min(initialIndex, mediaGallery.length - 1)));
+  const imageGallery = gallery.length ? gallery : [{ src, alt, kind, poster }];
+  const [activeIndex, setActiveIndex] = useState(Math.max(0, Math.min(initialIndex, imageGallery.length - 1)));
   const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
   const [resolvedSrc, setResolvedSrc] = useState('');
+  const [loadState, setLoadState] = useState('loading');
   const dragRef = useRef(null);
   const dragMovedRef = useRef(false);
   const pointerStartRef = useRef({ x: 0, y: 0 });
   const touchStartRef = useRef(null);
   const videoRef = useRef(null);
+  const stageRef = useRef(null);
+  const dialogRef = useRef(null);
+  const zoomRef = useRef(zoom);
+  const positionRef = useRef(position);
+  zoomRef.current = zoom;
+  positionRef.current = position;
 
-  const activeMedia = mediaGallery[activeIndex] || { src, alt, kind, poster };
+  const activeMedia = imageGallery[activeIndex] || { src, alt, kind, poster };
   const activeKind = String(activeMedia.kind || (activeIndex === initialIndex ? kind : 'image')).toLowerCase();
   const isCurrentImage = activeKind === 'image' || activeKind === 'sticker';
   const isCurrentVideo = activeKind === 'video';
 
   const canGoPrevious = activeIndex > 0;
-  const canGoNext = activeIndex < mediaGallery.length - 1;
+  const canGoNext = activeIndex < imageGallery.length - 1;
 
-  // Resolve signed URL on demand if item only has bucket/storagePath
+  // Resolve a URL assinada sob demanda quando o item só tem bucket/storagePath
   useEffect(() => {
     if (activeMedia.src) {
       setResolvedSrc(activeMedia.src);
@@ -52,7 +74,9 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
         .then((url) => {
           if (isMounted && url) setResolvedSrc(url);
         })
-        .catch(() => {});
+        .catch(() => {
+          if (isMounted) setLoadState('error');
+        });
       return () => {
         isMounted = false;
       };
@@ -65,6 +89,7 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
 
   const resetImage = useCallback(() => {
     setZoom(1);
+    setRotation(0);
     setPosition({ x: 0, y: 0 });
   }, []);
 
@@ -73,21 +98,37 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
     onClose();
   }, [onClose]);
 
+  // Troca de mídia: volta ao ajuste à tela e pausa o vídeo anterior
   useEffect(() => {
     resetImage();
+    setLoadState('loading');
     if (videoRef.current) {
       videoRef.current.pause();
     }
     return () => {
       if (videoRef.current) videoRef.current.pause();
     };
-  }, [activeIndex, activeMedia.src, resetImage]);
+  }, [kind, activeIndex, activeMedia.src, resetImage]);
 
-  // Preload adjacent images
+  // Foco no modal, fundo travado e foco devolvido ao fechar
+  useEffect(() => {
+    const previouslyFocused = typeof document !== 'undefined' ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    dialogRef.current?.focus({ preventScroll: true });
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+        previouslyFocused.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
+  // Pré-carrega as imagens vizinhas
   useEffect(() => {
     if (typeof Image === 'undefined') return undefined;
     const preload = (index) => {
-      const item = mediaGallery[index];
+      const item = imageGallery[index];
       if (!item || item.kind === 'video' || !item.src) return;
       const image = new Image();
       image.src = item.src;
@@ -95,13 +136,43 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
     preload(activeIndex - 1);
     preload(activeIndex + 1);
     return undefined;
-  }, [activeIndex, mediaGallery]);
+  }, [activeIndex, imageGallery]);
 
-  const setImageZoom = useCallback((nextZoom) => {
-    const boundedZoom = Math.max(1, Math.min(4, Number(nextZoom.toFixed(2))));
-    setZoom(boundedZoom);
-    if (boundedZoom === 1) setPosition({ x: 0, y: 0 });
+  // Zoom limitado entre 100% e 400%. Com `anchor`, aproxima em direção ao ponto
+  // indicado (cursor), mantendo esse ponto parado na tela.
+  const setImageZoom = useCallback((nextZoom, anchor = null) => {
+    const currentZoom = zoomRef.current;
+    const boundedZoom = Math.max(1, Math.min(4, nextZoom));
+    const roundedZoom = Number(boundedZoom.toFixed(2));
+    if (roundedZoom === 1) {
+      setPosition({ x: 0, y: 0 });
+    } else if (anchor && roundedZoom !== currentZoom) {
+      const ratio = roundedZoom / currentZoom;
+      const current = positionRef.current;
+      setPosition({
+        x: anchor.x - (anchor.x - current.x) * ratio,
+        y: anchor.y - (anchor.y - current.y) * ratio,
+      });
+    }
+    setZoom(roundedZoom);
   }, []);
+
+  const anchorFromEvent = useCallback((event) => {
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      x: event.clientX - (rect.left + rect.width / 2),
+      y: event.clientY - (rect.top + rect.height / 2),
+    };
+  }, []);
+
+  const rotate = useCallback((direction) => {
+    setRotation((current) => (current + direction * 90 + 360) % 360);
+  }, []);
+
+  const navigate = useCallback((direction) => {
+    setActiveIndex((index) => Math.max(0, Math.min(imageGallery.length - 1, index + direction)));
+  }, [imageGallery.length]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -112,17 +183,25 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
         if (event.key === '+' || event.key === '=') setImageZoom(zoom + 0.25);
         if (event.key === '-' || event.key === '_') setImageZoom(zoom - 0.25);
         if (event.key === '0') resetImage();
+        if (event.key === 'r' || event.key === 'R') rotate(event.shiftKey ? -1 : 1);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [canGoNext, canGoPrevious, closeViewer, zoom, resetImage, setImageZoom, isCurrentImage]);
+  }, [canGoNext, canGoPrevious, closeViewer, zoom, resetImage, setImageZoom, isCurrentImage, rotate]);
 
-  const handleWheel = (event) => {
-    if (!isCurrentImage) return;
-    event.preventDefault();
-    setImageZoom(zoom + (event.deltaY < 0 ? 0.25 : -0.25));
-  };
+  // Roda do mouse: listener nativo não passivo para impedir a rolagem da página
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !isCurrentImage) return undefined;
+    const onWheel = (event) => {
+      event.preventDefault();
+      const step = event.deltaY < 0 ? 0.25 : -0.25;
+      setImageZoom(zoomRef.current + step, anchorFromEvent(event));
+    };
+    stage.addEventListener('wheel', onWheel, { passive: false });
+    return () => stage.removeEventListener('wheel', onWheel);
+  }, [isCurrentImage, setImageZoom, anchorFromEvent]);
 
   const handlePointerDown = (event) => {
     pointerStartRef.current = { x: event.clientX, y: event.clientY };
@@ -135,6 +214,7 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
       y: event.clientY,
       origin: position,
     };
+    setIsDragging(true);
   };
 
   const handlePointerMove = (event) => {
@@ -160,6 +240,7 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
       }
     }
     dragRef.current = null;
+    setIsDragging(false);
   };
 
   const handleTouchStart = (event) => {
@@ -185,16 +266,13 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
     }
   };
 
+  // Clique no fundo fecha; clique depois de arrastar não fecha
   const handleStageClick = () => {
     if (dragMovedRef.current) {
       dragMovedRef.current = false;
       return;
     }
     closeViewer();
-  };
-
-  const navigate = (direction) => {
-    setActiveIndex((index) => Math.max(0, Math.min(mediaGallery.length - 1, index + direction)));
   };
 
   const handleDownload = async (event) => {
@@ -208,10 +286,13 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
       a.href = blobUrl;
       const cleanName = (activeMedia.alt || alt || 'midia')
         .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
         .replace(/[^a-z0-9_-]/g, '_')
         .replace(/_+/g, '_')
         .slice(0, 32);
-      a.download = `${cleanName || 'arquivo'}.${isCurrentVideo ? 'mp4' : 'jpg'}`;
+      const extension = EXTENSION_BY_TYPE[blob.type] || (isCurrentVideo ? 'mp4' : 'jpg');
+      a.download = `${cleanName || 'arquivo'}.${extension}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -228,8 +309,13 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
     }
   };
 
+  const mediaTitle = activeMedia.alt || alt || (isCurrentVideo ? 'Vídeo' : 'Imagem');
+  const isTransformed = zoom !== 1 || rotation !== 0 || position.x !== 0 || position.y !== 0;
+
   const modal = (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
       className="media-viewer-backdrop"
       role="dialog"
       aria-modal="true"
@@ -237,38 +323,36 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
       onClick={closeViewer}
     >
       <header
-        className="media-viewer-header"
+        className="media-viewer-toolbar"
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <div className="media-viewer-header-left">
-          <span className="media-viewer-badge">
-            {isCurrentVideo ? (
-              <Video size={14} className="media-viewer-badge-icon is-video" />
-            ) : (
-              <ImageIcon size={14} className="media-viewer-badge-icon" />
-            )}
-            <span className="media-viewer-badge-title">
-              {mediaGallery.length > 1
-                ? `${isCurrentVideo ? 'Vídeo' : 'Foto'} ${activeIndex + 1} de ${mediaGallery.length}`
-                : (activeMedia.alt || (isCurrentVideo ? 'Visualização de vídeo' : 'Visualização de imagem'))}
-            </span>
-            {activeMedia.senderLabel && (
-              <span className="media-viewer-badge-sender">• {activeMedia.senderLabel}</span>
-            )}
-            {activeMedia.formattedTime && (
-              <span className="media-viewer-badge-time">({activeMedia.formattedTime})</span>
-            )}
+        <div className="media-viewer-info">
+          <span className={`media-viewer-kind ${isCurrentVideo ? 'is-video' : ''}`} aria-hidden="true">
+            {isCurrentVideo ? <Video size={15} /> : <ImageIcon size={15} />}
           </span>
+          <div className="media-viewer-info-text">
+            <span className="media-viewer-title" title={mediaTitle}>
+              {activeMedia.senderLabel || mediaTitle}
+            </span>
+            <span className="media-viewer-subtitle">
+              {activeMedia.formattedTime && <span>{activeMedia.formattedTime}</span>}
+              {imageGallery.length > 1 && (
+                <span className="media-viewer-counter">
+                  {activeIndex + 1} / {imageGallery.length}
+                </span>
+              )}
+            </span>
+          </div>
         </div>
 
-        <div className="media-viewer-header-actions">
+        <div className="media-viewer-actions">
           {isCurrentImage && (
             <div className="media-viewer-zoom-group">
               <button
                 type="button"
                 className="media-viewer-action-btn"
-                aria-label="Diminuir zoom (-)"
+                aria-label="Diminuir zoom"
                 title="Diminuir zoom (-)"
                 onClick={() => setImageZoom(zoom - 0.25)}
                 disabled={zoom <= 1}
@@ -278,17 +362,17 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
               <button
                 type="button"
                 className="media-viewer-zoom-pill"
-                aria-label="Alternar zoom"
-                title="Clique para alternar zoom (100% / 200%)"
-                onClick={() => (zoom > 1 ? resetImage() : setImageZoom(2))}
+                aria-label="Alternar zoom entre ajuste à tela e 200%"
+                title="Alternar entre ajuste à tela e 200%"
+                onClick={() => (zoom > 1 ? setImageZoom(1) : setImageZoom(2))}
               >
-                {zoom === 1 ? '100%' : `${Math.round(zoom * 100)}%`}
+                {zoom === 1 ? 'Ajustar' : `${Math.round(zoom * 100)}%`}
               </button>
               <button
                 type="button"
                 className="media-viewer-action-btn"
-                aria-label="Aumentar zoom (+)"
-                title="Aumentar zoom (+)"
+                aria-label="Aumentar zoom"
+                title="Aumentar zoom (+ ou roda do mouse)"
                 onClick={() => setImageZoom(zoom + 0.25)}
                 disabled={zoom >= 4}
               >
@@ -297,17 +381,25 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
               <button
                 type="button"
                 className="media-viewer-action-btn"
-                aria-label="Ajustar imagem à tela (0)"
+                aria-label="Girar imagem"
+                title="Girar 90° (R)"
+                onClick={() => rotate(1)}
+              >
+                <RotateCw size={16} />
+              </button>
+              <button
+                type="button"
+                className="media-viewer-action-btn"
+                aria-label="Ajustar imagem à tela"
                 title="Ajustar à tela (0)"
                 onClick={resetImage}
-                disabled={zoom === 1 && position.x === 0 && position.y === 0}
+                disabled={!isTransformed}
               >
                 <RotateCcw size={15} />
               </button>
+              <span className="media-viewer-divider" role="separator" />
             </div>
           )}
-
-          {isCurrentImage && <div className="media-viewer-divider" role="separator" />}
 
           <button
             type="button"
@@ -319,7 +411,6 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
           >
             <Download size={16} />
           </button>
-
           <button
             type="button"
             className="media-viewer-action-btn"
@@ -330,12 +421,11 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
           >
             <ExternalLink size={16} />
           </button>
-
           <button
             type="button"
             className="media-viewer-action-btn media-viewer-close-btn"
-            aria-label="Fechar visualizador (ESC)"
-            title="Fechar (ESC ou clique fora)"
+            aria-label="Fechar visualizador"
+            title="Fechar (ESC)"
             onClick={closeViewer}
           >
             <X size={18} />
@@ -344,9 +434,9 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
       </header>
 
       <div
-        className={`media-viewer-stage ${isCurrentImage ? 'is-image' : 'is-video'}`}
+        ref={stageRef}
+        className={`media-viewer-stage ${isCurrentImage ? 'is-image' : 'is-video'} ${zoom > 1 ? 'is-zoomed' : ''} ${isDragging ? 'is-dragging' : ''}`}
         onClick={handleStageClick}
-        onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={stopDragging}
@@ -354,36 +444,56 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {isCurrentImage ? (
+        {loadState === 'loading' && isCurrentImage && (
+          <span className="media-viewer-loading" aria-live="polite">
+            <Loader2 size={26} className="media-viewer-spinner" aria-hidden="true" />
+            <span>Carregando imagem…</span>
+          </span>
+        )}
+
+        {loadState === 'error' ? (
+          <div className="media-viewer-error" role="alert" onClick={(event) => event.stopPropagation()}>
+            <AlertTriangle size={22} aria-hidden="true" />
+            <strong>Não foi possível exibir esta mídia</strong>
+            <span>O arquivo pode ter expirado ou estar indisponível no momento.</span>
+            {effectiveSrc && (
+              <button type="button" className="media-viewer-error-btn" onClick={handleOpenExternal}>
+                <ExternalLink size={14} /> Tentar abrir o original
+              </button>
+            )}
+          </div>
+        ) : isCurrentImage ? (
           <img
             key={effectiveSrc || activeIndex}
-            className={`media-viewer-image ${zoom > 1 ? 'is-zoomed' : ''}`}
+            className={`media-viewer-image ${zoom > 1 ? 'is-zoomed' : ''} ${loadState === 'ready' ? 'is-ready' : ''}`}
             src={effectiveSrc}
-            alt={activeMedia.alt || alt}
+            alt={mediaTitle}
             draggable="false"
+            onLoad={() => setLoadState('ready')}
+            onError={() => setLoadState('error')}
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => {
               event.stopPropagation();
               if (zoom > 1) {
-                resetImage();
+                setImageZoom(1);
               } else {
-                setImageZoom(2.5);
+                setImageZoom(2.5, anchorFromEvent(event));
               }
             }}
             style={{
-              transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+              transform: `translate(${position.x}px, ${position.y}px) scale(${zoom}) rotate(${rotation}deg)`,
             }}
           />
         ) : (
           <video
             key={effectiveSrc || activeIndex}
             ref={videoRef}
-            className="media-viewer-video"
-            controls
-            autoPlay
+            className="media-viewer-video" controls autoPlay
             preload="metadata"
             poster={activeMedia.poster || poster || undefined}
             src={effectiveSrc}
+            onLoadedData={() => setLoadState('ready')}
+            onError={() => setLoadState('error')}
             onClick={(event) => event.stopPropagation()}
           >
             Seu navegador não suporta vídeo.
@@ -391,13 +501,13 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
         )}
       </div>
 
-      {mediaGallery.length > 1 && (
+      {imageGallery.length > 1 && (
         <>
           <button
             type="button"
             className="media-viewer-nav media-viewer-nav-prev"
-            aria-label="Mídia anterior (Seta esquerda)"
-            title="Mídia anterior"
+            aria-label="Mídia anterior"
+            title="Anterior (seta esquerda)"
             disabled={!canGoPrevious}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
@@ -407,12 +517,11 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
           >
             <ChevronLeft size={24} />
           </button>
-
           <button
             type="button"
             className="media-viewer-nav media-viewer-nav-next"
-            aria-label="Próxima mídia (Seta direita)"
-            title="Próxima mídia"
+            aria-label="Próxima mídia"
+            title="Próxima (seta direita)"
             disabled={!canGoNext}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
@@ -427,7 +536,7 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
 
       {activeMedia.caption && (
         <div
-          className={`media-viewer-caption ${mediaGallery.length > 1 ? 'has-thumbnails' : ''}`}
+          className={`media-viewer-caption ${imageGallery.length > 1 ? 'has-thumbnails' : ''}`}
           aria-label="Legenda"
           onClick={(event) => event.stopPropagation()}
         >
@@ -435,7 +544,7 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
         </div>
       )}
 
-      {mediaGallery.length > 1 && (
+      {imageGallery.length > 1 && (
         <div
           className="media-viewer-thumbnails"
           role="tablist"
@@ -443,7 +552,7 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          {mediaGallery.map((item, idx) => {
+          {imageGallery.map((item, idx) => {
             const isActive = idx === activeIndex;
             const isItemVideo = item.kind === 'video';
             const thumbSrc = item.poster || item.src;
@@ -478,11 +587,15 @@ export function MediaViewer({ kind = 'image', src, alt, poster, gallery = [], in
         </div>
       )}
 
-      <div className="media-viewer-hint" aria-hidden="true">
-        <span>Clique fora ou ESC para fechar</span>
-        {isCurrentImage && <span>• Rolagem para zoom</span>}
-        {mediaGallery.length > 1 && <span>• Setas para navegar</span>}
-      </div>
+      {isCurrentImage && (
+        <div className="media-viewer-hint" aria-hidden="true">
+          <kbd>Roda</kbd> zoom no cursor
+          <kbd>Arrastar</kbd> mover
+          <kbd>R</kbd> girar
+          {imageGallery.length > 1 && (<><kbd>← →</kbd> navegar</>)}
+          <kbd>Esc</kbd> fechar
+        </div>
+      )}
     </div>
   );
 

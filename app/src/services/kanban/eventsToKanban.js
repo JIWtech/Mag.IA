@@ -19,6 +19,9 @@ import { sortKanbanCardsByConversationActivity } from './applyIncomingEvent.js';
 import { emptyFunnel, formatCurrency } from '../funnel/funnelHelpers.js';
 import { buildSalesLeadIndex as buildSalesLeadIndexWithHelpers, resolveSalesControlMode } from '../leads/leadDataReads.js';
 import { resolveContactCategory } from '../contacts/contactCategory.js';
+import { normalizeMedia } from '../media/mediaNormalization.js';
+import { mediaPreview } from '../media/mediaPresentation.js';
+import { formatConversationPreview } from '../../utils/audioUtils.js';
 
 export function eventsToKanban(
   events,
@@ -234,6 +237,10 @@ export function eventsToKanban(
       title: resolveConversationDisplayName(identityEvent, `Contato ${channelType.label}`),
       subtitle: salesFinancingSummary(salesLead, tenantSlug)
         || activityEvent.message_text
+        || (() => {
+          const media = normalizeMedia(activityEvent.raw_payload, activityEvent);
+          return formatConversationPreview(media?.caption || (media?.kind === 'image' ? '[image]' : mediaPreview(media)));
+        })()
         || (!['sales_stage_changed', 'kanban_stage_changed', 'kanban_move', 'resume_ai', 'conversation_assigned', 'conversation_closed', 'handoff_requested'].includes(activityEvent.service) && activityEvent.service)
         || 'Mensagem recente',
       channel: channelType.label,

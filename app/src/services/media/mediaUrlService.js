@@ -198,7 +198,7 @@ export async function resolveSingleMediaUrl(media, supabase, { force = false } =
   return '';
 }
 
-export async function enrichMediaUrls(events, supabase) {
+export async function enrichMediaUrls(events, supabase, { cacheOnly = false } = {}) {
   if (!Array.isArray(events) || !events.length || !supabase) return events || [];
   const targets = new Map();
 
@@ -226,6 +226,7 @@ export async function enrichMediaUrls(events, supabase) {
     if (cached && cached.error && cached.expiresAt > Date.now()) {
       return;
     }
+    if (cacheOnly) return;
 
     let request = mediaUrlRequestCache.get(key);
     if (!request) {

@@ -111,7 +111,7 @@ test('dataService facade: preserves identical exports and behavior for emptyKanb
 });
 
 test('integration: canonicalKanbanKey continues to support getStageTone and getStageLabel correctly', () => {
-  assert.equal(getStageTone('sinal_pago'), 'slate');
+  assert.equal(getStageTone('sinal_pago'), 'lime');
   assert.equal(getStageTone('sales_closed'), 'green');
   assert.equal(getStageTone('sales_new'), 'blue');
   assert.equal(getStageLabel('sales_appraisal', { tenantSlug: 'wesley_automoveis' }), 'Avaliacao de retoma - Compra');

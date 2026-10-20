@@ -17,7 +17,7 @@ import { mediaPreview } from '../media/mediaPresentation.js';
 import { normalizeMedia } from '../media/mediaNormalization.js';
 import { resolveSalesControlMode } from '../leads/leadDataReads.js';
 import { getStageLabel, findKanbanColumn } from '../kanban/stageResolution.js';
-import { shouldHideGenericLeadInquiry, isCustomerInboundEvent, isFollowUpOutboundEvent } from './conversationEventState.js';
+import { shouldHideGenericLeadInquiry, isGenericLeadInquiry, isCustomerInboundEvent, isFollowUpOutboundEvent } from './conversationEventState.js';
 import { resolveContactCategory } from '../contacts/contactCategory.js';
 
 export function eventsToConversations(events = [], tenantSlug = '', teamAgents = [], kanbanColumns = []) {
@@ -35,7 +35,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
   for (let eventIndex = 0; eventIndex < sortedChronological.length; eventIndex += 1) {
     const event = sortedChronological[eventIndex];
     if (tenantSlug && event.tenant_slug && event.tenant_slug !== tenantSlug) continue;
-    if (shouldHideGenericLeadInquiry(event, sortedChronological.slice(eventIndex + 1))) continue;
+    if (isGenericLeadInquiry(event) && shouldHideGenericLeadInquiry(event, sortedChronological.slice(eventIndex + 1))) continue;
     // Mantém o evento em channel_events para auditoria, mas não materializa
     // operações internas como mensagens da conversa.
     if (isInternalOperationalEvent(event)) continue;
@@ -287,6 +287,9 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         });
         if (conversation.status !== 'finalizado' && (controlMode === 'ai' || controlMode === 'human')) {
           conversation.status = controlMode === 'ai' ? 'ia_ativa' : 'atendimento_humano';
+          conversation.owner = matchingCard.owner;
+          conversation.ownerId = controlMode === 'ai' ? null : matchingCard.ownerId || null;
+          conversation.ownerKind = matchingCard.ownerKind;
           const matchingColumn = findKanbanColumn(kanbanColumns, matchingCard.salesStageKey || matchingCard.targetColumnId);
           conversation.stage = matchingColumn?.title || matchingCard.stage || getStageLabel(matchingCard.salesStageKey, { kanbanColumns, tenantSlug });
         }

@@ -1,0 +1,61 @@
+/* ==========================================================================
+   Cores das etapas comerciais — fonte única para Kanban e Conversas.
+   Os valores espelham STAGE_TONES em services/kanban/stageTone.js.
+   Uso: adicione a classe `tone-<nome>` e leia var(--tone) / var(--tone-rgb).
+   ========================================================================== */
+
+.tone-blue { --tone: #60a5fa; --tone-rgb: 96, 165, 250; }
+.tone-cyan { --tone: #22d3ee; --tone-rgb: 34, 211, 238; }
+.tone-orange { --tone: #fb923c; --tone-rgb: 251, 146, 60; }
+.tone-yellow { --tone: #facc15; --tone-rgb: 250, 204, 21; }
+.tone-violet { --tone: #a78bfa; --tone-rgb: 167, 139, 250; }
+.tone-lime { --tone: #a3e635; --tone-rgb: 163, 230, 53; }
+.tone-pink { --tone: #f472b6; --tone-rgb: 244, 114, 182; }
+.tone-indigo { --tone: #818cf8; --tone-rgb: 129, 140, 248; }
+.tone-teal { --tone: #2dd4bf; --tone-rgb: 45, 212, 191; }
+.tone-green { --tone: #4ade80; --tone-rgb: 74, 222, 128; }
+.tone-red { --tone: #f87171; --tone-rgb: 248, 113, 113; }
+.tone-slate { --tone: #94a3b8; --tone-rgb: 148, 163, 184; }
+
+/* Etiqueta de etapa (lista de conversas e cabeçalho do chat) */
+.stage-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  background: rgba(var(--tone-rgb, 148, 163, 184), 0.12);
+  color: var(--tone, #94a3b8);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.stage-tag::before {
+  content: '';
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone, #94a3b8);
+}
+
+.stage-tag > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Kanban: coluna e atalho leem a cor da etapa */
+.kanban-column.has-tone {
+  --kanban-stage-accent: var(--tone);
+  --kanban-stage-tint: rgba(var(--tone-rgb), 0.12);
+}
+
+.kanban-stage-shortcut.has-tone {
+  --stage-accent: var(--tone);
+  --stage-tint: rgba(var(--tone-rgb), 0.09);
+}

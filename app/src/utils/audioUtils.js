@@ -196,8 +196,23 @@ export const PLACEHOLDERS_BY_KIND = {
  * @param {string} text
  * @returns {string}
  */
-export function normalizeTechnicalMediaPlaceholder(text) {
-  if (typeof text !== 'string') return text || '';
+// Marcadores de controle do motor NORIA que nunca devem aparecer para o operador.
+const INTERNAL_CONTROL_TAG_PATTERN = /\[(?:HUMANO_SOLICITADO|SEM_FALA_INTELIGIVEL|A[CÇ][AÃ]O\s*:[^\]]*)\]/gi;
+
+export function stripInternalControlTags(text) {
+  if (typeof text !== 'string' || !text.includes('[')) return text;
+  INTERNAL_CONTROL_TAG_PATTERN.lastIndex = 0;
+  if (!INTERNAL_CONTROL_TAG_PATTERN.test(text)) return text;
+  return text
+    .replace(INTERNAL_CONTROL_TAG_PATTERN, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+}
+
+export function normalizeTechnicalMediaPlaceholder(rawText) {
+  if (typeof rawText !== 'string') return rawText || '';
+  const text = stripInternalControlTags(rawText);
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
 
@@ -255,7 +270,7 @@ export function isTechnicalMediaPlaceholder(text, media) {
  * @returns {string}
  */
 export function formatConversationPreview(message, media = null) {
-  const text = String(message || '').trim();
+  const text = stripInternalControlTags(String(message || '').trim());
   const lower = text.toLowerCase();
   if (lower === '/reset' || lower === 'reset') {
     return 'Conversa reiniciada';

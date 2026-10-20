@@ -5233,7 +5233,28 @@ async function runSalesTurnPrepare(context, history, event, control) {
   // Transcribe before ALL commercial intent and inventory/lead decisions.
   // Otherwise those checks see '[audio]' instead of the spoken message.
   // Technical failures go to the shared durable hold, not an unbounded retry.
-  await transcribeTurnAudio(context);
+  await transcribeTurnAudio(context, { tolerateUnintelligible: true });
+  if (turn.audio_unintelligible?.length) {
+    const unintelligibleIds = new Set(turn.audio_unintelligible);
+    const spoken = turn.messages.filter(message => !unintelligibleIds.has(message.event_id) && String(message.text || '').trim());
+    if (!spoken.length) {
+      // Only unintelligible audio in this batch: ask for a resend and finish the
+      // turn with its normal delivery receipt. Later messages form a new batch.
+      if (!await commit()) return { ok: true, skipped: true, reason: 'superseded' };
+      Object.assign(event, {
+        ai_provider: 'audio_unintelligible', service: 'audio_unintelligible', handoff: false,
+        stage: lead?.stage_key || cfg.stage_keys.initial,
+        raw_payload: { ...(event.raw_payload || {}), audio_unintelligible_event_ids: [...unintelligibleIds] }
+      });
+      await saveEvent(event);
+      const sentAudioReply = await sendChannelMessage(context, mediaFallbackText({ category: 'audio' }, 'media_audio_unintelligible'), event);
+      await complete('done');
+      return { ok: true, audio_unintelligible: true, ...sentAudioReply };
+    }
+    // Mixed batch: continue with the intelligible messages only.
+    turn.messages = spoken;
+    setCurrentText(turn.messages.map(row => row.text).filter(Boolean).join('\n\n'));
+  }
   const inboundMediaShape = salesInboundMediaShape(turn.messages);
   const currentTurnText = turn.messages.map(message => message?.text || '').join('\n\n');
   const tradeInResult = executeCommercialOperationSync(context, 'vehicle.trade_in', { history, messages: turn.messages, previous: lead?.state || {}, prior_pending: salesLastPendingRequirement(history) });

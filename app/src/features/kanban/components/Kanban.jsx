@@ -242,7 +242,7 @@ export function Kanban({
     if (norm.includes('insta')) return 'channel-instagram';
     return 'channel-telegram';
   };
-  const getColumnPresentation = (column = {}) => {
+  const getBaseColumnPresentation = (column = {}) => {
     const key = [column.automationKey, column.id, column.title]
       .filter(Boolean)
       .join(' ')
@@ -289,6 +289,13 @@ export function Kanban({
     }
     return { tone: 'cyan', shortLabel: column.title || 'Etapa', description: 'Conversas nesta etapa.', Icon: Inbox };
   };
+
+  // A cor vem sempre da paleta canônica (stageTone.js): a mesma etapa tem a mesma cor
+  // no Kanban e nas Conversas, e etapas diferentes nunca repetem cor.
+  const getColumnPresentation = (column = {}) => ({
+    ...getBaseColumnPresentation(column),
+    tone: getStageTone(column.automationKey || column.id || column.title),
+  });
 
   const filteredColumns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -528,7 +535,7 @@ export function Kanban({
                 <button
                   key={column.id}
                   type="button"
-                  className={`kanban-stage-shortcut kanban-stage-shortcut--${presentation.tone} ${activeColumnId === column.id ? 'active' : ''}`}
+                  className={`kanban-stage-shortcut kanban-stage-shortcut--${presentation.tone} has-tone tone-${presentation.tone} ${activeColumnId === column.id ? 'active' : ''}`}
                   onClick={() => scrollToColumn(column.id)}
                   title={`Ir para ${presentation.displayTitle || column.title}`}
                   aria-label={`Ir para etapa ${presentation.displayTitle || column.title}`}
@@ -574,7 +581,7 @@ export function Kanban({
 
           return (
             <div
-              className={`kanban-column kanban-column--${presentation.tone} ${isDragOver ? 'is-dragover' : ''}`}
+              className={`kanban-column kanban-column--${presentation.tone} has-tone tone-${presentation.tone} ${isDragOver ? 'is-dragover' : ''}`}
               key={column.id}
               data-column-id={column.id}
               ref={(node) => {
@@ -643,7 +650,7 @@ export function Kanban({
                             <small className="card-time">{card.lastAt}</small>
                           </div>
 
-                          <p className="card-subtitle" title={card.subtitle || ''}>{formatConversationPreview(card.subtitle)}</p>
+                          <p className="card-subtitle" title={formatConversationPreview(card.subtitle)}>{formatConversationPreview(card.subtitle)}</p>
 
                           {isWaitingColumn && (
                             <div className="waiting-sla-badge">

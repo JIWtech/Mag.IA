@@ -1,5 +1,18 @@
-import React from 'react';
-import { Bot, ChevronDown, UserRound } from 'lucide-react';
+import React, { useState, useRef, useLayoutEffect } from 'react';
+import {
+  Archive,
+  ArrowRightLeft,
+  Bot,
+  BotOff,
+  CheckCircle2,
+  ChevronDown,
+  CircleDollarSign,
+  Headset,
+  Info,
+  Send,
+  UserCheck,
+  UserRound,
+} from 'lucide-react';
 import {
   isMediaPlaceholderForKind,
   isTechnicalMediaPlaceholder,
@@ -15,6 +28,40 @@ import { MediaAttachment } from './MediaAttachment.jsx';
 import { MediaMeta } from './MediaMeta.jsx';
 import { TranscribedAudioCard } from './TranscribedAudioCard.jsx';
 
+const SYSTEM_EVENT_ICONS = {
+  closed: CheckCircle2,
+  assigned: UserCheck,
+  ai_on: Bot,
+  ai_off: BotOff,
+  handoff: Headset,
+  abandoned: Archive,
+  stage: ArrowRightLeft,
+  payment: CircleDollarSign,
+  follow_up: Send,
+  generic: Info,
+};
+
+function SystemEventRow({ message }) {
+  const rawEvent = message.systemEvent || { kind: 'generic', title: message.systemLabel, detail: '' };
+  // "Atualização do atendimento" is a placeholder: the detail already says what happened.
+  const event = rawEvent.kind === 'generic' && rawEvent.detail
+    ? { ...rawEvent, title: rawEvent.detail, detail: '' } : rawEvent;
+  const Icon = SYSTEM_EVENT_ICONS[event.kind] || Info;
+  const label = [event.title, event.detail, message.formattedTime].filter(Boolean).join(' · ');
+  return (
+    <div className={`system-event-row kind-${event.kind}`} role="status" aria-label={label}>
+      <span className="system-event-icon" aria-hidden="true">
+        <Icon size={14} />
+      </span>
+      <div className="system-event-body">
+        <span className="system-event-title">{event.title}</span>
+        {event.detail && <span className="system-event-detail">{event.detail}</span>}
+      </div>
+      {message.formattedTime && <time className="system-event-time">{message.formattedTime}</time>}
+    </div>
+  );
+}
+
 function ConversationTimelineComponent({
   groupedMessages = [],
   messageStreamRef,
@@ -24,10 +71,29 @@ function ConversationTimelineComponent({
   isScrolledUp = false,
   storeLocation = null,
 }) {
+  const [visibleLimit, setVisibleLimit] = useState(80);
+  const previousScroll = useRef(null);
+  useLayoutEffect(() => {
+    const stream = messageStreamRef?.current;
+    if (stream && previousScroll.current) {
+      stream.scrollTop = previousScroll.current.top + stream.scrollHeight - previousScroll.current.height;
+      previousScroll.current = null;
+    }
+  }, [visibleLimit, messageStreamRef]);
+  const visibleMessages = groupedMessages.slice(-visibleLimit);
   return (
     <div className="message-stream" ref={messageStreamRef}>
       <div className="message-stream-inner">
-        {groupedMessages.map((message, index) => {
+        {groupedMessages.length > visibleLimit && (
+          <button type="button" className="timeline-load-older" onClick={() => {
+            const stream = messageStreamRef?.current;
+            if (stream) previousScroll.current = { top: stream.scrollTop, height: stream.scrollHeight };
+            setVisibleLimit(limit => limit + 80);
+          }}>
+            Mostrar mensagens anteriores
+          </button>
+        )}
+        {visibleMessages.map((message, index) => {
           const key = message.eventId
             ? `event-${message.eventId}`
             : `msg-${message.createdAt || message.at}-${message.senderType || 'contact'}-${index}`;
@@ -40,12 +106,7 @@ function ConversationTimelineComponent({
                     <span className="date-separator-pill">{message.dateSeparatorLabel}</span>
                   </div>
                 )}
-                <div className="system-event-row" role="status" aria-label={message.systemLabel}>
-                  <div className="system-event-pill">
-                    <span className="system-event-text">{message.systemLabel}</span>
-                    <span className="system-event-time">· {message.formattedTime}</span>
-                  </div>
-                </div>
+                <SystemEventRow message={message} />
               </React.Fragment>
             );
           }
@@ -55,7 +116,7 @@ function ConversationTimelineComponent({
           const isSticker = mediaKind === 'sticker';
           const visualCaption = isVisualMedia ? resolveVisualMediaCaption(message.media, message.text) : '';
           const mediaMeta = isVisualMedia ? { time: message.formattedTime, showChecks: message.isAi || message.isAgent } : null;
-          const imageGallery = isVisualMedia ? consecutiveImageGallery(groupedMessages, index) : null;
+          const imageGallery = isVisualMedia ? consecutiveImageGallery(visibleMessages, index) : null;
           const senderClass = message.isAi ? 'ai' : message.isAgent ? 'agent' : 'contact';
 
           const trimmedText = String(message.text || '').trim().toLowerCase();

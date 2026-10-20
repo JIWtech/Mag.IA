@@ -20,6 +20,9 @@ export function AppTopbar({
   notificationTenantId,
   notificationUserId,
   notificationConversations,
+  notificationAppointments,
+  notificationKanbanColumns,
+  onOpenNotificationPage,
   onOpenNotificationConversation,
 }) {
   const handleOpenMobileNav = () => {
@@ -69,7 +72,11 @@ export function AppTopbar({
             tenantId={notificationTenantId}
             userId={notificationUserId}
             tenantName={selectedTenant?.name}
+            tenantSlug={activeTenantSlug}
             conversations={notificationConversations}
+            appointments={notificationAppointments}
+            kanbanColumns={notificationKanbanColumns}
+            onOpenPage={onOpenNotificationPage}
             onOpenConversation={onOpenNotificationConversation}
           />
           <button className="icon-button" type="button" title="Atualizar" aria-label="Atualizar" onClick={refreshData}>

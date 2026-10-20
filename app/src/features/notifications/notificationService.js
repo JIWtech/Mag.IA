@@ -4,10 +4,10 @@ export const INBOX_CONTRACT = 'noria_turn_inbox_v1';
 
 export function notificationError(error) {
   if (error?.code === 'PGRST202' || error?.code === '42883') {
-    return 'A central de notificações aguarda a implantação do backend.';
+    return 'O histórico de avisos de atendimento está temporariamente indisponível.';
   }
   if (error?.message?.includes('TURN_REVIEW_FORBIDDEN') || error?.code === '42501') {
-    return 'Sua conta ainda não tem permissão para acompanhar incidentes desta empresa.';
+    return 'Sua conta não tem acesso ao histórico de avisos desta empresa.';
   }
   return 'Não foi possível sincronizar as notificações. Tentaremos reconectar.';
 }
@@ -48,15 +48,15 @@ export function validateInboxRead(data, tenantId) {
 
 export function incidentPresentation(item) {
   if (item.resolved_at) return {
-    title: 'Incidente encerrado', status: 'Encerrado', kind: 'closed',
-    description: 'O encerramento foi registrado. Consulte os detalhes para verificar a resolução.',
+    title: 'Pendência de atendimento resolvida', status: 'Resolvido', kind: 'closed',
+    description: 'A pendência foi encerrada. Abra a conversa para acompanhar o atendimento.',
   };
   if (item.phase === 'uncertain') return {
-    title: 'Confirmação de envio pendente', status: 'Entrega incerta', kind: 'uncertain',
-    description: 'A mensagem aguarda reconciliação para evitar um envio duplicado.',
+    title: 'Confira o envio da mensagem', status: 'Precisa de atenção', kind: 'uncertain',
+    description: 'A entrega ainda não foi confirmada. Confira a conversa antes de enviar novamente.',
   };
   return {
-    title: 'Revisão necessária', status: 'Em revisão', kind: 'review',
-    description: 'O atendimento foi interrompido e uma mensagem foi preservada para análise.',
+    title: 'Atendimento precisa da equipe', status: 'Precisa de atenção', kind: 'review',
+    description: 'A IA não conseguiu continuar este atendimento. Abra a conversa para ajudar o cliente.',
   };
 }

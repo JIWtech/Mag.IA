@@ -277,18 +277,140 @@
   box-shadow: 0 0 0 2px var(--brand);
 }
 
+/* Volume: ícone silencia/reativa; o controle deslizante abre ao passar o mouse.
+   O nível escolhido é salvo (utils/audioPreferences.js) e vale para todos os áudios. */
 .audio-volume-control {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   color: var(--muted);
 }
 
-.audio-volume-control input {
-  width: 48px;
-  accent-color: var(--brand);
+.audio-mute-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
+
+.audio-mute-btn:hover {
+  background: rgba(242, 244, 247, 0.1);
+  color: var(--text);
+}
+
+.audio-mute-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.audio-volume-control.is-muted .audio-mute-btn {
+  color: #f87171;
+}
+
+.audio-volume-control input {
+  --volume: 100%;
+  width: 0;
+  height: 4px;
+  margin: 0;
+  opacity: 0;
+  border-radius: 999px;
+  background: linear-gradient(to right, currentColor var(--volume), rgba(242, 244, 247, 0.16) var(--volume));
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: width 0.2s ease, opacity 0.2s ease, margin 0.2s ease;
+}
+
+.audio-volume-control:hover input,
+.audio-volume-control:focus-within input {
+  width: 56px;
+  margin: 0 4px;
+  opacity: 1;
+}
+
+.audio-volume-control:hover,
+.audio-volume-control:focus-within {
+  color: var(--text);
+}
+
+.audio-volume-control input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.audio-volume-control input::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+/* Forma de onda no lugar da barra lisa */
+.audio-track.has-waveform {
+  height: 28px;
+  background: transparent;
+  border-radius: 0;
+}
+
+.audio-timeline:has(.has-waveform) {
+  height: 30px;
+}
+
+.audio-timeline:hover .audio-track.has-waveform,
+.audio-timeline.is-seeking .audio-track.has-waveform {
+  height: 28px;
+}
+
+.audio-track.has-waveform .audio-progress-bar {
+  display: none;
+}
+
+.audio-waveform {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.audio-waveform span {
+  flex: 1 1 0;
+  min-width: 2px;
+  border-radius: 2px;
+  background: rgba(242, 244, 247, 0.22);
+  transition: background-color 0.12s linear, transform 0.15s ease;
+}
+
+.audio-waveform span.is-played {
+  background: var(--audio-accent, var(--brand));
+}
+
+.audio-timeline:hover .audio-waveform span {
+  transform: scaleY(1.08);
+}
+
+.audio-track.has-waveform .audio-thumb {
+  width: 3px;
+  height: 30px;
+  border-radius: 2px;
+  background: var(--audio-accent, var(--brand));
+  box-shadow: none;
+}
+
+.bubble.contact .audio-message-player { --audio-accent: #22d3ee; }
+.bubble.ai .audio-message-player { --audio-accent: #b4a7ff; }
+.bubble.agent .audio-message-player { --audio-accent: #67e8f9; }
 
 /* Estado de Erro de Áudio */
 .audio-player-error {

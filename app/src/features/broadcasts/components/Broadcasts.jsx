@@ -8,10 +8,15 @@ import {
   AlertTriangle,
   RotateCcw,
   CheckCircle2,
+  Upload,
+  FileSpreadsheet,
+  Download,
+  MessagesSquare,
+  ClipboardPaste,
+  Info,
+  Loader2,
+  Send,
 } from 'lucide-react';
-import { Badge } from '../../../components/ui/Badge';
-import { PanelTitle } from '../../../components/ui/PanelTitle';
-import { EmptyState } from '../../../components/ui/EmptyState';
 import { ContactAvatar } from '../../../components/ui/ContactAvatar';
 import { ChannelIcon, getChannelClass } from '../../../components/ui/ChannelIcon';
 import { SkeletonBlock, SkeletonLine } from '../../../components/ui/Skeletons';
@@ -33,6 +38,7 @@ import { sendN8nCommand } from '../../../services/integration.js';
 import { CHANNEL_OPTIONS } from '../../../services/tenants/tenantAccess.js';
 import {
   parseContactFile,
+  SUPPORTED_CONTACT_FORMATS,
   normalizeImportedContact,
   conversationToBroadcastContact,
   contactKey,
@@ -50,8 +56,15 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
   const [contactSearch, setContactSearch] = useState('');
   const [stageFilter, setStageFilter] = useState('');
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState('');
+  const [status, setStatusState] = useState({ message: '', tone: 'info' });
+  // tone: 'info' | 'progress' | 'success' | 'error'
+  const setStatus = (message, tone = 'info') => setStatusState({ message: message || '', tone });
   const abortControllerRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+  const [importSummary, setImportSummary] = useState(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
 
   const broadcastOps = useMemo(() => {
     return createBroadcastOperations({
@@ -89,25 +102,69 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
   }, [allContacts, contactSearch]);
   const allVisibleSelected = visibleContacts.length > 0 && visibleContacts.every((contact) => selected.has(contact.key || contactKey(contact)));
 
-  async function handleFile(event) {
-    const file = event.target.files?.[0];
+  async function importFile(file) {
     if (!file) return;
+    const existing = new Set(allContacts.map((contact) => contact.key || contactKey(contact)));
     try {
       const parsed = await parseContactFile(file);
-      const normalized = parsed.map((row) => normalizeImportedContact(row, defaultChannel))
-        .filter((row) => row.externalConversationId && allowedChannels.includes(row.channelType));
-      setDraftContacts((prev) => mergeBroadcastContacts(prev, normalized));
+      const normalized = parsed.map((row) => normalizeImportedContact(row, defaultChannel));
+      const valid = normalized.filter((row) => row.externalConversationId && allowedChannels.includes(row.channelType));
+      const unique = new Map();
+      valid.forEach((row) => unique.set(row.key, row));
+      const fresh = Array.from(unique.values()).filter((row) => !existing.has(row.key));
+      setDraftContacts((prev) => mergeBroadcastContacts(prev, Array.from(unique.values())));
       setSelected((prev) => {
         const next = new Set(prev);
-        normalized.forEach((contact) => next.add(contactKey(contact)));
+        unique.forEach((contact, key) => next.add(key));
         return next;
       });
-      setStatus(`${normalized.length} contatos importados.`);
+      setImportSummary({
+        fileName: file.name,
+        total: normalized.length,
+        imported: unique.size,
+        added: fresh.length,
+        duplicates: valid.length - unique.size,
+        ignored: normalized.length - valid.length,
+      });
+      if (!allowedChannels.length) {
+        setStatus('Nenhum canal de envio está habilitado para esta empresa. Ative um canal em Configurações para importar contatos.', 'error');
+      } else if (!unique.size) {
+        setStatus(`Nenhum contato válido em ${file.name}. Confira se há uma coluna de telefone.`, 'error');
+      } else {
+        setStatus(`${unique.size} contatos importados de ${file.name}.`, 'success');
+      }
     } catch (error) {
-      setStatus(error.message || 'Nao foi possivel importar a planilha.');
-    } finally {
-      event.target.value = '';
+      setImportSummary(null);
+      setStatus(error.message || 'Nao foi possivel importar a planilha.', 'error');
     }
+  }
+
+  async function handleFile(event) {
+    const file = event.target.files?.[0];
+    await importFile(file);
+    event.target.value = '';
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    setDragging(false);
+    void importFile(event.dataTransfer?.files?.[0]);
+  }
+
+  async function importPastedText() {
+    await importFile(new File([pasteText], 'lista-colada.txt', { type: 'text/plain' }));
+    setPasteText('');
+    setPasteOpen(false);
+  }
+
+  function downloadTemplate() {
+    const csv = '\uFEFFnome;telefone;canal\nMaria Silva;5521999990000;whatsapp\nJoão Souza;(21) 98888-0000;whatsapp\n';
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'modelo-contatos-disparo.csv';
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   function addRecentContacts() {
@@ -118,7 +175,8 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
       recent.forEach((contact) => next.add(contactKey(contact)));
       return next;
     });
-    setStatus(`${recent.length} contatos recentes adicionados.`);
+    if (!recent.length) setStatus('Nenhuma conversa recente tem telefone para adicionar.', 'info');
+    else setStatus(`${recent.length} contatos recentes adicionados.`, 'success');
   }
 
   function addStageContacts() {
@@ -133,7 +191,8 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
       stageContacts.forEach((contact) => next.add(contactKey(contact)));
       return next;
     });
-    setStatus(`${stageContacts.length} contatos do quadro adicionados.`);
+    if (!stageContacts.length) setStatus('Nenhum contato com telefone nesta etapa do quadro.', 'info');
+    else setStatus(`${stageContacts.length} contatos do quadro adicionados.`, 'success');
   }
 
   function toggleContact(key) {
@@ -185,7 +244,7 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
   async function resumeCampaign(campaignToResume) {
     if (busy || !campaignToResume) return;
     setBusy(true);
-    setStatus(`Retomando campanha "${campaignToResume.name}" de forma segura...`);
+    setStatus(`Retomando campanha "${campaignToResume.name}" de forma segura...`, 'progress');
 
     const abortController = typeof window !== 'undefined' && window.AbortController ? new window.AbortController() : null;
     abortControllerRef.current = abortController;
@@ -212,17 +271,17 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
         abortSignal: abortController?.signal,
         delayMs: 1200,
         onProgress: ({ message: stepMessage }) => {
-          setStatus(stepMessage || 'Aguardando próximo envio...');
+          setStatus(stepMessage || 'Aguardando próximo envio...', 'progress');
         },
       });
 
       const finalRecipients = await broadcastOps.getBroadcastCampaignRecipients(campaignToResume.id);
       const counters = calculateCampaignCounters(finalRecipients);
 
-      setStatus(`Retomada concluída: ${counters.sent} enviados, ${counters.failed} falhas${counters.unknown ? `, ${counters.unknown} incertos` : ''}.`);
+      setStatus(`Retomada concluída: ${counters.sent} enviados, ${counters.failed} falhas${counters.unknown ? `, ${counters.unknown} incertos` : ''}.`, 'success');
       await onChanged?.();
     } catch (error) {
-      setStatus(error.message || 'Falha ao retomar campanha.');
+      setStatus(error.message || 'Falha ao retomar campanha.', 'error');
     } finally {
       setBusy(false);
       abortControllerRef.current = null;
@@ -243,10 +302,10 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
         tenant_slug: tenantSlug,
       }, tenantSlug).catch(() => {});
 
-      setStatus(`Campanha "${campaignToCancel.name}" cancelada (${res.cancelled_recipients || 0} pendentes cancelados).`);
+      setStatus(`Campanha "${campaignToCancel.name}" cancelada (${res.cancelled_recipients || 0} pendentes cancelados).`, 'success');
       await onChanged?.();
     } catch (error) {
-      setStatus(error.message || 'Erro ao cancelar campanha.');
+      setStatus(error.message || 'Erro ao cancelar campanha.', 'error');
     } finally {
       setBusy(false);
     }
@@ -266,10 +325,10 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
           'Reconciliado manualmente pelo operador no painel'
         );
       }
-      setStatus(`${unknownList.length} envio(s) incertos reconciliados como ${targetStatus === RECIPIENT_STATUS.SENT ? 'enviados' : 'falha'}.`);
+      setStatus(`${unknownList.length} envio(s) incertos reconciliados como ${targetStatus === RECIPIENT_STATUS.SENT ? 'enviados' : 'falha'}.`, 'success');
       await onChanged?.();
     } catch (error) {
-      setStatus(error.message || 'Falha ao reconciliar envios incertos.');
+      setStatus(error.message || 'Falha ao reconciliar envios incertos.', 'error');
     } finally {
       setBusy(false);
     }
@@ -279,7 +338,7 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
     const text = messageText.trim();
     if (!text || !selectedContacts.length || busy) return;
     setBusy(true);
-    setStatus('Persistindo campanha e destinatários no servidor...');
+    setStatus('Salvando campanha e destinatários...', 'progress');
 
     let campaign = null;
     const abortController = typeof window !== 'undefined' && window.AbortController ? new window.AbortController() : null;
@@ -298,7 +357,7 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
         status: CAMPAIGN_STATUS.SENDING,
       }, recipients);
 
-      setStatus('Campanha persistida. Despachando lote com chave de idempotência...');
+      setStatus('Campanha salva. Iniciando os envios...', 'progress');
 
       // Dispara sinalização ao backend/n8n se disponível
       sendN8nCommand('broadcast_start', {
@@ -318,9 +377,9 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
         delayMs: 1200,
         onProgress: ({ phase, message: stepMessage }) => {
           if (phase === 'pacing' || phase === 'sending') {
-            setStatus(stepMessage || 'Aguardando próximo envio...');
+            setStatus(stepMessage || 'Aguardando próximo envio...', 'progress');
           } else if (phase === 'item_completed') {
-            setStatus('Processando destinatários persistidos...');
+            setStatus('Processando destinatários...', 'progress');
           }
         },
       });
@@ -328,7 +387,7 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
       const finalRecipients = await broadcastOps.getBroadcastCampaignRecipients(campaign.id);
       const finalCounters = calculateCampaignCounters(finalRecipients);
 
-      setStatus(`Disparo concluído: ${finalCounters.sent} enviados, ${finalCounters.failed} falhas${finalCounters.unknown ? `, ${finalCounters.unknown} incertos` : ''}.`);
+      setStatus(`Disparo concluído: ${finalCounters.sent} enviados, ${finalCounters.failed} falhas${finalCounters.unknown ? `, ${finalCounters.unknown} incertos` : ''}.`, 'success');
       setMessageText('');
       setCampaignName('');
       setSelected(new Set());
@@ -339,168 +398,291 @@ export function Broadcasts({ conversations = [], contacts = [], campaigns = [], 
           status: CAMPAIGN_STATUS.PARTIAL_ERROR,
         }).catch(() => {});
       }
-      setStatus(error.message || 'Falha ao executar disparo.');
+      setStatus(error.message || 'Falha ao executar disparo.', 'error');
     } finally {
       setBusy(false);
       abortControllerRef.current = null;
     }
   }
 
+  const channelLabel = CHANNEL_OPTIONS.find((option) => option.id === defaultChannel)?.label || defaultChannel;
+  const messageLimit = MESSAGE_LIMIT_BY_CHANNEL[defaultChannel] || 4096;
+  const messageTooLong = messageText.length > messageLimit;
+  const hasChannel = allowedChannels.length > 0;
+  const canSend = hasChannel && !busy && Boolean(messageText.trim()) && selectedContacts.length > 0 && !messageTooLong;
+  const recoverableHasUnknown = (recoverableCampaign?.unknown_count || 0) > 0;
+
   return (
-    <section className="broadcast-page">
-      <section className="panel broadcast-campaign-panel">
-        {recoverableCampaign && (
-          <div className="broadcast-interrupted-banner" style={{
-            margin: '0 0 1.25rem 0',
-            padding: '1rem 1.25rem',
-            borderRadius: '10px',
-            background: recoverableCampaign.unknown_count > 0 ? 'rgba(245, 158, 11, 0.08)' : 'rgba(59, 130, 246, 0.08)',
-            border: recoverableCampaign.unknown_count > 0 ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid rgba(59, 130, 246, 0.25)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '1rem',
-            flexWrap: 'wrap'
-          }}>
-            <div>
-              <div style={{ fontWeight: 600, color: '#f1f5f9', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                {recoverableCampaign.unknown_count > 0 ? (
-                  <AlertTriangle size={16} color="#f59e0b" />
-                ) : (
-                  <Clock3 size={16} color="#3b82f6" />
-                )}
-                <span>
-                  {recoverableCampaign.unknown_count > 0
-                    ? `Campanha com envios incertos: ${recoverableCampaign.name}`
-                    : `Campanha em andamento / recuperável: ${recoverableCampaign.name}`}
-                </span>
-              </div>
-              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: '#94a3b8' }}>
-                {recoverableCampaign.sent_count || 0} de {recoverableCampaign.total_recipients || 0} enviados
-                {recoverableCampaign.failed_count ? `, ${recoverableCampaign.failed_count} falhas` : ''}
-                {recoverableCampaign.unknown_count ? `, ${recoverableCampaign.unknown_count} incertos` : ''}.
-                Destinatários já processados são preservados e nunca serão duplicados.
-              </p>
-              {recoverableCampaign.unknown_count > 0 && (
-                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: '#fbbf24' }}>
-                  Aviso: {recoverableCampaign.unknown_count} destinatário(s) tiveram envio incerto. Para prevenir mensagens repetidas no WhatsApp, eles não serão reenviados automaticamente.
-                </p>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {(recoverableCampaign.sent_count || 0) < (recoverableCampaign.total_recipients || 0) && (
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => resumeCampaign(recoverableCampaign)}
-                  disabled={busy}
-                  style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
-                >
-                  <Play size={13} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Retomar envio
-                </button>
-              )}
-              {recoverableCampaign.unknown_count > 0 && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => reconcileUnknownRecipients(recoverableCampaign, RECIPIENT_STATUS.FAILED)}
-                  disabled={busy}
-                  style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem', borderColor: 'rgba(245, 158, 11, 0.4)' }}
-                  title="Conclui os envios incertos marcando-os como falha para não reenviar"
-                >
-                  <RotateCcw size={13} style={{ marginRight: '4px', verticalAlign: 'middle' }} /> Concluir incertos
-                </button>
-              )}
+    <section className="bc-page">
+      {recoverableCampaign && (
+        <div className={`bc-recover ${recoverableHasUnknown ? 'is-warning' : ''}`} role="status">
+          <span className="bc-recover-icon" aria-hidden="true">
+            {recoverableHasUnknown ? <AlertTriangle size={18} /> : <Clock3 size={18} />}
+          </span>
+          <div className="bc-recover-body">
+            <strong>
+              {recoverableHasUnknown ? 'Campanha com envios incertos' : 'Campanha em andamento'}
+              <span>{recoverableCampaign.name}</span>
+            </strong>
+            <CampaignProgress campaign={recoverableCampaign} />
+            <p>
+              Quem já recebeu nunca recebe de novo.
+              {recoverableHasUnknown && ` ${recoverableCampaign.unknown_count} envio(s) incerto(s) não são reenviados automaticamente, para evitar mensagem duplicada no WhatsApp.`}
+            </p>
+          </div>
+          <div className="bc-recover-actions">
+            {(recoverableCampaign.sent_count || 0) < (recoverableCampaign.total_recipients || 0) && (
+              <button type="button" className="primary-button bc-btn" onClick={() => resumeCampaign(recoverableCampaign)} disabled={busy}>
+                <Play size={14} /> Retomar envio
+              </button>
+            )}
+            {recoverableHasUnknown && (
               <button
                 type="button"
-                className="secondary-button"
-                onClick={() => cancelCampaign(recoverableCampaign)}
+                className="secondary-button bc-btn"
+                onClick={() => reconcileUnknownRecipients(recoverableCampaign, RECIPIENT_STATUS.FAILED)}
                 disabled={busy}
-                style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
+                title="Conclui os envios incertos marcando-os como falha, sem reenviar"
               >
-                Cancelar campanha
+                <RotateCcw size={14} /> Concluir incertos
               </button>
-            </div>
-          </div>
-        )}
-        <div className="broadcast-campaign-heading">
-          <h2>Nova campanha</h2>
-          <p>Defina o público, escreva sua mensagem e prepare o envio persistido.</p>
-        </div>
-        <div className="broadcast-grid">
-          <div className="broadcast-contacts">
-            <div className="broadcast-section-heading">
-              <div><UsersRound size={18} /><h3>Contatos</h3></div>
-              <button className="broadcast-select-all" type="button" onClick={toggleAllVisibleContacts} disabled={!visibleContacts.length}>{allVisibleSelected ? 'Desmarcar todos' : 'Selecionar todos'}</button>
-            </div>
-            <p className="broadcast-section-description">Escolha os contatos que irão receber esta campanha.</p>
-            <label className="broadcast-contact-search"><Search size={16} /><input value={contactSearch} onChange={(event) => setContactSearch(event.target.value)} placeholder="Buscar por nome ou telefone..." /></label>
-            <div className="contact-table broadcast-contact-list">
-              {!ready ? [1, 2, 3].map((i) => <div className="contact-row" key={i} style={{ pointerEvents: 'none' }}><SkeletonBlock width="16px" height="16px" style={{ borderRadius: '3px' }} /><SkeletonBlock width="32px" height="32px" style={{ borderRadius: '50%' }} /><div style={{ flex: 1 }}><SkeletonLine width="110px" style={{ display: 'block' }} /><SkeletonLine width="140px" style={{ marginTop: '4px', display: 'block' }} /></div></div>) : <>
-                {visibleContacts.map((contact) => {
-                  const key = contact.key || contactKey(contact);
-                  const name = displayContactName(contact);
-                  const phone = displayContactPhone(contact);
-                  const channel = contact.channel_type || contact.channelType || defaultChannel;
-                  return <label className={`contact-row ${selected.has(key) ? 'is-selected' : ''}`} key={key}><input type="checkbox" checked={selected.has(key)} onChange={() => toggleContact(key)} /><ContactAvatar name={name} avatarUrl={contact.avatarUrl} className="broadcast-contact-avatar" /><span className="broadcast-contact-details"><strong>{name}</strong><small>{phone}</small></span><span className={`broadcast-channel-icon ${getChannelClass(channel)}`} title={channel}><ChannelIcon channel={channel} size={16} /></span></label>;
-                })}
-                {!visibleContacts.length && <EmptyState title={allContacts.length ? 'Nenhum contato encontrado' : 'Nenhum contato disponível'} text={allContacts.length ? 'Tente outro nome ou telefone.' : 'Os contatos disponíveis aparecerão aqui.'} compact />}
-              </>}
-            </div>
-          </div>
-          <div className="broadcast-composer">
-            <label className="broadcast-field-label"><span>Nome da campanha</span><input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Ex: Confirmacao de horarios" /></label>
-            <label className="broadcast-field-label"><span>Mensagem</span><textarea value={messageText} onChange={(event) => setMessageText(event.target.value)} placeholder="Digite a mensagem que sera enviada aos contatos selecionados." /></label>
-            <div className="broadcast-send-row"><button className="primary-button" type="button" onClick={sendCampaign} disabled={busy || !messageText.trim() || !selectedContacts.length}>Enviar</button><small>{status}</small></div>
+            )}
+            <button type="button" className="bc-text-btn is-danger" onClick={() => cancelCampaign(recoverableCampaign)} disabled={busy}>
+              Cancelar campanha
+            </button>
           </div>
         </div>
-      </section>
-      <section className="broadcast-footer-grid">
-        <section className="panel">
-          <PanelTitle icon={Clock3} title="Histórico de campanhas" />
-          <div className="campaign-list">
-            {!ready ? [1, 2].map((i) => <article className="campaign-card" key={i} style={{ pointerEvents: 'none' }}><div style={{ flex: 1 }}><SkeletonLine width="110px" style={{ display: 'block' }} /><SkeletonLine width="140px" style={{ marginTop: '4px', display: 'block' }} /></div><SkeletonBlock width="60px" height="18px" style={{ borderRadius: '4px' }} /></article>) : <>
-              {campaigns.map((campaign) => {
-                const date = campaign.sent_at || campaign.created_at;
-                const metadata = date ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(date)) : 'Sem data';
-                const statusLabel =
-                  campaign.status === 'sent' ? 'Concluída' :
-                  campaign.status === 'partial_error' ? 'Parcial' :
-                  campaign.status === 'failed' ? 'Falhou' :
-                  campaign.status === 'cancelled' ? 'Cancelada' :
-                  campaign.status === 'paused' ? 'Pausada' : 'Enviando';
-                const statusTone =
-                  campaign.status === 'sent' ? 'ia_ativa' :
-                  campaign.status === 'failed' || campaign.status === 'cancelled' ? 'humano' :
-                  campaign.status === 'partial_error' ? 'qualificacao' : 'channel';
-                return (
-                  <article className="campaign-card" key={campaign.id}>
-                    <div>
-                      <strong>{campaign.name}</strong>
-                      <span>{metadata} · {campaign.total_recipients || 0} destinatários{campaign.unknown_count ? ` (${campaign.unknown_count} incertos)` : ''}</span>
-                    </div>
-                    <Badge value={statusLabel} status={statusTone} />
-                  </article>
-                );
+      )}
+
+      <div className="bc-layout">
+        <section className="bc-card bc-audience" aria-labelledby="bc-audience-title">
+          <header className="bc-head">
+            <span className="bc-step" aria-hidden="true">1</span>
+            <div className="bc-head-text">
+              <h2 id="bc-audience-title">Público</h2>
+              <p>
+                <strong>{selectedContacts.length}</strong> de {allContacts.length} contato{allContacts.length === 1 ? '' : 's'} selecionado{selectedContacts.length === 1 ? '' : 's'}
+              </p>
+            </div>
+            <div className="bc-head-actions">
+              <button type="button" className="bc-text-btn" onClick={toggleAllVisibleContacts} disabled={!visibleContacts.length}>{allVisibleSelected ? 'Desmarcar visíveis' : 'Selecionar visíveis'}</button>
+              {selectedContacts.length > 0 && <button type="button" className="bc-text-btn is-muted" onClick={clearSelectedContacts}>Limpar</button>}
+            </div>
+          </header>
+
+          <div
+            className={`bc-drop ${dragging ? 'is-dragging' : ''}`}
+            onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+          >
+            <input ref={fileInputRef} type="file" accept={SUPPORTED_CONTACT_FORMATS + ',.vcard,.htm,.xlsx'} hidden onChange={handleFile} />
+            <span className="bc-drop-icon" aria-hidden="true"><Upload size={18} /></span>
+            <div className="bc-drop-text">
+              <p>
+                Arraste uma lista de contatos ou{' '}
+                <button type="button" className="bc-link" onClick={() => fileInputRef.current?.click()} disabled={busy}>escolha um arquivo</button>
+              </p>
+              <span>CSV, TSV, TXT, JSON, VCF, HTML, XLSX ou ODS</span>
+            </div>
+            <button type="button" className="bc-link bc-template" onClick={downloadTemplate}><Download size={13} />Baixar modelo</button>
+          </div>
+
+          <div className="bc-tools">
+            <button type="button" className="bc-chip" onClick={() => setPasteOpen((value) => !value)} aria-expanded={pasteOpen}><ClipboardPaste size={13} />Colar lista</button>
+            {conversations.length > 0 && <button type="button" className="bc-chip" onClick={addRecentContacts} disabled={busy}><MessagesSquare size={13} />Conversas recentes</button>}
+            {stages.length > 0 && (
+              <div className="bc-stage-pick">
+                <select className="bc-select" value={stageFilter} onChange={(event) => { setStageFilter(event.target.value); }} aria-label="Adicionar contatos de uma etapa do quadro">
+                  <option value="">Etapa do quadro</option>
+                  {stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                </select>
+                {stageFilter && <button type="button" className="bc-chip is-accent" onClick={addStageContacts} disabled={busy}>Adicionar</button>}
+              </div>
+            )}
+          </div>
+
+          {pasteOpen && <div className="bc-paste">
+            <textarea value={pasteText} onChange={(event) => setPasteText(event.target.value)} rows={4} aria-label="Lista de contatos colada"
+              placeholder={'Um contato por linha:\n5521999990000\nMaria Silva;(21) 98888-0000'} />
+            <div className="bc-paste-actions">
+              <button type="button" className="bc-text-btn is-muted" onClick={() => { setPasteOpen(false); setPasteText(''); }}>Cancelar</button>
+              <button type="button" className="bc-chip is-accent" onClick={importPastedText} disabled={!pasteText.trim()}>Adicionar à lista</button>
+            </div>
+          </div>}
+
+          {importSummary && <div className="bc-summary" role="status">
+            <CheckCircle2 size={15} aria-hidden="true" />
+            <span><strong>{importSummary.imported}</strong> importado{importSummary.imported === 1 ? '' : 's'} de {importSummary.fileName}
+              {importSummary.added !== importSummary.imported ? ` (${importSummary.added} novos)` : ''}
+              {importSummary.duplicates ? `, ${importSummary.duplicates} repetido${importSummary.duplicates > 1 ? 's' : ''}` : ''}
+              {importSummary.ignored ? `, ${importSummary.ignored} sem telefone ou de canal não habilitado` : ''}.</span>
+            <button type="button" aria-label="Dispensar resumo" onClick={() => setImportSummary(null)}><X size={13} /></button>
+          </div>}
+
+          <label className="bc-search"><Search size={15} aria-hidden="true" /><input value={contactSearch} onChange={(event) => setContactSearch(event.target.value)} placeholder="Buscar por nome ou telefone" aria-label="Buscar contatos" /></label>
+
+          <ul className="bc-list">
+            {!ready ? [1, 2, 3, 4].map((i) => <li className="bc-row" key={i}><SkeletonBlock width="16px" height="16px" style={{ borderRadius: '4px' }} /><SkeletonBlock width="30px" height="30px" style={{ borderRadius: '50%' }} /><div style={{ flex: 1 }}><SkeletonLine width="120px" /><SkeletonLine width="90px" style={{ marginTop: '4px' }} /></div></li>) : <>
+              {visibleContacts.map((contact) => {
+                const key = contact.key || contactKey(contact);
+                const name = displayContactName(contact);
+                const phone = displayContactPhone(contact);
+                const channel = contact.channel_type || contact.channelType || defaultChannel;
+                const isOn = selected.has(key);
+                return <li key={key}><label className={`bc-row ${isOn ? 'is-selected' : ''}`}>
+                  <input type="checkbox" checked={isOn} onChange={() => toggleContact(key)} />
+                  <ContactAvatar name={name} avatarUrl={contact.avatarUrl} className="bc-avatar" />
+                  <span className="bc-row-text"><strong>{name}</strong><small>{phone}</small></span>
+                  <span className={`broadcast-channel-icon ${getChannelClass(channel)}`} title={channel}><ChannelIcon channel={channel} size={15} /></span>
+                </label></li>;
               })}
-              {!campaigns.length && <EmptyState title="Sem campanhas" text="Os disparos realizados ficarão registrados aqui." compact />}
+              {!visibleContacts.length && <li className="bc-empty">
+                <span className="bc-empty-icon" aria-hidden="true"><UsersRound size={20} /></span>
+                <strong>{allContacts.length ? 'Nenhum contato encontrado' : 'Nenhum contato ainda'}</strong>
+                <span>{allContacts.length ? 'Ajuste a busca para ver outros contatos.' : 'Importe um arquivo, cole uma lista ou traga as conversas recentes.'}</span>
+              </li>}
             </>}
-          </div>
+          </ul>
         </section>
-        <section className="panel">
-          <div className="broadcast-selected-heading"><div><UsersRound size={18} /><h2>Contatos selecionados ({selectedContacts.length})</h2></div>{selectedContacts.length > 0 && <button type="button" onClick={clearSelectedContacts}>Limpar todos</button>}</div>
-          <div className="selected-contact-list">
-            {selectedContacts.map((contact) => {
-              const key = contact.key || contactKey(contact);
-              const name = displayContactName(contact);
-              const phone = displayContactPhone(contact);
-              const channel = contact.channel_type || contact.channelType || defaultChannel;
-              return <article className="selected-contact-row" key={key}><ContactAvatar name={name} avatarUrl={contact.avatarUrl} className="broadcast-contact-avatar" /><span className="broadcast-contact-details"><strong>{name}</strong><small>{phone}</small></span><span className={`broadcast-channel-icon ${getChannelClass(channel)}`} title={channel}><ChannelIcon channel={channel} size={16} /></span><button type="button" aria-label={`Remover ${name}`} onClick={() => toggleContact(key)}><X size={15} /></button></article>;
+
+        <section className="bc-card bc-compose" aria-labelledby="bc-compose-title">
+          <header className="bc-head">
+            <span className="bc-step" aria-hidden="true">2</span>
+            <div className="bc-head-text">
+              <h2 id="bc-compose-title">Mensagem</h2>
+              <p>O mesmo texto vai para todos os selecionados.</p>
+            </div>
+          </header>
+
+          <div className={`bc-message-box ${messageTooLong ? 'is-invalid' : ''}`}>
+            <textarea className="bc-message" value={messageText} onChange={(event) => setMessageText(event.target.value)} rows={7} aria-label="Mensagem do disparo" placeholder="Escreva a mensagem do disparo…" />
+            <div className="bc-message-foot">
+              {hasChannel
+                ? <span className={`bc-channel-tag ${getChannelClass(defaultChannel)}`}><ChannelIcon channel={defaultChannel} size={13} />{channelLabel}</span>
+                : <span className="bc-channel-tag is-missing">Sem canal habilitado</span>}
+              <span className={`bc-counter ${messageTooLong ? 'is-over' : ''}`}>{messageText.length.toLocaleString('pt-BR')} / {messageLimit.toLocaleString('pt-BR')}</span>
+            </div>
+          </div>
+          {!hasChannel && <p className="bc-hint is-error">Nenhum canal de envio está habilitado para esta empresa. Ative um canal em Configurações.</p>}
+          {messageTooLong && <p className="bc-hint is-error">O {channelLabel} aceita até {messageLimit.toLocaleString('pt-BR')} caracteres por mensagem.</p>}
+
+          {messageText.trim() && (
+            <div className="bc-preview" aria-label="Prévia da mensagem">
+              <span className="bc-preview-label">Prévia</span>
+              <div className="bc-preview-bubble">{messageText}</div>
+            </div>
+          )}
+
+          <details className="bc-name">
+            <summary>Dar um nome à campanha</summary>
+            <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Se vazio, usa “Disparo” com a data de hoje" aria-label="Nome da campanha" />
+          </details>
+
+          <div className="bc-send">
+            <ul className="bc-send-facts">
+              <li className={selectedContacts.length ? '' : 'is-missing'}>
+                <UsersRound size={14} aria-hidden="true" />
+                {selectedContacts.length
+                  ? <><strong>{selectedContacts.length}</strong> destinatário{selectedContacts.length === 1 ? '' : 's'}</>
+                  : 'Nenhum destinatário'}
+              </li>
+              <li className={messageText.trim() ? '' : 'is-missing'}>
+                <MessagesSquare size={14} aria-hidden="true" />
+                {messageText.trim() ? 'Mensagem pronta' : 'Mensagem vazia'}
+              </li>
+            </ul>
+            <button className="primary-button bc-send-btn" type="button" onClick={sendCampaign} disabled={!canSend}>
+              {busy ? <><Loader2 size={15} className="bc-spin" /> Enviando…</> : <><Send size={15} /> Enviar disparo</>}
+            </button>
+          </div>
+          {status.message && (
+            <p className={`bc-status is-${busy && status.tone !== 'error' ? 'progress' : status.tone}`} role="status" aria-live="polite">
+              {status.tone === 'error' ? <AlertTriangle size={14} aria-hidden="true" />
+                : status.tone === 'success' ? <CheckCircle2 size={14} aria-hidden="true" />
+                  : busy || status.tone === 'progress' ? <Loader2 size={14} className="bc-spin" aria-hidden="true" />
+                    : <Info size={14} aria-hidden="true" />}
+              <span>{status.message}</span>
+            </p>
+          )}
+        </section>
+      </div>
+
+      <section className="bc-card bc-history" aria-labelledby="bc-history-title">
+        <header className="bc-head">
+          <span className="bc-step" aria-hidden="true">3</span>
+          <div className="bc-head-text">
+            <h2 id="bc-history-title">Histórico</h2>
+            <p>{campaigns.length ? `${campaigns.length} campanha${campaigns.length === 1 ? '' : 's'}` : 'Campanhas já enviadas'}</p>
+          </div>
+        </header>
+        <div className="bc-campaigns">
+          {!ready ? [1, 2].map((i) => <article className="bc-campaign" key={i} style={{ pointerEvents: 'none' }}><SkeletonLine width="140px" /><SkeletonLine width="100%" style={{ marginTop: '10px' }} /></article>) : <>
+            {campaigns.map((campaign) => {
+              const date = campaign.sent_at || campaign.created_at;
+              const metadata = date ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(date)) : 'Sem data';
+              const presentation = CAMPAIGN_STATUS_PRESENTATION[campaign.status] || CAMPAIGN_STATUS_PRESENTATION.sending;
+              return (
+                <article className="bc-campaign" key={campaign.id}>
+                  <header>
+                    <strong title={campaign.name}>{campaign.name}</strong>
+                    <span className={`bc-pill is-${presentation.tone}`}>{presentation.label}</span>
+                  </header>
+                  <span className="bc-campaign-date">{metadata}</span>
+                  <CampaignProgress campaign={campaign} />
+                </article>
+              );
             })}
-            {!selectedContacts.length && <EmptyState title="Nenhum contato selecionado" text="Selecione contatos na lista acima." compact />}
-          </div>
-        </section>
+            {!campaigns.length && <div className="bc-empty is-wide">
+              <span className="bc-empty-icon" aria-hidden="true"><Send size={18} /></span>
+              <strong>Nenhum disparo ainda</strong>
+              <span>As campanhas enviadas ficam registradas aqui com o resultado de cada envio.</span>
+            </div>}
+          </>}
+        </div>
       </section>
     </section>
+  );
+}
+
+// Limites de texto por mensagem documentados pelas APIs de cada canal.
+const MESSAGE_LIMIT_BY_CHANNEL = { whatsapp: 4096, telegram: 4096, instagram: 1000 };
+
+const CAMPAIGN_STATUS_PRESENTATION = {
+  sent: { label: 'Concluída', tone: 'success' },
+  partial_error: { label: 'Parcial', tone: 'warning' },
+  failed: { label: 'Falhou', tone: 'danger' },
+  cancelled: { label: 'Cancelada', tone: 'muted' },
+  paused: { label: 'Pausada', tone: 'warning' },
+  queued: { label: 'Na fila', tone: 'info' },
+  sending: { label: 'Enviando', tone: 'info' },
+};
+
+function CampaignProgress({ campaign }) {
+  const total = Math.max(0, Number(campaign?.total_recipients) || 0);
+  const sent = Math.max(0, Number(campaign?.sent_count) || 0);
+  const failed = Math.max(0, Number(campaign?.failed_count) || 0);
+  const unknown = Math.max(0, Number(campaign?.unknown_count) || 0);
+  const pct = (value) => (total > 0 ? `${Math.min(100, (value / total) * 100)}%` : '0%');
+  return (
+    <div className="bc-progress">
+      <div
+        className="bc-progress-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuenow={sent}
+        aria-label={`${sent} de ${total} enviados`}
+      >
+        <span className="is-sent" style={{ width: pct(sent) }} />
+        <span className="is-failed" style={{ width: pct(failed) }} />
+        <span className="is-unknown" style={{ width: pct(unknown) }} />
+      </div>
+      <div className="bc-progress-legend">
+        <span><i className="is-sent" />{sent} de {total} enviados</span>
+        {failed > 0 && <span><i className="is-failed" />{failed} falha{failed === 1 ? '' : 's'}</span>}
+        {unknown > 0 && <span><i className="is-unknown" />{unknown} incerto{unknown === 1 ? '' : 's'}</span>}
+      </div>
+    </div>
   );
 }

@@ -53,8 +53,8 @@ function validateTenantPolicyContract() {
 }
 const coreBuildMetadata = {
   revision: 'conversation_core_v2_1_34_core_ext_decision_identity_2026_10_20',
-  built_at: '2026-10-20T07:34:55.508Z',
-  core_sha256: '3eecd85216b207782fdd744071bd14d073e8084a83e14bca0e2c7351380b0509',
+  built_at: '2026-10-20T08:43:59.086Z',
+  core_sha256: 'd3def924daa1e4016f4fd7fef24a7c5d5faff27b02618cd64f85214a2d5606c2',
   ext_sha256: 'c251e7d5d264baf0e65866752d8464db9e80f9302bde13e09e2ac8ee5c830336',
 };
 const coreRevision = coreBuildMetadata.revision;
@@ -3295,6 +3295,12 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
             service: 'sales_product_photo', stage: event.stage, handoff: false, ai_provider: 'sales_catalog_photo',
             delivery_status: 'sent', raw_payload: {
               content_type: 'image', sales_catalog_photo: true,
+              media: {
+                kind: 'image', category: 'image', origin: 'assistant',
+                external_message_id: String(imageId), url,
+                mimeType: 'image/jpeg', fileName: 'veiculo-catalogo.jpg',
+                caption: photoCount === 1 ? (catalogPhoto.caption || '') : ''
+              },
               whatsapp_product_id: String(catalogPhoto.product_id || ''), image_index: photoCount,
               ...(strictPhotos ? { inventory_product_id: catalogPhoto.inventory_product_id,
                 media_attempt_event_id: photoReceipt.id, delivery_attempt_id: deliveryAttemptId } : {}),
@@ -4265,12 +4271,13 @@ async function patchAudioProcessing(context, eventId, externalMessageId, audioRe
     { audio_processing: audioResult }, 'audio_transcription_not_persisted');
 }
 
-async function transcribeTurnAudio(context) {
+async function transcribeTurnAudio(context, { tolerateUnintelligible = false } = {}) {
   const audioMessages = turn.messages.filter(row => row.text === '[audio]');
   if (!audioMessages.length) return;
   if (settingsFor(context).whatsapp_audio_enabled !== true) throw new Error('audio_disabled_for_tenant');
   if (audioMessages.length > 2) throw new Error('audio_batch_limit');
   turn.audio_transcriptions = {};
+  turn.audio_unintelligible = [];
   for (const item of audioMessages) {
     const path = '/rest/v1/channel_events?tenant_id=eq.' + encodeFilter(context.tenant.id)
       + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
@@ -4336,7 +4343,14 @@ async function transcribeTurnAudio(context) {
     let parsed;
     try { parsed = JSON.parse(candidate.content.parts.filter(p => !p.thought).map(p => p.text || '').join('')); }
     catch { throw new Error('audio_transcription_invalid'); }
-    if (parsed.intelligible !== true || typeof parsed.text !== 'string' || !parsed.text.trim()) throw new Error('audio_unintelligible');
+    if (parsed.intelligible !== true || typeof parsed.text !== 'string' || !parsed.text.trim()) {
+      // Unintelligible speech is a deterministic content outcome, not a technical
+      // failure: the caller answers the customer instead of holding the queue.
+      if (!tolerateUnintelligible) throw new Error('audio_unintelligible');
+      turn.audio_unintelligible.push(item.event_id);
+      item.text = '';
+      continue;
+    }
     if (parsed.text.length > 6000) throw new Error('audio_transcription_too_long');
     const result = {
       version: 'whatsapp_audio_v1', status: 'transcribed', text: parsed.text.trim(), model,
@@ -9821,7 +9835,28 @@ async function runSalesTurnPrepare(context, history, event, control) {
   // Transcribe before ALL commercial intent and inventory/lead decisions.
   // Otherwise those checks see '[audio]' instead of the spoken message.
   // Technical failures go to the shared durable hold, not an unbounded retry.
-  await transcribeTurnAudio(context);
+  await transcribeTurnAudio(context, { tolerateUnintelligible: true });
+  if (turn.audio_unintelligible?.length) {
+    const unintelligibleIds = new Set(turn.audio_unintelligible);
+    const spoken = turn.messages.filter(message => !unintelligibleIds.has(message.event_id) && String(message.text || '').trim());
+    if (!spoken.length) {
+      // Only unintelligible audio in this batch: ask for a resend and finish the
+      // turn with its normal delivery receipt. Later messages form a new batch.
+      if (!await commit()) return { ok: true, skipped: true, reason: 'superseded' };
+      Object.assign(event, {
+        ai_provider: 'audio_unintelligible', service: 'audio_unintelligible', handoff: false,
+        stage: lead?.stage_key || cfg.stage_keys.initial,
+        raw_payload: { ...(event.raw_payload || {}), audio_unintelligible_event_ids: [...unintelligibleIds] }
+      });
+      await saveEvent(event);
+      const sentAudioReply = await sendChannelMessage(context, mediaFallbackText({ category: 'audio' }, 'media_audio_unintelligible'), event);
+      await complete('done');
+      return { ok: true, audio_unintelligible: true, ...sentAudioReply };
+    }
+    // Mixed batch: continue with the intelligible messages only.
+    turn.messages = spoken;
+    setCurrentText(turn.messages.map(row => row.text).filter(Boolean).join('\n\n'));
+  }
   const inboundMediaShape = salesInboundMediaShape(turn.messages);
   const currentTurnText = turn.messages.map(message => message?.text || '').join('\n\n');
   const tradeInResult = executeCommercialOperationSync(context, 'vehicle.trade_in', { history, messages: turn.messages, previous: lead?.state || {}, prior_pending: salesLastPendingRequirement(history) });

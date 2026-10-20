@@ -234,6 +234,94 @@ export function isSystemTimelineMessage(message) {
   return false;
 }
 
+const SYSTEM_EVENT_KIND_BY_SERVICE = {
+  conversation_closed: 'closed',
+  conversation_assigned: 'assigned',
+  resume_ai: 'ai_on',
+  handoff_requested: 'handoff',
+  conversation_abandoned: 'abandoned',
+  sales_stage_changed: 'stage',
+  kanban_move: 'stage',
+  kanban_stage_changed: 'stage',
+};
+
+const SYSTEM_EVENT_TEXT_RULES = [
+  { kind: 'closed', prefix: /^atendimento (?:encerrado|finalizado)/i },
+  { kind: 'assigned', prefix: /^(?:conversa assumida por|atendimento atribu[íi]do(?: a| para)?)/i },
+  { kind: 'ai_on', prefix: /^(?:retornado para atendimento da ia|ia ativada)/i },
+  { kind: 'ai_off', prefix: /^ia desativada/i },
+  { kind: 'handoff', prefix: /^aguardando atendimento humano/i },
+  { kind: 'abandoned', prefix: /^conversa marcada como abandonada/i },
+  { kind: 'payment', prefix: /^pagamento confirmado/i },
+  { kind: 'follow_up', prefix: /^follow-up enviado/i },
+  { kind: 'stage', prefix: /^(?:etapa comercial alterada|conversa movida)/i },
+];
+
+const SYSTEM_EVENT_TITLES = {
+  closed: 'Atendimento encerrado',
+  assigned: 'Atendimento atribuído',
+  ai_on: 'IA reativada',
+  ai_off: 'IA pausada',
+  handoff: 'Transferência para atendimento humano',
+  abandoned: 'Conversa marcada como abandonada',
+  stage: 'Etapa comercial alterada',
+  payment: 'Pagamento confirmado',
+  follow_up: 'Follow-up enviado',
+  generic: 'Atualização do atendimento',
+};
+
+const capitalizeFirst = (value) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : '');
+const cleanEventRemainder = (value) => capitalizeFirst(String(value || '').replace(/^[\s:,.\-–]+/, '').trim());
+
+/**
+ * Descreve um evento de sistema para o atendente: tipo (ícone), título e o
+ * detalhe que diz o que mudou. Nunca devolve só "Evento do sistema".
+ * @param {object} message
+ * @returns {{ kind: string, title: string, detail: string }}
+ */
+export function describeSystemEvent(message) {
+  // Remove prefixos técnicos como "[Kanban]".
+  const text = String(message?.text || '').replace(/^\[[^\]]+\]\s*/, '').trim();
+  const service = String(message?.service || '');
+  const textRule = SYSTEM_EVENT_TEXT_RULES.find((rule) => rule.prefix.test(text));
+  const kind = SYSTEM_EVENT_KIND_BY_SERVICE[service] || textRule?.kind || 'generic';
+  let title = SYSTEM_EVENT_TITLES[kind];
+  const remainder = textRule && textRule.kind === kind ? text.replace(textRule.prefix, '') : text;
+  let detail = '';
+
+  if (kind === 'assigned') {
+    const assignee = message?.sent_by
+      || message?.sent_by_user
+      || text.match(/assumida por (.+?)\.?$/i)?.[1]
+      || text.match(/atribu[íi]do (?:a|para) (.+?)\.?$/i)?.[1];
+    detail = assignee ? `Para ${assignee}` : '';
+  } else if (kind === 'closed') {
+    // O texto original ("... pela interface") é técnico; o marcador basta.
+    detail = '';
+  } else if (kind === 'stage') {
+    if (/^conversa movida/i.test(text)) {
+      title = 'Conversa movida';
+      detail = cleanEventRemainder(text.replace(/^conversa movida/i, ''));
+    } else {
+      const target = text.match(/alterada para:?\s*(.+?)\.?$/i)?.[1];
+      detail = target ? `Para ${target}` : cleanEventRemainder(remainder);
+    }
+  } else if (kind === 'generic') {
+    detail = text || (service && service !== 'system' ? capitalizeFirst(service.replace(/_/g, ' ')) : '');
+  } else {
+    detail = cleanEventRemainder(remainder);
+  }
+
+  return { kind, title, detail };
+}
+
+// Estado já exibido no cabeçalho/Kanban: não repetir como linha fixa na conversa.
+const HIDDEN_TIMELINE_EVENT_KINDS = new Set(['assigned', 'ai_on', 'ai_off', 'stage']);
+
+export function isHiddenTimelineSystemEvent(message) {
+  return isSystemTimelineMessage(message) && HIDDEN_TIMELINE_EVENT_KINDS.has(describeSystemEvent(message).kind);
+}
+
 /**
  * Formata o texto visível de um evento de sistema.
  * @param {object} message
@@ -395,7 +483,9 @@ export function resolveTimelineSender({ message, selectedContact = 'Cliente', se
  */
 export function groupTimelineMessages(messages = [], options = {}) {
   const { selectedContact = 'Cliente', selectedOwner = 'Operador', referenceDate = new Date() } = options;
-  if (!Array.isArray(messages) || !messages.length) return [];
+  if (!Array.isArray(messages)) return [];
+  messages = messages.filter((message) => !isHiddenTimelineSystemEvent(message));
+  if (!messages.length) return [];
 
   const decorated = [];
   const GROUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutos
@@ -429,6 +519,7 @@ export function groupTimelineMessages(messages = [], options = {}) {
       _originalIndex: i,
       isSystem,
       systemLabel: isSystem ? formatSystemEventLabel(message) : '',
+      systemEvent: isSystem ? describeSystemEvent(message) : null,
       senderType: sender.senderType,
       senderLabel: sender.senderLabel,
       rawAgentName: sender.rawAgentName,

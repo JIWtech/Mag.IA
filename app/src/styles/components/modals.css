@@ -870,3 +870,25 @@
     opacity: 1;
   }
 }
+
+/* Atribuir atendimento — refinamento visual */
+.assign-modal-panel { max-width: 420px !important; border-radius: 18px !important; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 224, 255, 0.1) !important; }
+.assign-modal-header { align-items: center; padding: 18px 18px 16px; gap: 12px; background: linear-gradient(180deg, rgba(0, 224, 255, 0.05), transparent); }
+.assign-modal-header .assign-modal-avatar { flex: 0 0 46px; width: 46px; height: 46px; min-width: 46px; border-radius: 50%; overflow: hidden; font-size: 15px; }
+.assign-modal-header .assign-modal-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.assign-modal-header-main { flex: 1; min-width: 0; gap: 2px; }
+.assign-modal-title { font-size: 16px; letter-spacing: -0.2px; }
+.assign-modal-contact { color: var(--brand); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.assign-modal-hint { font-size: 11.5px; color: var(--muted); }
+.assign-modal-body { padding: 12px 12px 14px; }
+.assign-agent-list { gap: 6px; max-height: 340px; padding: 2px; }
+.assign-agent-row { padding: 10px 12px; border-radius: 12px; border-color: var(--line); background: var(--surface-soft, transparent); }
+.assign-agent-row:hover { border-color: var(--brand); background: var(--brand-soft); transform: translateY(-1px); }
+.assign-agent-row:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.assign-agent-row.is-current { border-color: rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.07); }
+.assign-agent-avatar { width: 38px; height: 38px; font-size: 13px; background: var(--brand-soft); border-color: transparent; }
+.assign-agent-name { font-size: 14px; }
+.assign-agent-role { font-size: 11.5px; color: var(--muted); }
+.assign-agent-action { font-size: 11.5px; font-weight: 600; color: var(--brand); opacity: 0; transform: translateX(-4px); transition: opacity .15s ease, transform .15s ease; }
+.assign-agent-row:hover .assign-agent-action, .assign-agent-row:focus-visible .assign-agent-action { opacity: 1; transform: none; }
+@media (hover: none) { .assign-agent-action { opacity: 1; transform: none; } }

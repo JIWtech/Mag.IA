@@ -2852,8 +2852,8 @@ test('contact display fallback derives WhatsApp phone from external_conversation
 test('getStageTone shares the canonical Genesis colors with Kanban', () => {
   assert.equal(getStageTone('sales_new'), 'blue');
   assert.equal(getStageTone('sales_qualifying'), 'cyan');
-  assert.equal(getStageTone('sales_hot'), 'amber');
-  assert.equal(getStageTone('sales_human'), 'violet');
+  assert.equal(getStageTone('sales_hot'), 'orange');
+  assert.equal(getStageTone('sales_human'), 'pink');
   assert.equal(getStageTone('sales_closed'), 'green');
 });
 

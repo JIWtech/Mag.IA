@@ -964,6 +964,9 @@ function App() {
     };
 
     const unsubscribe = subscribeToClientEvents(async (payload) => {
+      window.dispatchEvent(new CustomEvent('noria:operator-event', { detail: {
+        tenantId: appDataRef.current?.tenantId, userId, payload,
+      } }));
       if (payload?.table === 'channel_events' && payload?.new) {
         const incomingEvent = payload.new;
         const isStoredMediaWaitingForUrl = hasStoredMediaNeedingUrl(incomingEvent);
@@ -1177,6 +1180,9 @@ function App() {
           notificationTenantId={hasTenantAccess ? appData.tenantId : null}
           notificationUserId={session?.user?.id || null}
           notificationConversations={appData.conversations}
+          notificationAppointments={appData.appointments}
+          notificationKanbanColumns={appData.kanbanColumns}
+          onOpenNotificationPage={setActive}
           onOpenNotificationConversation={handleOpenChatFromKanban}
         />
 

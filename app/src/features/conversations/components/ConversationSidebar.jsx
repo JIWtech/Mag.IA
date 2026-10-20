@@ -1,6 +1,6 @@
 import React from 'react';
 import { Bot, Check, CheckCircle2, Clock3, Filter, Search, Sparkles, UserRound, X } from 'lucide-react';
-import { formatConversationCardOrigin, formatMediaPreviewWithIcon, formatWaitingDuration, getStageLabel } from '../../../dataService.js';
+import { formatConversationCardOrigin, formatMediaPreviewWithIcon, formatWaitingDuration, getStageLabel, getStageTone } from '../../../dataService.js';
 import { ContactAvatar, ContactAvatarBadge } from '../../../components/ui/ContactAvatar.jsx';
 import { EmptyState } from '../../../components/ui/EmptyState.jsx';
 import { SkeletonLine } from '../../../components/ui/Skeletons.jsx';
@@ -509,7 +509,12 @@ export function ConversationSidebar({
                         </span>
                       )}
                       {conversationStageLabel && (
-                        <span className="conversation-stage-tag" title={conversationStageLabel}>{conversationStageLabel}</span>
+                        <span
+                          className={`conversation-stage-tag stage-tag tone-${getStageTone(conversation.salesStageKey || conversation.stage)}`}
+                          title={conversationStageLabel}
+                        >
+                          <span>{conversationStageLabel}</span>
+                        </span>
                       )}
                     </div>
                   </div>

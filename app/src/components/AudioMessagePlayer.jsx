@@ -1,6 +1,32 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, Mic, AlertCircle, Loader2, Volume2, VolumeX } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Play, Pause, Mic, AlertCircle, Loader2, Volume1, Volume2, VolumeX } from 'lucide-react';
 import { formatAudioTime, calculateAudioProgress, mediaSourceChanged } from '../utils/audioUtils.js';
+import {
+  AUDIO_PLAYBACK_EVENT,
+  AUDIO_PLAYBACK_RATES,
+  AUDIO_PREFERENCES_EVENT,
+  loadAudioPreferences,
+  saveAudioPreferences,
+} from '../utils/audioPreferences.js';
+
+const WAVEFORM_BARS = 40;
+
+// Forma de onda decorativa e estável por áudio (derivada da URL), no estilo WhatsApp.
+function buildWaveform(seed) {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Array.from({ length: WAVEFORM_BARS }, (_, index) => {
+    hash ^= hash << 13; hash ^= hash >>> 17; hash ^= hash << 5;
+    const noise = ((hash >>> 0) % 1000) / 1000;
+    const envelope = 0.55 + 0.45 * Math.sin((index / WAVEFORM_BARS) * Math.PI);
+    return Math.round((0.22 + noise * 0.78 * envelope) * 100);
+  });
+}
+
+let playerSequence = 0;
 
 export { formatAudioTime, calculateAudioProgress };
 
@@ -27,8 +53,13 @@ export function AudioMessagePlayer({
     const raw = Number(media?.duration || media?.seconds || 0);
     return Number.isFinite(raw) && raw > 0 ? raw : 0;
   });
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [volume, setVolume] = useState(1);
+  const [preferences, setPreferences] = useState(() => loadAudioPreferences());
+  const { volume, playbackRate } = preferences;
+  const playerIdRef = useRef(null);
+  if (playerIdRef.current === null) {
+    playerSequence += 1;
+    playerIdRef.current = playerSequence;
+  }
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -183,7 +214,30 @@ export function AudioMessagePlayer({
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
-  }, [volume]);
+  }, [volume, src]);
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = playbackRate;
+  }, [playbackRate, src]);
+
+  // Volume e velocidade são do operador: valem para todos os players e sobrevivem ao recarregar.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const syncPreferences = (event) => {
+      if (event?.detail) setPreferences(event.detail);
+    };
+    const pauseWhenAnotherPlays = (event) => {
+      if (event?.detail?.playerId !== playerIdRef.current) audioRef.current?.pause();
+    };
+    window.addEventListener(AUDIO_PREFERENCES_EVENT, syncPreferences);
+    window.addEventListener(AUDIO_PLAYBACK_EVENT, pauseWhenAnotherPlays);
+    return () => {
+      window.removeEventListener(AUDIO_PREFERENCES_EVENT, syncPreferences);
+      window.removeEventListener(AUDIO_PLAYBACK_EVENT, pauseWhenAnotherPlays);
+    };
+  }, []);
+
+  const waveform = useMemo(() => buildWaveform(src || String(media?.id || 'audio')), [src, media?.id]);
 
   // Alterna play / pause
   const togglePlay = useCallback(async () => {
@@ -198,6 +252,9 @@ export function AudioMessagePlayer({
           audio.currentTime = 0;
           setCurrentTime(0);
         }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(AUDIO_PLAYBACK_EVENT, { detail: { playerId: playerIdRef.current } }));
+        }
         await audio.play();
       } catch (err) {
         console.warn('Audio play failed:', err);
@@ -206,21 +263,22 @@ export function AudioMessagePlayer({
     }
   }, [isPlaying, hasError, src, duration]);
 
-  // Cicla velocidade (1x -> 1.5x -> 2x -> 1x)
+  // Cicla velocidade (1x -> 1.5x -> 2x -> 1x) e lembra a escolha
   const cycleSpeed = useCallback((e) => {
     e.stopPropagation();
-    const speeds = [1, 1.5, 2];
-    const nextIndex = (speeds.indexOf(playbackRate) + 1) % speeds.length;
-    const nextRate = speeds[nextIndex];
-    setPlaybackRate(nextRate);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = nextRate;
-    }
+    const nextIndex = (AUDIO_PLAYBACK_RATES.indexOf(playbackRate) + 1) % AUDIO_PLAYBACK_RATES.length;
+    setPreferences(saveAudioPreferences({ playbackRate: AUDIO_PLAYBACK_RATES[nextIndex] }));
   }, [playbackRate]);
 
   const changeVolume = useCallback((event) => {
-    const next = Math.max(0, Math.min(1, Number(event.target.value)));
-    setVolume(Number.isFinite(next) ? next : 1);
+    setPreferences(saveAudioPreferences({ volume: Number(event.target.value) }));
+  }, []);
+
+  const toggleMute = useCallback((event) => {
+    event.stopPropagation();
+    setPreferences((current) => saveAudioPreferences({
+      volume: current.volume > 0 ? 0 : (current.lastAudibleVolume || 1),
+    }));
   }, []);
 
   // Cálculo de tempo proporcional na timeline
@@ -363,7 +421,16 @@ export function AudioMessagePlayer({
           onPointerCancel={handlePointerUp}
           onKeyDown={handleKeyDown}
         >
-          <div className="audio-track">
+          <div className="audio-track has-waveform" style={{ '--audio-progress': `${progressPercent}%` }}>
+            <div className="audio-waveform" aria-hidden="true">
+              {waveform.map((height, index) => (
+                <span
+                  key={index}
+                  className={((index + 0.5) / WAVEFORM_BARS) * 100 <= progressPercent ? 'is-played' : ''}
+                  style={{ height: `${height}%` }}
+                />
+              ))}
+            </div>
             <div
               className="audio-progress-bar"
               style={{ width: `${progressPercent}%` }}
@@ -383,8 +450,16 @@ export function AudioMessagePlayer({
           </div>
 
           <div className="audio-controls-right">
-            <label className="audio-volume-control" title="Volume do áudio">
-              {volume === 0 ? <VolumeX size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}
+            <div className={`audio-volume-control ${volume === 0 ? 'is-muted' : ''}`} title="Volume do áudio (salvo para os próximos áudios)">
+              <button
+                type="button"
+                className="audio-mute-btn"
+                onClick={toggleMute}
+                aria-label={volume === 0 ? 'Ativar som' : 'Silenciar'}
+                aria-pressed={volume === 0}
+              >
+                {volume === 0 ? <VolumeX size={15} aria-hidden="true" /> : volume < 0.5 ? <Volume1 size={15} aria-hidden="true" /> : <Volume2 size={15} aria-hidden="true" />}
+              </button>
               <input
                 type="range"
                 min="0"
@@ -393,8 +468,9 @@ export function AudioMessagePlayer({
                 value={volume}
                 onChange={changeVolume}
                 aria-label="Volume do áudio"
+                style={{ '--volume': `${Math.round(volume * 100)}%` }}
               />
-            </label>
+            </div>
             {isPtt && (
               <span className="audio-ptt-badge" title="Mensagem de voz" aria-label="Mensagem de voz">
                 <Mic size={12} className="audio-ptt-icon" />

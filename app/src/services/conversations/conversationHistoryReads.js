@@ -1,10 +1,10 @@
 import { getAuthClient } from '../auth/authService.js';
-import { enrichMediaUrls } from '../media/mediaUrlService.js';
 import { eventsToConversations } from './eventsToConversations.js';
 
-function buildConversationIdVariants(rawId) {
+export function buildConversationIdVariants(rawId) {
   if (!rawId) return [];
   const str = String(rawId).trim();
+  if (/@(?:g\.us|lid|broadcast)$/i.test(str)) return [str];
   const variants = new Set([str]);
 
   const clean = str.replace(/@(s\.whatsapp\.net|c\.us)$/i, '').split(':')[0].replace(/\D/g, '');
@@ -31,16 +31,15 @@ function buildConversationIdVariants(rawId) {
 }
 
 /**
- * Carrega o histórico completo de mensagens de uma conversa específica sob demanda.
+ * Carrega até 1000 eventos recentes de uma conversa específica sob demanda.
  * Evita o truncamento pelo limite global da página e permite que o atendente
- * role o chat e leia todas as mensagens históricas daquele lead com mídias assinadas.
+ * role o chat; os anexos são resolvidos sob demanda pelo componente de mídia.
  *
  * @param {string} tenantSlug
  * @param {string} externalConversationId
  * @returns {Promise<Array>} Lista cronológica de mensagens formatadas
  */
-export async function loadConversationFullHistory(tenantSlug, externalConversationId) {
-  const supabase = getAuthClient();
+export async function loadConversationFullHistory(tenantSlug, externalConversationId, supabase = getAuthClient()) {
   if (!supabase || !tenantSlug || !externalConversationId) return [];
 
   const variants = buildConversationIdVariants(externalConversationId);
@@ -50,16 +49,16 @@ export async function loadConversationFullHistory(tenantSlug, externalConversati
     .select('*')
     .eq('tenant_slug', tenantSlug)
     .in('external_conversation_id', variants)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(1000);
 
   if (error || !Array.isArray(data)) {
     console.warn('Erro ao carregar histórico completo da conversa:', error?.message);
-    return [];
+    throw error || new Error('Histórico indisponível');
   }
 
-  const enrichedData = await enrichMediaUrls(data, supabase);
-  const convs = eventsToConversations(enrichedData, tenantSlug);
+  // MediaAttachment resolves only mounted attachments, without blocking the text history.
+  const convs = eventsToConversations(data, tenantSlug);
   if (!convs.length) return [];
 
   // Se houver mais de um bucket gerado (por exemplo, transição de canal ou handle),

@@ -360,6 +360,7 @@ export async function loadClientData(fallback, activeTenantSlug, userId = null) 
   const eventsWithMediaUrls = await enrichMediaUrls(
     catalogEnrichedEvents,
     supabase,
+    { cacheOnly: true },
   );
   const contactIndex = buildContactDirectory(contactDirectory, tenant.id);
   const eventsWithAvatars = applyContactDirectory(eventsWithMediaUrls, contactIndex, tenant.id);

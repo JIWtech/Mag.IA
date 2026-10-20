@@ -143,3 +143,23 @@ test('REGRESSAO: todos os modulos UI e features modularizados possuem zero refer
     );
   }
 });
+
+test('importação: número brasileiro sem DDI recebe 55 para formar um JID válido do WhatsApp', async () => {
+  const { normalizeImportedContact } = await import('../../src/features/broadcasts/utils/broadcastImport.js');
+  assert.equal(
+    normalizeImportedContact({ nome: 'João', telefone: '(21) 98888-0000' }, 'whatsapp').externalConversationId,
+    '5521988880000@s.whatsapp.net',
+  );
+  assert.equal(
+    normalizeImportedContact({ nome: 'Fixo', telefone: '21 3333-4444' }, 'whatsapp').externalConversationId,
+    '552133334444@s.whatsapp.net',
+  );
+  assert.equal(
+    normalizeImportedContact({ nome: 'Com DDI', telefone: '+55 11 99999-8888' }, 'whatsapp').externalConversationId,
+    '5511999998888@s.whatsapp.net',
+  );
+  assert.equal(
+    normalizeImportedContact({ nome: 'Exterior', telefone: '+1 415 555 0100' }, 'whatsapp').externalConversationId,
+    '14155550100@s.whatsapp.net',
+  );
+});

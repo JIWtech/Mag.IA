@@ -426,7 +426,8 @@ export function Conversations({
 
   useEffect(() => {
     const extId = selected?.externalConversationId;
-    if (!extId || !tenantSlug || loadedChatHistoryRef.current.has(extId)) return;
+    const historyKey = JSON.stringify([tenantSlug, extId]);
+    if (!extId || !tenantSlug || loadedChatHistoryRef.current.has(historyKey)) return;
 
     let cancelled = false;
     async function fetchFullHistory() {
@@ -435,10 +436,10 @@ export function Conversations({
         if (!cancelled && Array.isArray(fullMessages) && fullMessages.length > 0) {
           setFullHistoryByChat((prev) => ({
             ...prev,
-            [extId]: fullMessages,
+            [historyKey]: fullMessages,
           }));
         }
-        loadedChatHistoryRef.current.add(extId);
+        if (!cancelled) loadedChatHistoryRef.current.add(historyKey);
       } catch (err) {
         console.warn('Falha ao carregar histórico completo:', err);
       }
@@ -449,7 +450,7 @@ export function Conversations({
   }, [selected?.externalConversationId, tenantSlug]);
 
   const activeMessages = useMemo(() => {
-    const full = selected?.externalConversationId ? fullHistoryByChat[selected.externalConversationId] : null;
+    const full = selected?.externalConversationId ? fullHistoryByChat[JSON.stringify([tenantSlug, selected.externalConversationId])] : null;
     if (!full || !full.length) return selected?.messages || [];
 
     const selectedByKey = new Map();
@@ -480,7 +481,7 @@ export function Conversations({
       (m) => !existingKeys.has(m.eventId || `${m.createdAt || m.at}-${m.from}-${m.text}`)
     );
     return newRealtime.length ? [...mergedFull, ...newRealtime] : mergedFull;
-  }, [selected?.externalConversationId, selected?.messages, fullHistoryByChat]);
+  }, [tenantSlug, selected?.externalConversationId, selected?.messages, fullHistoryByChat]);
 
   const groupedMessages = useMemo(() => {
     return groupTimelineMessages(activeMessages, {
@@ -937,29 +938,36 @@ export function Conversations({
               <div className="chat-header-main-info">
                 <div className="chat-header-name-row">
                   <strong className="chat-header-name">{selected.contact}</strong>
+                  <span
+                    className={`chat-header-category-chip category-${selected.contactCategory || 'customer'}`}
+                    title={`Tipo de contato: ${selected.contactCategoryLabel || 'Cliente'}`}
+                  >
+                    {selected.contactCategory === 'commercial' && <Building2 size={12} aria-hidden="true" />}
+                    {selected.contactCategory === 'saved' && <BookmarkCheck size={12} aria-hidden="true" />}
+                    {(!selected.contactCategory || selected.contactCategory === 'customer') && <User size={12} aria-hidden="true" />}
+                    <span>{selected.contactCategoryLabel || 'Cliente'}</span>
+                  </span>
                 </div>
                 <div className="chat-header-sub">
-                  {selected.contactCategory !== 'commercial' && (
-                    <span className={`chat-header-stage-chip stage-tone-${currentStageTone}`} title={currentStageLabel}>
-                      {currentStageLabel}
+                  {selected.contactCategory !== 'commercial' && currentStageLabel && (
+                    <span
+                      className={`chat-header-stage-chip stage-tag tone-${currentStageTone}`}
+                      title={`Etapa comercial: ${currentStageLabel}`}
+                    >
+                      <span>{currentStageLabel}</span>
                     </span>
                   )}
                   {headerSubtitleInfo.isHuman && headerSubtitleInfo.assignee ? (
-                    <span className="chat-header-owner-chip" title={`Responsável: ${headerSubtitleInfo.assignee}`}>
-                      <UserRound size={12} aria-hidden="true" /> {headerSubtitleInfo.assignee}
+                    <span className="chat-header-status is-human" title={`Responsável: ${headerSubtitleInfo.assignee}`}>
+                      <UserRound size={13} aria-hidden="true" />
+                      <span>Com {headerSubtitleInfo.assignee}</span>
                     </span>
                   ) : headerSubtitleInfo.isAiActive ? (
-                    <span className="chat-header-ai-indicator"><Bot size={12} aria-hidden="true" /> IA ativa</span>
+                    <span className="chat-header-status is-ai" title="A IA está respondendo esta conversa">
+                      <span className="chat-header-status-dot" aria-hidden="true" />
+                      <span>Atendido pela IA</span>
+                    </span>
                   ) : null}
-                  <span
-                    className={`chat-header-category-chip category-${selected.contactCategory || 'customer'}`}
-                    title={selected.contactCategoryLabel || 'Cliente'}
-                  >
-                    {selected.contactCategory === 'commercial' && <Building2 size={11} aria-hidden="true" />}
-                    {selected.contactCategory === 'saved' && <BookmarkCheck size={11} aria-hidden="true" />}
-                    {(!selected.contactCategory || selected.contactCategory === 'customer') && <User size={11} aria-hidden="true" />}
-                    <span>{selected.contactCategoryLabel || 'Cliente'}</span>
-                  </span>
                 </div>
               </div>
             </div>
@@ -990,6 +998,7 @@ export function Conversations({
             </div>
           </div>
           <ConversationTimeline
+            key={JSON.stringify([tenantSlug, selected?.externalConversationId])}
             groupedMessages={groupedMessages}
             messageStreamRef={messageStreamRef}
             messagesEndRef={messagesEndRef}
@@ -1122,9 +1131,11 @@ export function Conversations({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="assign-modal-header">
+              <ContactAvatar name={selected.contact} avatarUrl={selected.avatarUrl} className="assign-modal-avatar" />
               <div className="assign-modal-header-main">
                 <h3 id="assign-modal-title" className="assign-modal-title">Atribuir atendimento</h3>
                 <span className="assign-modal-contact">{selected.contact || 'Cliente'}</span>
+                <span className="assign-modal-hint">Escolha quem assume esta conversa</span>
               </div>
               <button
                 ref={assignModalCloseBtnRef}
@@ -1191,8 +1202,10 @@ export function Conversations({
                           <span className="assign-agent-name">{agent.name}</span>
                           {agent.role && <span className="assign-agent-role">{agent.role}</span>}
                         </div>
-                        {isCurrent && (
+                        {isCurrent ? (
                           <span className="assign-current-badge">Atual</span>
+                        ) : (
+                          <span className="assign-agent-action">Atribuir</span>
                         )}
                       </div>
                     );

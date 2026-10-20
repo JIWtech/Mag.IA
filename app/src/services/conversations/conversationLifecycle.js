@@ -35,6 +35,10 @@ export function applyConversationLifecycle(conversation, event, stage) {
     conversation.lastInboundId = event.id || event.external_message_id || event.created_at;
     if (conversation.status === 'finalizado') {
       conversation.status = 'ia_ativa';
+      // O estágio "Finalizado" não pode sobreviver à reabertura: eventos em
+      // buffer não o sobrescrevem e o cabeçalho continuaria "encerrado".
+      if (String(conversation.stage || '').toLowerCase() === 'finalizado'
+        || String(conversation.stage || '').toLowerCase() === 'finalizada') conversation.stage = '';
       conversation.owner = null;
       conversation.ownerId = null;
       conversation.ownerKind = null;

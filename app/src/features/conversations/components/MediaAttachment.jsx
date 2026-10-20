@@ -11,6 +11,7 @@ import {
   Download,
   ExternalLink,
 } from 'lucide-react';
+import { mediaDisplayLabel } from '../../../services/media/mediaPresentation.js';
 import { ProductAttachment } from './ProductAttachment.jsx';
 import { AudioRecoveryNotice } from './AudioRecoveryNotice.jsx';
 import { TranscribedAudioCard } from './TranscribedAudioCard.jsx';
@@ -261,7 +262,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
     return (
       <div className="media-placeholder" title="Arquivo não encontrado no armazenamento">
         <Icon size={20} />
-        <span>{media?.fileName || config.label}</span>
+        <span>{mediaDisplayLabel(media)}</span>
         <small>Arquivo não encontrado</small>
       </div>
     );
@@ -300,7 +301,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
       return (
         <div className="media-placeholder" title="Não foi possível carregar a imagem original">
           <Icon size={20} />
-          <span>{media?.fileName || config.label}</span>
+          <span>{mediaDisplayLabel(media)}</span>
           <small>Falha no carregamento</small>
           {canRetry && (
             <button type="button" className="media-retry-button" onClick={handleRetryMedia}>
@@ -424,7 +425,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
     return (
       <a className="media-placeholder media-download" href={effectiveUrl} target="_blank" rel="noopener noreferrer">
         <Icon size={20} />
-        <span>{media.fileName || config.label}</span>
+        <span>{mediaDisplayLabel(media)}</span>
         <ExternalLink size={15} />
       </a>
     );
@@ -433,7 +434,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
   return (
     <div className="media-placeholder" title="O arquivo original ainda não foi disponibilizado pelo canal">
       <Icon size={20} />
-      <span>{media?.fileName || config.label}</span>
+      <span>{mediaDisplayLabel(media)}</span>
       <small>Prévia indisponível</small>
     </div>
   );

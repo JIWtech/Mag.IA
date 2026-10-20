@@ -9,7 +9,7 @@ export function resolveVisualMediaCaption(media, messageText) {
   const candidates = [media?.caption, messageText];
   for (const candidate of candidates) {
     const value = String(candidate || '').trim();
-    if (value && !isTechnicalMediaPlaceholder(value, media)) return normalizeTechnicalMediaPlaceholder(value);
+    if (value && value !== media?.fileName && !isTechnicalMediaPlaceholder(value, media)) return normalizeTechnicalMediaPlaceholder(value);
   }
   return '';
 }
@@ -25,8 +25,14 @@ export function consecutiveImageGallery(messages = [], index = -1) {
 
   const visualItems = [];
   let targetIndex = 0;
+  const sender = (msg) => msg.from || (msg.isAi ? 'ai' : msg.isAgent ? 'agent' : 'contact');
+  const sameGroup = (msg) => isVisualMedia(msg) && sender(msg) === sender(current);
+  let start = index;
+  let end = index;
+  while (start > 0 && sameGroup(messages[start - 1])) start--;
+  while (end + 1 < messages.length && sameGroup(messages[end + 1])) end++;
 
-  for (let i = 0; i < messages.length; i += 1) {
+  for (let i = start; i <= end; i += 1) {
     const msg = messages[i];
     if (isVisualMedia(msg)) {
       if (i === index) {

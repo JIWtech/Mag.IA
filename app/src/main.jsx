@@ -42,6 +42,7 @@ import './styles/components/attachments-location.css';
 
 import './styles.css';
 import './conversations.css';
+import './styles/components/stage-tones.css';
 import './landing.css';
 
 createRoot(document.getElementById('root')).render(
