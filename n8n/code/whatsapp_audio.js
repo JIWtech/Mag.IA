@@ -68,9 +68,17 @@ async function transcribeTurnAudio(context) {
     if (parsed.text.length > 6000) throw new Error('audio_transcription_too_long');
     const result = {version:'whatsapp_audio_v1',status:'transcribed',text:parsed.text.trim(),model,
       mime_type:mime,usage:body.usageMetadata || {},transcribed_at:new Date().toISOString()};
-    const saved = await supabasePatch(path,{raw_payload:{...row.raw_payload,audio_processing:result}})
+    const saved = await supabasePost('/rest/v1/rpc/magia_merge_channel_event_raw',{
+      p_tenant: context.tenant.id,
+      p_event: item.event_id,
+      p_channel: 'whatsapp',
+      p_conversation: chatId,
+      p_external_message: item.id,
+      p_patch: { audio_processing: result },
+    })
       .catch(()=>{throw new Error('audio_transcription_not_persisted');});
-    if (!Array.isArray(saved) || saved.length !== 1) throw new Error('audio_transcription_not_persisted');
+    const mergeResult = Array.isArray(saved) ? saved[0] : saved;
+    if (!mergeResult || (mergeResult.applied !== true && mergeResult.reason !== 'already_applied')) throw new Error('audio_transcription_not_persisted');
     turn.audio_transcriptions[item.event_id] = result;
     item.text = result.text;
   }

@@ -5,6 +5,10 @@ const expectedSlug = 'wesley_automoveis';
 if (input.tenant_slug !== expectedSlug || (input.noria_extension && input.noria_extension !== 'genesis')) {
   throw new Error('NORIA_EXTENSION_POLICY_TENANT_MISMATCH');
 }
+// A turn that the CORE already concluded (suppression, human lock, empty queue,
+// audio failure...) has nothing left to decide commercially. Preserve its
+// identity and result untouched so the finalisation node never re-runs it.
+if (input.noria_terminal === true) return { json: { ...input } };
 
 const base = String($env.SUPABASE_URL || '').replace(/\/$/, '');
 const key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');
@@ -90,14 +94,34 @@ function parseBrazilianCurrency(text) {
     appraisal_cents: null,
   };
 
-  const isQuestion = /[?]/.test(String(text || '')) || /\b(?:e\s+se|sera\s+que|fazem|faz|consegue|conseguem|tem\s+como|possivel|da\s+pra)\b/i.test(norm);
-  if (!isQuestion && /\b(?:sem\s+entrada|zero\s+(?:de\s+)?entrada|entrada\s+(?:zero|0)|nao\s+tenho\s+(?:nada\s+(?:de\s+)?)?entrada|vou\s+dar\s+zero)\b/i.test(norm)) {
+  const isZeroDepositQuestion = /\bsem\s+entrada\b/i.test(norm) && (
+    /[?]/.test(String(text || '')) || /\b(?:e\s+se|sera\s+que|fazem|faz|consegue|conseguem|tem\s+como|possivel|da\s+pra|da\s+para)\b/i.test(norm)
+  );
+  const isHypothetical = /\b(?:e\s+se\s+(?:eu\s+)?(?:der|pagar|colocar)|se\s+eu\s+(?:der|pagar|colocar))\b/i.test(norm);
+  const isAmountInquiry = /\b(?:tem\s+como|da\s+pra|da\s+para|sera\s+que|e\s+possivel|seria\s+possivel|fazem|faz|aceita|aceitam)\b/i.test(norm)
+    && (/[?]/.test(String(text || '')) || /\b(?:tem\s+como|da\s+pra|da\s+para)\b/i.test(norm));
+  const isPermissionQuestion = /[?]/.test(String(text || '')) && /\b(?:posso|poderia|consigo)\s+(?:dar\s+)?(?:r\$\s*)?\d/i.test(norm);
+  const isDepositInquiry = isZeroDepositQuestion || isHypothetical || isAmountInquiry || isPermissionQuestion;
+
+  const hasConditionalAlternative = /\b(?:se\s+nao\s+der|caso\s+nao\s+de|se\s+precisar)\s+sem\s+entrada\b/i.test(norm);
+  if (!isDepositInquiry && !hasConditionalAlternative && /\b(?:sem\s+entrada|zero\s+(?:de\s+)?entrada|entrada\s+(?:zero|0)|nao\s+tenho\s+(?:nada\s+(?:de\s+)?)?entrada|nao\s+consigo\s+dar\s+entrada(?:\s+agora)?|vou\s+dar\s+zero)\b/i.test(norm)) {
     result.deposit = 0;
     result.deposit_cents = 0;
   }
 
-  const depositMatch = text.match(/(?:entrada|sinal)(?:\s+de)?\s*(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?|\d+(?:\.\d{3})*(?:,\d{1,2})?)/i)
-    || text.match(/(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?|\d+(?:\.\d{3})*(?:,\d{1,2})?)\s*(?:de\s+)?(?:entrada|sinal)/i);
+  let parseText = text;
+  if (hasConditionalAlternative) {
+    parseText = parseText.replace(/\b(?:se\s+nao\s+der|caso\s+nao\s+de|se\s+precisar)\s+sem\s+entrada\b/i, '').trim();
+  }
+
+  const depositMatch = !isDepositInquiry ? (
+    parseText.match(/(?:entrada|sinal)(?:\s+de)?\s*(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?|\d+(?:\.\d{3})*(?:,\d{1,2})?)/i)
+    || parseText.match(/(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?|\d+(?:\.\d{3})*(?:,\d{1,2})?)\s*(?:de\s+)?(?:entrada|sinal)/i)
+    || parseText.match(/\b(\d+(?:[.,]\d+)?\s*(?:mil|k)?)\s*(?:e\s+(?:o\s+)?(?:resto|restante|saldo)|e\s+parcela|e\s+financia)\b/i)
+    || parseText.match(/(?:dou|daria|consigo\s+dar|vou\s+dar|posso\s+dar)\s+(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?)/i)
+    || parseText.match(/tenho\s+R\$\s*(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?)/i)
+    || parseText.match(/tenho\s+(\d+(?:[.,]\d+)?\s*(?:mil|k))\b/i)
+  ) : null;
   if (depositMatch) {
     const val = parsePrice(depositMatch[1]);
     if (val !== null) {
@@ -203,8 +227,8 @@ function parseSheetValues(values) {
       const priceCents = hasPrice && price !== null ? Math.round(price * 100) : null;
 
       if (!model || !brand || !Number.isInteger(year) || year < 1900 || year > new Date().getFullYear() + 2
-          || (hasPrice && (!Number.isFinite(price) || price <= 0 || !Number.isSafeInteger(priceCents)))
-          || (km !== null && (!Number.isFinite(km) || km < 0))) {
+        || (hasPrice && (!Number.isFinite(price) || price <= 0 || !Number.isSafeInteger(priceCents)))
+        || (km !== null && (!Number.isFinite(km) || km < 0))) {
         throw new Error('INVALID_INVENTORY_ROW');
       }
 
@@ -251,46 +275,97 @@ function normalizeVehicleCategory(value) {
   // These are exact inventory field values, never intent/model-name heuristics.
   if (['motorcycle', 'motorcycles', 'moto', 'motocicleta'].includes(category)) return 'motorcycle';
   if (['car', 'cars', 'carro', 'automovel'].includes(category)) return 'car';
+  if (['truck', 'caminhao', 'caminhoes'].includes(category)) return 'truck';
+  if (['van', 'vans', 'kombi'].includes(category)) return 'van';
+  if (['pickup', 'pickups', 'caminhonete', 'caminhonetes', 'picape', 'picapes'].includes(category)) return 'pickup';
+  if (['utility', 'utilitario', 'utilitarios'].includes(category)) return 'utility';
   return 'unknown';
 }
 
 // Maps the tenant-scoped Supabase snapshot to the same internal contract used
 // by catalog selection, pricing and auction checks. This is intentionally a
 // reader only: Sheets remains the synchronisation authority.
-function parseSupabaseInventoryRows(rows) {
+function parseSupabaseInventoryRows(rows, options = {}) {
   if (!Array.isArray(rows) || rows.length > 200) throw new Error('INVENTORY_SNAPSHOT_INVALID');
   const ids = new Set();
+  const imageMap = options.imageMap || new Map();
   return rows.map(row => {
     const id = String(row?.vehicle_id || '').trim();
     const statusObj = normalizeStatus(row?.status);
     const brand = String(row?.brand || '').trim(), model = String(row?.model || '').trim();
     const year = Number(row?.model_year), cents = row?.price_cents === null || row?.price_cents === undefined ? null : Number(row.price_cents);
+    const previousCents = row?.previous_price_cents === null || row?.previous_price_cents === undefined ? null : Number(row.previous_price_cents);
     const category = normalizeVehicleCategory(row?.category);
     if (!id || ids.has(id) || !statusObj || !brand || !model || !Number.isInteger(year)
       || (cents !== null && (!Number.isSafeInteger(cents) || cents <= 0))) {
       throw new Error('INVENTORY_SNAPSHOT_INVALID');
     }
     ids.add(id);
+    const imageUrls = imageMap.get(id) || [];
+    const imageUrl = imageUrls[0] || null;
     return {
       id, name: `${brand} ${model}`, commercial_name: formatCommercialName(brand, model, year),
       brand, model, year, category, color: String(row.color || '').trim(),
       km: row.mileage_km === null || row.mileage_km === undefined ? null : Number(row.mileage_km),
       fuel: String(row.fuel || '').trim(), observations: String(row.observations || '').trim(),
-      price_cents: cents, canonical_price_cents: cents, price_source: String(row.price_source || 'genesis_supabase_snapshot'),
+      price_cents: cents, canonical_price_cents: cents, previous_price_cents: previousCents,
+      price_source: String(row.price_source || 'genesis_supabase_snapshot'),
       status: statusObj.status, offerable: statusObj.offerable,
       availability_verified: row.availability_confirmed === true && statusObj.verified,
+      image_url: imageUrl,
+      image_urls: imageUrls,
+      image_source: imageUrl ? 'genesis_storage' : null,
+      image_authorization: options.imageAuthorizations?.get(id) || null,
       source_observed_at: row.source_observed_at || null, synced_at: row.synced_at || null,
     };
   });
 }
 
-async function loadSupabaseInventory({ tenantId, supabaseUrl, serviceRoleKey, httpRequest } = {}) {
+async function loadSupabaseInventory({ tenantId, supabaseUrl, serviceRoleKey, httpRequest, includeImages = false } = {}) {
   if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(String(tenantId || '')) || !supabaseUrl || !serviceRoleKey || !httpRequest) {
     throw new Error('INVENTORY_SNAPSHOT_CONFIG_INVALID');
   }
-  const select = 'vehicle_id,sheet_row,brand,model,model_year,color,mileage_km,fuel,category,status,price_cents,availability_confirmed,price_source,observations,source_observed_at,synced_at';
-  const rows = await httpRequest({ method:'GET', url:String(supabaseUrl).replace(/\/$/,'')+'/rest/v1/genesis_inventory_vehicles?select='+encodeURIComponent(select)+'&tenant_id=eq.'+encodeURIComponent(tenantId)+'&order=sheet_row.asc&limit=200', headers:{apikey:serviceRoleKey,Authorization:'Bearer '+serviceRoleKey}, json:true, timeout:7000 });
-  return parseSupabaseInventoryRows(rows);
+  const select = 'vehicle_id,sheet_row,brand,model,model_year,color,mileage_km,fuel,category,status,price_cents,previous_price_cents,availability_confirmed,price_source,observations,source_observed_at,synced_at';
+  const cleanBase = String(supabaseUrl).replace(/\/$/, '');
+  const rows = await httpRequest({ method: 'GET', url: cleanBase + '/rest/v1/genesis_inventory_vehicles?select=' + encodeURIComponent(select) + '&tenant_id=eq.' + encodeURIComponent(tenantId) + '&order=sheet_row.asc&limit=200', headers: { apikey: serviceRoleKey, Authorization: 'Bearer ' + serviceRoleKey }, json: true, timeout: 7000 });
+  if (!includeImages) return parseSupabaseInventoryRows(rows);
+
+  const imageMap = new Map(), imageAuthorizations = new Map();
+  try {
+    const imgRows = await httpRequest({
+      method: 'GET',
+      url: cleanBase + '/rest/v1/genesis_inventory_vehicle_images?select=tenant_id,vehicle_id,storage_bucket,storage_path,public_url,sha256,mime_type,file_size_bytes,is_primary&tenant_id=eq.' + encodeURIComponent(tenantId) + '&order=is_primary.desc,display_order.asc,id.asc&limit=201',
+      headers: { apikey: serviceRoleKey, Authorization: 'Bearer ' + serviceRoleKey },
+      json: true,
+      timeout: 3000
+    });
+    if (Array.isArray(imgRows) && imgRows.length <= 200) {
+      for (const img of imgRows) {
+        const row = (rows || []).find(item => item.vehicle_id === img?.vehicle_id);
+        if (!row || img.tenant_id !== tenantId || !normalizeStatus(row.status)?.offerable
+          || img.storage_bucket !== 'product-catalog' || img.mime_type !== 'image/jpeg'
+          || !/^[a-f0-9]{64}$/.test(img.sha256 || '') || !Number.isSafeInteger(img.file_size_bytes)
+          || img.file_size_bytes <= 0 || img.file_size_bytes > 10 * 1024 * 1024) continue;
+        const path = String(img.storage_path || '');
+        if (!path.startsWith('genesis/' + tenantId + '/') || path.split('/').some(part => !part || part === '.' || part === '..')
+          || /[\\%?#\s]/.test(path)) continue;
+        const expectedUrl = cleanBase + '/storage/v1/object/public/' + img.storage_bucket + '/' + path;
+        if (img.public_url !== expectedUrl || !/^https:\/\//.test(expectedUrl)) continue;
+        const list = imageMap.get(img.vehicle_id) || [];
+        if (list.includes(expectedUrl)) continue;
+        list.push(expectedUrl);
+        imageMap.set(img.vehicle_id, list);
+        const proof = imageAuthorizations.get(img.vehicle_id) || {
+          contract: 'noria_product_images_v1', tenant_id: tenantId, product_id: img.vehicle_id,
+          source: 'genesis_inventory_vehicle_images', images: []
+        };
+        proof.images.push({ url: expectedUrl, sha256: img.sha256, mime_type: img.mime_type });
+        imageAuthorizations.set(img.vehicle_id, proof);
+      }
+    }
+  } catch (_) { }
+  // Missing/partial registry never authorizes another vehicle by a folder name.
+  return parseSupabaseInventoryRows(rows, { imageMap, imageAuthorizations });
 }
 
 function classifyCatalogAudience(value = 'all') {
@@ -365,121 +440,67 @@ function filterCatalogBySemantic(inventory = [], semanticCatalog = {}) {
   };
   applyConstraints(semanticCatalog.preferences, false);
   applyConstraints(semanticCatalog.exclusions, true);
-  return { items, count: items.length, applied, unsupported,
-    requires_clarification: unsupported.length > 0 };
-}
-
-/**
- * 7. Resolution of Catalog Selection (Fixes Caso Jeferson)
- * Parses:
- * - Ordinals: "6", "o sexto", "essa sexta", "opcao 6", "6.", etc.
- * - Textual references: "a CB", "essa moto", "a CB 600", "o Sandero"
- * Resolves against catalog context products, preserving commercial name, price, and status.
- */
-function parseCatalogOrdinal(text = '') {
-  const norm = normalizeText(text).replace(/\[[^\]]*\]/g, ' ').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!norm) return null;
-  if (/\b\d+\s*(?:mil|k|reais|km|por cento)\b|r\$/.test(norm)) return null;
-
-  const patterns = [
-    /^(?:o|a|opcao|item|numero)?\s*([1-9]\d?)$/,
-    /\b(?:esse|essa|este|esta|aquele|aquela)\s+(?:(?:item|numero|modelo|opcao)\s+)?([1-9]\d?)\b/,
-    /\b(?:quero|queria|vou|prefiro|gostei|pego|pegar|escolho|escolhi|comprar|compro|levar)\s+(?:(?:pegar|comprar|levar|ficar\s+com|saber\s+sobre)\s+)?(?:(?:o|a|item|opcao|numero|modelo)\s+)?([1-9]\d?)\b/,
-    /\b(?:me\s+fala\s+(?:mais\s+)?(?:sobre|do|da)|fala\s+(?:mais\s+)?(?:sobre|do|da)|sobre\s+(?:o|a)|item|opcao|numero)\s+(?:o\s+|a\s+)?([1-9]\d?)\b/
-  ];
-
-  for (const pattern of patterns) {
-    const match = norm.match(pattern);
-    if (match) return Number(match[1]);
-  }
-
-  const ordinalWords = {
-    primeiro: 1, primeira: 1, segundo: 2, segunda: 2, terceiro: 3, terceira: 3,
-    quarto: 4, quarta: 4, quinto: 5, quinta: 5, sexto: 6, sexta: 6,
-    setimo: 7, setima: 7, oitavo: 8, oitava: 8, nono: 9, nona: 9, decimo: 10, decima: 10
+  return {
+    items, count: items.length, applied, unsupported,
+    requires_clarification: unsupported.length > 0
   };
-  for (const [word, num] of Object.entries(ordinalWords)) {
-    if (new RegExp('\\b' + word + '\\b').test(norm) && !/\b(?:feira|marcha|parcela|prestacao)\b/.test(norm)) {
-      return num;
-    }
-  }
-
-  return null;
 }
 
-function resolveSelection(text = '', inventory = [], catalogContext = null) {
-  const ordinal = parseCatalogOrdinal(text);
-  const products = catalogContext?.products || [];
-
-  if (ordinal !== null) {
-    if (products.length >= ordinal && products[ordinal - 1]) {
-      const reference = products[ordinal - 1];
-      const product = inventory.find(item => String(item?.id || '') === String(reference?.id || '')) || null;
-      const eligibility = commercialEligibility(product);
-      return {
-        product,
-        identified_product: product || reference,
-        invalid: !product,
-        ambiguous: false,
-        contextual: true,
-        resolved_via: 'ordinal',
-        ordinal,
-        commercial_eligible: eligibility.eligible,
-        ineligible_reason: eligibility.reason,
-        availability_confirmed: eligibility.availability_confirmed,
-      };
-    }
-    // If ordinal exists but out of bounds of recent context:
-    if (products.length > 0 && ordinal > products.length) {
-      return { product: null, invalid: true, ambiguous: false, contextual: true, ordinal };
-    }
-  }
-
-  // Textual reference resolution
-  const normText = normalizeText(text);
-
-  // General category/inventory exploration queries belong to filter_catalog, never ambiguous SKU selection
-  const isCategoryListingQuery = /\b(?:motos?|motocicletas?|scooters?|carros?|automoveis?|veiculos?)\b/i.test(normText)
-    && /\b(?:quais|tem|têm|ver|mostr(?:a|ar|e)|lista|listar|catalogo|estoque|disponive(?:l|is)|opcoes|opções)\b/i.test(normText)
-    && !products.length;
-  if (isCategoryListingQuery) {
+/** Resolve only structured references produced by the validated semantic turn. */
+function resolveSelection(semantic = null, inventory = [], catalogContext = null) {
+  const references = semantic?.valid === true ? semantic.references : null;
+  const evidenceIds = Array.isArray(references?.evidence_ids)
+    ? references.evidence_ids.map(String).filter(Boolean) : [];
+  if (!references || !evidenceIds.length) {
     return { product: null, invalid: false, ambiguous: false, contextual: false };
   }
 
-  const offerable = filterOfferableCatalog(inventory, 'all');
-  const pool = products.length ? products.filter(Boolean) : offerable;
-
-  const matches = [];
-  for (const item of pool) {
-    const modelNorm = normalizeText(item.model);
-    const brandNorm = normalizeText(item.brand);
-    const nameNorm = normalizeText(item.name || item.commercial_name);
-    const modelTokens = modelNorm.split(/[\s/-]+/).filter(token => token.length >= 2);
-
-    // Exact or keyword match
-    // Empty optional display fields must never match every input (`text.includes('')`).
-    // The authoritative parser always provides model, but tolerate a persisted
-    // catalog snapshot that only has a stable id or partial display data.
-    if ((nameNorm && normText.includes(nameNorm)) || (modelNorm && normText.includes(modelNorm))) {
-      matches.push(item);
-    } else if (modelTokens.some(token => new RegExp('\\b' + token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(normText))) {
-      matches.push(item);
+  const products = Array.isArray(catalogContext?.products) ? catalogContext.products : [];
+  const ordinal = Number.isInteger(references.selected_ordinal) && references.selected_ordinal > 0
+    ? references.selected_ordinal : null;
+  if (ordinal !== null) {
+    const reference = products[ordinal - 1] || null;
+    if (!reference) {
+      return { product: null, invalid: products.length > 0, ambiguous: false, contextual: products.length > 0, ordinal };
     }
+    const product = inventory.find(item => String(item?.id || '') === String(reference?.id || '')) || null;
+    const eligibility = commercialEligibility(product);
+    return {
+      product,
+      identified_product: product || reference,
+      invalid: !product,
+      ambiguous: false,
+      contextual: true,
+      resolved_via: 'semantic_ordinal',
+      ordinal,
+      commercial_eligible: eligibility.eligible,
+      ineligible_reason: eligibility.reason,
+      availability_confirmed: eligibility.availability_confirmed,
+    };
   }
 
+  const ids = Array.isArray(references.mentioned_product_ids)
+    ? [...new Set(references.mentioned_product_ids.map(String).filter(Boolean))] : [];
+  const matches = ids.map(id => inventory.find(item => String(item?.id || '') === id) || null).filter(Boolean);
   if (matches.length === 1) {
-    const reference = matches[0];
-    const product = inventory.find(item => String(item?.id || '') === String(reference?.id || '')) || reference;
+    const product = matches[0];
     const eligibility = commercialEligibility(product);
-    return { product, identified_product: product, invalid: false, ambiguous: false, contextual: true, resolved_via: 'textual',
-      commercial_eligible: eligibility.eligible, ineligible_reason: eligibility.reason,
-      availability_confirmed: eligibility.availability_confirmed };
+    return {
+      product,
+      identified_product: product,
+      invalid: false,
+      ambiguous: false,
+      contextual: true,
+      resolved_via: 'semantic_product_id',
+      commercial_eligible: eligibility.eligible,
+      ineligible_reason: eligibility.reason,
+      availability_confirmed: eligibility.availability_confirmed,
+    };
   }
   if (matches.length > 1) {
     return { product: null, invalid: false, ambiguous: true, candidates: matches, contextual: true };
   }
-
-  return { product: null, invalid: false, ambiguous: false, contextual: false };
+  return { product: null, invalid: ids.length > 0, ambiguous: false, contextual: ids.length > 0 };
 }
 
 /**
@@ -556,20 +577,14 @@ function evaluateAuctionHandoff(text = '', state = {}, inventory = [], currentPr
  * Financing Rules (Gênesis exclusive)
  */
 function isFinancingQuestion(text = '', priorPending = '', semantic = null) {
-  if (semantic?.valid === true) {
-    return semantic.primary_intent === 'financing'
-      || semantic.secondary_intents?.includes('financing') === true;
-  }
-  const norm = normalizeText(text);
-  return /\b(?:financi(?:amento|ar|am|a)|fazem\s+financiamento|como\s+(?:funciona|e|fica)\s+o\s+financiamento|trabalha\s+com\s+financiamento|simulac(?:ao|oes)|simular)\b/.test(norm);
+  return semantic?.valid === true && (
+    semantic.primary_intent === 'financing'
+    || semantic.secondary_intents?.includes('financing') === true
+  );
 }
 
 function formatFinancingReply(text = '', product = null) {
-  const norm = normalizeText(text);
-  if (/\b(?:financi(?:amento|ar|am|a)|fazem\s+financiamento|como\s+(?:funciona|e|fica)\s+o\s+financiamento|trabalha\s+com\s+financiamento|simulac(?:ao|oes)|simular)\b/.test(norm)) {
-    return 'Trabalhamos com financiamento, sujeito à análise da financeira\nQuanto você pretende dar de entrada?';
-  }
-  return 'A entrada mínima e as parcelas dependem da análise da financeira\nQuer que um atendente confira uma simulação pra você?';
+  return null;
 }
 
 /**
@@ -735,7 +750,7 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
     }
 
     case 'inventory.resolve_selection': {
-      const resolved = resolveSelection(payload.text, inventory, payload.catalog_context);
+      const resolved = resolveSelection(payload.semantic_intent, inventory, payload.catalog_context);
       return {
         contract: 'noria_business_result_v1',
         operation,
@@ -791,14 +806,13 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
 
     case 'financing.evaluate': {
       const isFin = isFinancingQuestion(payload.text, payload.prior_pending, payload.semantic_intent);
-      const reply = isFin ? formatFinancingReply(payload.text, payload.product) : null;
       return {
         contract: 'noria_business_result_v1',
         operation,
         status: 'ok',
         data: {
           is_financing_question: isFin,
-          reply,
+          reply: null,
           pending_requirement: isFin ? 'deposit' : '',
         },
         handoff: { required: false, reason: null, message: null },
@@ -806,41 +820,111 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
     }
 
     case 'vehicle.trade_in': {
-      const messages = payload.messages || [];
-      const current = (messages || []).map(m => ({ id: String(m.event_id || m.id || ''), text: String(m.text || '') }));
-      const text = normalizeText(current.map(m => m.text).join(' '));
-      if (/\b(?:nao|nunca)\s+(?:quero\s+|vou\s+|pretendo\s+)?(?:dar|usar|colocar|trocar)\b/.test(text)
-        || /\b(?:so|apenas)\s+(?:quero\s+)?vender\b/.test(text)) {
+      const messages = Array.isArray(payload.messages) ? payload.messages : [];
+      const current = messages.map(message => ({
+        id: String(message?.event_id || message?.id || ''),
+        text: String(message?.text || ''),
+      }));
+      const turnText = current.map(m => m.text).join(' ').trim();
+      const norm = normalizeText(turnText);
+      const evidenceIds = current.map(message => message.id).filter(Boolean);
+      const semantic = payload.semantic_intent;
+      const semanticVehicle = semantic?.customer_vehicle;
+      const semanticEvidence = Array.isArray(semanticVehicle?.evidence_ids)
+        ? semanticVehicle.evidence_ids.map(String).filter(id => evidenceIds.includes(id))
+        : [];
+      const allowedPurposes = ['none', 'entry_inquiry', 'entry', 'independent_sale', 'ambiguous_possession', 'buy_only_correction'];
+      const semanticValid = semantic?.valid === true
+        && semanticVehicle
+        && allowedPurposes.includes(semanticVehicle.purpose)
+        && (semanticVehicle.purpose === 'none' || semanticEvidence.length > 0);
+
+      if (semanticValid && ['none', 'buy_only_correction'].includes(semanticVehicle.purpose)) {
         return { contract: 'noria_business_result_v1', operation, status: 'ok', data: null, handoff: { required: false, reason: null, message: null } };
       }
-      const owner = /\b(?:meu|minha)\s+(?:carro|moto|veiculo)\b/.test(text)
-        || /\b(?:meu|minha)\s+[a-z][a-z0-9]*(?:\s+[a-z0-9]+){0,3}\s+(?:19|20)\d{2}\b/.test(text);
-      const entry = /\b(?:de|como|na|pela|pra|para)\s+(?:(?:a|uma|parte\s+da)\s+)?entrada\b/.test(text);
-      const vehicleMention = owner || /\b(?:moto|carro|veiculo)\b/.test(text);
-      const policyQuestion = entry && vehicleMention
-        && /\b(?:aceita|aceitam|aceitaria|aceitariam|pega|pegam|recebe|recebem|posso|pode|podem|da\s+pra)\b/.test(text)
-        && !/\b(?:quero|queria|vou|pretendo)\b.{0,25}\b(?:dar|da|usar|colocar|trocar)\b/.test(text);
-      if (policyQuestion) {
-        return {
-          contract: 'noria_business_result_v1',
-          operation,
-          status: 'ok',
-          data: { kind: 'policy_inquiry', evidence_ids: current.filter(m => m.id).map(m => m.id), raw_mention: current.map(m => m.text).join('\n') },
-          handoff: { required: false, reason: null, message: null },
-        };
-      }
-      const explicit = owner && entry;
-      const contextual = owner && payload.prior_pending === 'deposit';
-      if (!explicit && !contextual) {
+
+      // Semantic meaning is owned by the primary Gemini contract.  This
+      // extension may extract fields from a semantically authorized vehicle,
+      // but never infer sale, trade-in or financing from message keywords.
+      if (!semanticValid) {
         return { contract: 'noria_business_result_v1', operation, status: 'ok', data: null, handoff: { required: false, reason: null, message: null } };
       }
-      return {
-        contract: 'noria_business_result_v1',
-        operation,
-        status: 'ok',
-        data: { kind: 'offer', evidence_ids: current.filter(m => m.id).map(m => m.id), raw_mention: current.map(m => m.text).join('\n') },
-        handoff: { required: false, reason: null, message: null },
+      const semanticSource = 'primary_gemini';
+      const kind = semanticVehicle.purpose === 'entry_inquiry' ? 'policy_inquiry'
+        : semanticVehicle.purpose === 'entry' ? 'offer'
+          : semanticVehicle.purpose === 'independent_sale' ? 'independent_sale'
+            : 'ambiguous';
+
+      // Extract customer clause and details without contamination from store product
+      const segments = turnText.split(/(?:,|\.|\n|;|\s+\be\b\s+|\s+\bmas\b\s+|\s+\bpara\s+pegar\b|\s+\bna\s+compra\s+d[eo]\b)/i)
+        .map(s => s.trim())
+        .filter(Boolean);
+      const customerPrefixRegex = /\b(?:dou|daria|dar|dando|tenho|possuo|meu|minha|aceita|aceitam|pega|pegam|vender|vendo)\b/i;
+      const falseTenhoRegex = /\btenho\s+(?:um|uma)?\s*(?:duvida|pergunta|interesse|problema\s+com)\b/i;
+      let customerSegments = [];
+      for (const seg of segments) {
+        if (falseTenhoRegex.test(seg)) continue;
+        const match = seg.match(customerPrefixRegex);
+        if (match) {
+          if (/\bquero\s+dar\s+(?:uma\s+)?olhada\b/i.test(seg)) continue;
+          const sliced = seg.slice(match.index).trim();
+          customerSegments.push(sliced);
+        }
+      }
+      const customerClause = customerSegments.length > 0 ? customerSegments.join(' ') : turnText;
+      const normClause = normalizeText(customerClause);
+
+      const category = normalizeVehicleCategory(semanticVehicle?.category);
+
+      let validYear = Number.isInteger(Number(semanticVehicle?.year))
+        && Number(semanticVehicle.year) >= 1900
+        && Number(semanticVehicle.year) <= new Date().getFullYear() + 2
+        ? Number(semanticVehicle.year)
+        : null;
+
+      if (validYear === null) {
+        const storeProduct = payload.product;
+        const storeYear = storeProduct?.year ? Number(storeProduct.year) : null;
+        const yearMatches = [...customerClause.matchAll(/\b(19\d\d|20[0-2]\d)\b/g)].map(m => Number(m[1]));
+        for (const y of yearMatches) {
+          if (y >= 1900 && y <= new Date().getFullYear() + 2) {
+            if (storeYear && y === storeYear) {
+              const storeModel = storeProduct?.model ? normalizeText(storeProduct.model) : '';
+              if (storeModel && normalizeText(customerClause).includes(storeModel)) {
+                continue;
+              }
+            }
+            validYear = y;
+            break;
+          }
+        }
+      }
+      if (!Number.isInteger(validYear) || validYear < 1900 || validYear > new Date().getFullYear() + 2) {
+        validYear = null;
+      }
+
+      const customerVehicle = {
+        category,
+        year: validYear,
+        brand: String(semanticVehicle?.brand || '').trim(),
+        model: String(semanticVehicle?.model || '').trim(),
+        raw_mention: current.map(message => message.text).join('\n'),
+        evidence_ids: semanticEvidence.length > 0 ? semanticEvidence : evidenceIds,
+        auction_history: ['reported_yes', 'reported_no'].includes(semanticVehicle?.auction_history)
+          ? semanticVehicle.auction_history : 'unknown',
+        sinister_history: ['reported_yes', 'reported_no'].includes(semanticVehicle?.sinister_history)
+          ? semanticVehicle.sinister_history : 'unknown',
       };
+      const base = {
+        semantic_source: semanticSource,
+        evidence_ids: customerVehicle.evidence_ids,
+        raw_mention: customerVehicle.raw_mention,
+        customer_vehicle: customerVehicle,
+      };
+      const data = kind === 'offer'
+        ? { ...base, kind, requires_human_appraisal: true, acceptance_confirmed: false, valuation_cents: null }
+        : { ...base, kind };
+      return { contract: 'noria_business_result_v1', operation, status: 'ok', data, handoff: { required: false, reason: null, message: null } };
     }
 
     case 'customer.name_progress': {
@@ -865,10 +949,10 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
     case 'commercial.build_context': {
       const text = payload.text || '';
       const offerable = filterOfferableCatalog(inventory, 'all');
-      const selection = resolveSelection(text, inventory, payload.catalog_context);
+      const selection = resolveSelection(payload.semantic_intent, inventory, payload.catalog_context);
       const auction = evaluateAuctionHandoff(text, payload.state, inventory, selection.product || payload.product, payload.semantic_intent);
       const financing = isFinancingQuestion(text, payload.prior_pending, payload.semantic_intent)
-        ? { active: true, reply: formatFinancingReply(text, selection.product || payload.product) }
+        ? { active: true, reply: null }
         : { active: false, reply: null };
 
       return {
@@ -884,6 +968,397 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
         handoff: auction.required
           ? { required: true, reason: auction.reason, message: auction.message }
           : { required: false, reason: null, message: null },
+      };
+    }
+
+    case 'commercial.decide': {
+      // EXT Gênesis is the only commercial authority. Every threshold, document,
+      // stage and policy below is read from the verified tenant settings through
+      // genesisCommercialPolicy(); a missing parameter yields an explicit
+      // "not_configured" status, never a commercial default.
+      const semantic = payload.semantic_intent;
+      const turnMessages = Array.isArray(payload.messages) ? payload.messages : (payload.turn?.messages || []);
+      const turnText = turnMessages.map(m => typeof m === 'string' ? m : (m?.text || '')).join('\n\n').trim();
+      const state = payload.state || {};
+      const product = payload.product || null;
+      const inventoryFocus = payload.inventory_focus && typeof payload.inventory_focus === 'object' ? payload.inventory_focus : null;
+      const obsoleteInventoryFocus = inventoryFocus?.eligible === false;
+      const documents = payload.documents || [];
+      const documentStatus = payload.documentStatus || {};
+      const dialoguePlan = payload.dialogue_plan || {};
+      const policy = genesisCommercialPolicy(settings, payload.tenant_id || context.tenant_id || '');
+      const fin = policy.financing;
+      const leadRules = policy.lead_rules;
+      const salesConfig = settings.sales && typeof settings.sales === 'object' ? settings.sales : {};
+      const facts = settings.business_facts && typeof settings.business_facts === 'object' ? settings.business_facts : {};
+      const parameterStatus = {
+        financing_offered: fin.offered_by_business_status,
+        trade_in: policy.trade_in.status,
+        qualification: fin.qualification_enabled ? 'configured' : 'not_configured',
+        stages: salesConfig.stage_keys && salesConfig.stages ? 'configured' : 'not_configured',
+        purchase_rules: leadRules.minimum_purchase_year !== null || leadRules.rejected_purchase_brands.length ? 'configured' : 'not_configured',
+      };
+
+      // 1. Trade-in evaluation (semantic: consultation / offer / independent sale)
+      const tradeInOp = await executeBusinessOperation('vehicle.trade_in', {
+        tenant_slug: expectedSlug,
+        messages: turnMessages,
+        previous: state,
+        prior_pending: state.dialogue_context?.pending_requirement || state.pending_requirement || '',
+        inventory,
+        semantic_intent: semantic,
+        product,
+      }, { tenant_slug: expectedSlug, inventory });
+      const tradeInData = tradeInOp?.data || null;
+      // Reconcile the turn's customer-vehicle extraction with the vehicle already
+      // in the authorized state. Every identity actually available (stable id,
+      // brand, model, year) is compared:
+      //  - no identity in the turn (photo, maintenance, condition) -> same vehicle;
+      //  - at least one identity matches and none conflicts        -> same vehicle;
+      //  - any identity conflicts                                  -> another vehicle,
+      //    which inherits nothing (attributes nor evidence) from the previous one;
+      //  - identities that neither match nor conflict              -> unconfirmed
+      //    link: keep the previous vehicle untouched and do not attach this turn.
+      const priorVehicle = state.sell_vehicle && typeof state.sell_vehicle === 'object' ? state.sell_vehicle : {};
+      const vehicleYear = value => { const year = Number(value); return Number.isInteger(year) && year >= 1900 ? year : null; };
+      const priorIdentity = {
+        id: String(priorVehicle.id || priorVehicle.vehicle_id || '').trim(),
+        brand: String(priorVehicle.brand || state.sell_brand || '').trim(),
+        model: String(priorVehicle.model || state.sell_model || '').trim(),
+        year: vehicleYear(priorVehicle.year ?? state.sell_year),
+      };
+      const turnVehicle = tradeInData?.customer_vehicle || null;
+      let mergedCustomerVehicle = turnVehicle;
+      let vehicleReconciliation = turnVehicle ? 'no_prior_vehicle' : 'no_turn_vehicle';
+      if (turnVehicle) {
+        const turnIdentity = {
+          id: String(turnVehicle.id || turnVehicle.vehicle_id || '').trim(),
+          brand: String(turnVehicle.brand || '').trim(),
+          model: String(turnVehicle.model || '').trim(),
+          year: vehicleYear(turnVehicle.year),
+        };
+        const sameValue = (field, a, b) => field === 'year' ? a === b : normalizeText(a) === normalizeText(b);
+        const shared = ['id', 'brand', 'model', 'year'].filter(field => turnIdentity[field] && priorIdentity[field]);
+        const conflicts = shared.filter(field => !sameValue(field, turnIdentity[field], priorIdentity[field]));
+        const turnHasIdentity = ['id', 'brand', 'model', 'year'].some(field => turnIdentity[field]);
+        const priorHasIdentity = ['id', 'brand', 'model', 'year'].some(field => priorIdentity[field]);
+        if (!priorHasIdentity) {
+          vehicleReconciliation = 'no_prior_vehicle';
+        } else if (conflicts.length) {
+          vehicleReconciliation = 'different_vehicle';
+        } else if (!turnHasIdentity || shared.length) {
+          vehicleReconciliation = 'same_vehicle';
+          mergedCustomerVehicle = {
+            ...priorVehicle,
+            category: turnVehicle.category && turnVehicle.category !== 'unknown' ? turnVehicle.category : (priorVehicle.category || 'unknown'),
+            year: turnIdentity.year ?? priorIdentity.year,
+            brand: turnIdentity.brand || priorIdentity.brand,
+            model: turnIdentity.model || priorIdentity.model,
+            raw_mention: turnHasIdentity || !priorVehicle.raw_mention ? turnVehicle.raw_mention : priorVehicle.raw_mention,
+            evidence_ids: [...new Set([...(Array.isArray(priorVehicle.evidence_ids) ? priorVehicle.evidence_ids : []), ...(Array.isArray(turnVehicle.evidence_ids) ? turnVehicle.evidence_ids : [])])].slice(-30),
+            auction_history: turnVehicle.auction_history && turnVehicle.auction_history !== 'unknown' ? turnVehicle.auction_history : (priorVehicle.auction_history || 'unknown'),
+            sinister_history: turnVehicle.sinister_history && turnVehicle.sinister_history !== 'unknown' ? turnVehicle.sinister_history : (priorVehicle.sinister_history || 'unknown'),
+          };
+        } else {
+          vehicleReconciliation = 'unconfirmed_link';
+          mergedCustomerVehicle = Object.keys(priorVehicle).length ? priorVehicle : null;
+        }
+      }
+      // Flat legacy fields must describe the same vehicle as sell_vehicle.
+      const reconciledVehicle = turnVehicle ? mergedCustomerVehicle : null;
+
+      // 2. Purchase of the CUSTOMER's vehicle from tenant_settings.sdr_rules.
+      // Never applied to stock that the store itself sells.
+      const purchaseEvaluation = { evaluated: false, requires_human: false, reason: null, preferred: false, source: 'tenant_settings.sdr_rules' };
+      if (tradeInData?.kind === 'independent_sale') {
+        const v = mergedCustomerVehicle || {};
+        const rejectedBrands = leadRules.rejected_purchase_brands.map(normalizeText).filter(Boolean);
+        const preferredModels = leadRules.preferred_purchase_models.map(normalizeText).filter(Boolean);
+        const vBrand = normalizeText(v.brand || ''), vModel = normalizeText(v.model || '');
+        const vYear = v.year ? Number(v.year) : null;
+        purchaseEvaluation.evaluated = true;
+        if (vBrand && rejectedBrands.some(rb => vBrand.includes(rb))) purchaseEvaluation.reason = 'rejected_brand';
+        else if (vYear && leadRules.minimum_purchase_year !== null && vYear < leadRules.minimum_purchase_year) purchaseEvaluation.reason = 'year_below_minimum';
+        purchaseEvaluation.requires_human = Boolean(purchaseEvaluation.reason);
+        purchaseEvaluation.preferred = Boolean(vModel && preferredModels.some(m => vModel.includes(m) || m.includes(vModel)));
+      }
+
+      // 3. Auction / sinister evaluation (validated semantic contract only)
+      const auctionOp = evaluateAuctionHandoff(turnText, state, inventory, product, semantic);
+
+      // 4. Financing: consultation, choice and collection are distinct stages.
+      const financingOffered = fin.offered_by_business === true;
+      let paymentMode = state.payment_mode || 'unknown';
+      let paymentEvidence = state.payment_evidence || '';
+      if (paymentMode === 'financing' && !financingOffered) { paymentMode = 'unknown'; paymentEvidence = ''; }
+      const financingInquiry = semantic?.valid === true && (
+        semantic.primary_intent === 'financing'
+        || semantic.secondary_intents?.includes('financing') === true
+        || semantic.topics?.includes('financing') === true);
+      const financingChosen = paymentMode === 'financing' && Boolean(paymentEvidence);
+      const productEligible = Boolean(product) && commercialEligibility(product).eligible;
+      const hasSellSide = Boolean(mergedCustomerVehicle?.model || state.sell_vehicle?.model || state.sell_model || state.sell_brand || state.sell_year);
+      const hasBuySide = Boolean(product || state.product_id || state.buy_interest?.product_id || state.buy_interest?.model);
+      // A policy inquiry cannot resurrect a structurally incomplete dual flow.
+      // This is state normalization only; it does not infer a sale, a product or
+      // a financing choice.
+      const informationalFinancing = financingInquiry && !financingChosen;
+      const normalizedStateMode = informationalFinancing && state.transaction_mode === 'buy_and_sell' && !hasSellSide
+        ? (hasBuySide || state.intent === 'buy' ? 'buy' : 'unknown')
+        : (state.transaction_mode || 'unknown');
+      const buyContext = ['buy', 'buy_and_sell'].includes(normalizedStateMode);
+
+      const currency = parseBrazilianCurrency(turnText);
+      const depositCents = currency.deposit_cents !== null ? currency.deposit_cents : (state.deposit_cents ?? null);
+
+      // Documents come only from the configured contract: full_name, birth_date,
+      // identity_document_photo (accepted types are identity_document_photo.one_of).
+      const identityOneOf = Array.isArray(fin.required_information?.identity_document_photo?.one_of)
+        ? fin.required_information.identity_document_photo.one_of : [];
+      const receivedIdentityTypes = Array.isArray(documentStatus.identity_document_types) ? documentStatus.identity_document_types : [];
+      const documentSatisfied = (field) => {
+        if (field === 'full_name') return Boolean(state.customer_name && state.customer_name.trim().split(/\s+/).length >= 2) || documentStatus.full_name_received === true;
+        if (field === 'birth_date') return documentStatus.birth_date_received === true;
+        if (field === 'identity_document_photo') {
+          const received = documentStatus.identity_document_photo_received === true;
+          return received && (!identityOneOf.length || identityOneOf.some(type => receivedIdentityTypes.includes(type)));
+        }
+        return documentStatus[field + '_received'] === true;
+      };
+      const identityNeedsReview = documentStatus.identity_conflict === true || documentStatus.identity_unbound === true;
+      const requiredDocuments = fin.collection_enabled ? fin.required_documents : [];
+      const missingDocuments = requiredDocuments.filter(field => !documentSatisfied(field));
+      const documentsComplete = requiredDocuments.length > 0 && missingDocuments.length === 0 && !identityNeedsReview;
+      const depositMissing = fin.deposit_required_for_progress === true && !(Number.isSafeInteger(depositCents) && depositCents >= 0);
+      const collectionActive = fin.collection_enabled && financingChosen && buyContext;
+      const collectionMissing = collectionActive
+        ? [
+          ...(productEligible ? [] : ['purchase_product']),
+          ...missingDocuments.map(field => field === 'full_name' ? 'customer_name' : field),
+          ...(depositMissing ? ['deposit'] : []),
+        ] : [];
+      const collectionReady = collectionActive && productEligible && collectionMissing.length === 0 && documentsComplete;
+      const financingStage = !financingOffered ? 'not_offered'
+        : collectionReady ? 'documents_complete'
+          : collectionActive ? 'collecting_documents'
+            : financingChosen ? 'chosen'
+              : financingInquiry ? 'inquiry' : 'none';
+      // This text is an EXT commercial decision, conditional on the tenant's
+      // Supabase-backed offer flag.  CORE may render it only if its generated
+      // wording is rejected for a technical response-contract mismatch.
+      const informationalReply = informationalFinancing && financingOffered
+        ? 'Sim, a loja trabalha com financiamento. Se quiser iniciar uma simulação, posso seguir por aqui.'
+        : null;
+
+      // 5. Lead temperature: one classification, emitted here, from
+      // sdr_rules.hot_lead_percent + sales.hot_lead_rule criteria + documents.
+      const leadClassification = {
+        temperature: 'unknown', status: fin.qualification_enabled ? 'evaluated' : 'qualification_not_configured',
+        rule: fin.hot_lead_rule || null, criteria: fin.hot_lead_criteria, hot_lead_percent: fin.hot_lead_percent,
+        threshold_cents: null, deposit_cents: depositCents, documents_complete: documentsComplete,
+        financing_qualified: collectionReady, source: 'tenant_settings.sdr_rules+sales.hot_lead_rule',
+      };
+      if (fin.qualification_enabled && buyContext && productEligible && Number.isSafeInteger(product.price_cents) && product.price_cents > 0) {
+        leadClassification.threshold_cents = Math.ceil(product.price_cents * fin.hot_lead_percent / 100);
+        if (depositCents === null || depositCents === undefined) leadClassification.temperature = 'unknown';
+        else if (depositCents === 0) leadClassification.temperature = 'cold';
+        else {
+          const needsDocuments = fin.hot_lead_criteria.includes('financing_documents');
+          const meetsDeposit = depositCents >= leadClassification.threshold_cents;
+          leadClassification.temperature = meetsDeposit && (!needsDocuments || documentsComplete) ? 'hot' : 'warm';
+        }
+      }
+
+      // 6. Pending requirement, using the CORE's structural requirement names.
+      let nextPending = dialoguePlan.next_requirement || '';
+      if (informationalFinancing && !collectionActive) {
+        nextPending = '';
+      } else if (collectionActive && collectionMissing.length) {
+        const first = collectionMissing[0];
+        nextPending = ['purchase_product', 'customer_name', 'deposit'].includes(first) ? first : 'documents';
+      } else if (tradeInData?.kind === 'offer' && !mergedCustomerVehicle?.model) {
+        nextPending = 'sell_model';
+      } else if (tradeInData?.kind === 'policy_inquiry' && !product) {
+        nextPending = 'purchase_product';
+      }
+
+      // 7. Handoff evaluation
+      // Independent sale: hand off to appraisal only when the CONFIGURED remote
+      // appraisal requirements (business_facts.vehicle_appraisal.remote) are met
+      // by evidence the CORE supplied (photo count, description evidence IDs).
+      const appraisalEvidence = payload.appraisal_evidence && payload.appraisal_evidence.contract === 'noria_appraisal_evidence_v1'
+        ? payload.appraisal_evidence : null;
+      const vehicleAppraisalPolicy = policy.appraisal.vehicle_appraisal && typeof policy.appraisal.vehicle_appraisal === 'object' ? policy.appraisal.vehicle_appraisal : {};
+      const remoteAppraisal = vehicleAppraisalPolicy.remote && typeof vehicleAppraisalPolicy.remote === 'object' ? vehicleAppraisalPolicy.remote : null;
+      const walkInSelected = vehicleAppraisalPolicy.walk_in?.allowed === true && appraisalEvidence?.appraisal_channel === 'walk_in';
+      const independentSale = tradeInData?.kind === 'independent_sale' || (!tradeInData && normalizedStateMode === 'sell');
+      const independentSaleAppraisal = { evaluated: false, ready: false, missing: [], status: remoteAppraisal ? 'configured' : 'not_configured' };
+      if (independentSale && remoteAppraisal && appraisalEvidence && !walkInSelected && !purchaseEvaluation.reason) {
+        independentSaleAppraisal.evaluated = true;
+        const vehicleModel = String(reconciledVehicle ? (reconciledVehicle.model || '') : (state.sell_vehicle?.model || state.sell_model || '')).trim();
+        if (!vehicleModel) independentSaleAppraisal.missing.push('sell_model');
+        if (remoteAppraisal.photos_required === true && !(Number(appraisalEvidence.vehicle_photo_count) > 0)) independentSaleAppraisal.missing.push('vehicle_photo');
+        if (remoteAppraisal.condition_description_required === true && appraisalEvidence.description_reported !== true) independentSaleAppraisal.missing.push('vehicle_description');
+        independentSaleAppraisal.ready = independentSaleAppraisal.missing.length === 0;
+      }
+      let handoffRequired = false, handoffReason = null, handoffQueue = null;
+      const appraisalRequested = dialoguePlan.handoff_reason === 'appraisal_review';
+      const tradeInReadyForReview = tradeInData?.kind === 'offer'
+        && policy.trade_in.accepted_subject_to_appraisal === true
+        && appraisalRequested
+        && !nextPending;
+      if (auctionOp?.required) {
+        handoffRequired = true; handoffReason = auctionOp.reason || 'auction_risk';
+      } else if (tradeInReadyForReview) {
+        handoffRequired = true; handoffReason = 'appraisal_review'; handoffQueue = 'appraisal_review';
+      } else if (purchaseEvaluation.requires_human) {
+        handoffRequired = true; handoffReason = 'appraisal_review'; handoffQueue = 'appraisal_review';
+      } else if (independentSaleAppraisal.ready) {
+        handoffRequired = true; handoffReason = 'appraisal_review'; handoffQueue = 'appraisal_review';
+        nextPending = '';
+      } else if (collectionReady) {
+        handoffRequired = true; handoffReason = 'financing_review'; handoffQueue = 'financing_operations';
+      } else if (identityNeedsReview) {
+        handoffRequired = true; handoffReason = 'document_review'; handoffQueue = 'document_review';
+      } else if (semantic?.topics?.includes('warranty') === true && leadRules.warranty_response === 'human_review_required') {
+        handoffRequired = true; handoffReason = 'warranty_review'; handoffQueue = 'after_sales';
+      } else if (dialoguePlan.human_requested === true || (semantic?.valid === true && semantic.topics?.includes('human'))) {
+        handoffRequired = true; handoffReason = 'customer_request';
+      }
+
+      // 8. Kanban stage resolved only through sales.stage_keys + sales.stages.
+      const stageKeys = salesConfig.stage_keys && typeof salesConfig.stage_keys === 'object' ? salesConfig.stage_keys : {};
+      const stages = salesConfig.stages && typeof salesConfig.stages === 'object' ? salesConfig.stages : {};
+      const resolveRoleStage = (roles) => {
+        for (const role of roles) {
+          const stageKey = typeof stageKeys[role] === 'string' ? stageKeys[role] : '';
+          const meta = stageKey && stages[stageKey] && typeof stages[stageKey] === 'object' ? stages[stageKey] : null;
+          if (!meta) continue;
+          return {
+            status: 'resolved', role, stage_key: stageKey, name: meta.name || stageKey,
+            allow_ai: meta.allow_ai === true, closed: meta.closed === true, requires_human: meta.allow_ai !== true,
+          };
+        }
+        return { status: 'not_configured', role: roles[0], stage_key: null, name: null, allow_ai: false, closed: false, requires_human: false };
+      };
+      const stageRoles = handoffRequired
+        ? (handoffReason === 'financing_review' ? ['financing', 'human']
+          : handoffReason === 'appraisal_review' ? ['appraisal', 'human']
+            : handoffReason === 'warranty_review' ? ['after_sales', 'human']
+              : handoffReason === 'document_review' ? ['document_review', 'human'] : ['human'])
+        : (state.transaction_mode === 'after_sales' ? ['after_sales', 'qualifying']
+          : leadClassification.temperature === 'hot' ? ['hot', 'qualifying']
+            : leadClassification.temperature === 'warm' ? ['warm', 'qualifying']
+              : leadClassification.temperature === 'cold' ? ['cold', 'qualifying'] : ['qualifying']);
+      const resolvedStage = resolveRoleStage(stageRoles);
+      // A hot lead resolves to a human-owned stage (allow_ai=false). Emit the
+      // handoff explicitly so the CORE assigns an owner instead of only locking AI.
+      if (!handoffRequired && resolvedStage.status === 'resolved' && resolvedStage.role === 'hot' && resolvedStage.requires_human) {
+        handoffRequired = true; handoffReason = 'hot_lead';
+      }
+
+      // 9. Authorized facts: only what business_facts explicitly authorizes.
+      const authorizedFacts = [];
+      if (policy.trade_in.accepted_subject_to_appraisal === true && (tradeInData?.kind === 'policy_inquiry' || tradeInData?.kind === 'offer')) {
+        authorizedFacts.push({ fact_id: 'official.policy.vehicle_trade_in_accepted_subject_to_appraisal', value: 'subject_to_appraisal' });
+      }
+      if (financingOffered && (financingInquiry || financingChosen)) {
+        authorizedFacts.push({ fact_id: 'official.business.financing.offered_by_business', value: 'true' });
+      }
+
+      const identity = {
+        tenant_id: String(payload.tenant_id || context.tenant_id || ''),
+        instance: String(payload.instance || ''),
+        remote_jid: String(payload.remoteJid || payload.remote_jid || ''),
+        session_id: String(payload.session_id || payload.turn?.boundary_id || ''),
+        request_id: String(payload.request_id || ''),
+        turn_token: String(payload.turn?.token || ''),
+      };
+      const buyOnlyCorrection = semantic?.valid === true && semantic?.customer_vehicle?.purpose === 'buy_only_correction';
+      const decidedIntent = tradeInData?.kind === 'independent_sale' ? 'sell'
+        : tradeInData?.kind === 'offer' || buyOnlyCorrection ? 'buy'
+          : ['buy', 'sell', 'after_sales'].includes(state.intent) ? state.intent : 'unknown';
+      const decidedMode = tradeInData?.kind === 'independent_sale' ? 'sell'
+        : tradeInData?.kind === 'offer' ? 'buy_and_sell'
+          : buyOnlyCorrection ? 'buy' : normalizedStateMode;
+      const decision = {
+        contract: 'noria_commercial_decision_v1',
+        tenant_slug: expectedSlug,
+        ...identity,
+        status: 'ok',
+        provenance: 'genesis_extension_commercial_decide_v3',
+        parameters: parameterStatus,
+        semantic: {
+          valid: semantic?.valid === true,
+          primary_intent: semantic?.primary_intent || null,
+          secondary_intents: Array.isArray(semantic?.secondary_intents) ? semantic.secondary_intents : [],
+          topics: Array.isArray(semantic?.topics) ? semantic.topics : [],
+        },
+        commercial_state: {
+          intent: decidedIntent,
+          transaction_mode: decidedMode,
+          payment_mode: paymentMode,
+          payment_evidence: paymentEvidence,
+          deposit_cents: depositCents,
+          sell_vehicle: buyOnlyCorrection ? null : (mergedCustomerVehicle || state.sell_vehicle || null),
+          sell_brand: buyOnlyCorrection ? '' : (reconciledVehicle ? (reconciledVehicle.brand || '') : (state.sell_brand || '')),
+          sell_model: buyOnlyCorrection ? '' : (reconciledVehicle ? (reconciledVehicle.model || '') : (state.sell_model || '')),
+          sell_year: buyOnlyCorrection ? null : (reconciledVehicle ? (reconciledVehicle.year ?? null) : (state.sell_year || null)),
+          trade_in: buyOnlyCorrection ? null : state.trade_in || null,
+          product_id: obsoleteInventoryFocus ? '' : state.product_id || '',
+          product_evidence: obsoleteInventoryFocus ? '' : state.product_evidence || '',
+          product_variant_evidence: obsoleteInventoryFocus ? '' : state.product_variant_evidence || '',
+          buy_interest: obsoleteInventoryFocus ? null : state.buy_interest || null,
+          pending_requirement: nextPending,
+          lead_temperature: leadClassification.temperature,
+          financing_qualified: collectionReady,
+        },
+        lead_classification: leadClassification,
+        authorized_product: product ? {
+          id: product.id, name: product.name, commercial_name: product.commercial_name,
+          brand: product.brand, model: product.model, year: product.year, color: product.color,
+          km: product.km, fuel: product.fuel, price_cents: product.price_cents,
+          observations: product.observations || null,
+          previous_price_cents: product.previous_price_cents, price_source: product.price_source,
+          status: product.status, offerable: product.offerable === true,
+          availability_verified: product.availability_verified === true,
+          source_observed_at: product.source_observed_at || null, synced_at: product.synced_at || null,
+        } : null,
+        inventory_focus: inventoryFocus,
+        stage_key: resolvedStage.stage_key,
+        stage: resolvedStage,
+        handoff: { required: handoffRequired, reason: handoffReason, destination_queue: handoffQueue },
+        pending_requirements: collectionMissing,
+        operations: {
+          trade_in: tradeInData,
+          auction: auctionOp,
+          financing: {
+            stage: financingStage, offered_by_business: financingOffered, inquiry: financingInquiry, chosen: financingChosen,
+            is_financing_question: financingInquiry, deposit_cents: depositCents, docs_complete: documentsComplete,
+            informational_reply: informationalReply,
+            required_documents: requiredDocuments, missing_documents: missingDocuments,
+            collection: {
+              active: collectionActive, ready: collectionReady, missing_fields: collectionMissing,
+              next_field: collectionMissing[0] || null,
+              next_requirement: !collectionMissing.length ? 'none'
+                : ['purchase_product', 'customer_name', 'deposit'].includes(collectionMissing[0]) ? collectionMissing[0] : 'documents',
+            },
+          },
+          independent_sale_appraisal: independentSaleAppraisal,
+          customer_vehicle_reconciliation: vehicleReconciliation,
+          purchase_policy: { requires_human: purchaseEvaluation.requires_human, reason: purchaseEvaluation.reason, preferred: purchaseEvaluation.preferred, evaluated: purchaseEvaluation.evaluated },
+          appraisal_policy: { vehicle_appraisal: policy.appraisal.vehicle_appraisal, opening_hours: facts.opening_hours || null, locations: facts.locations || null },
+          warranty_policy: { response: leadRules.warranty_response || null },
+        },
+        authorized_facts: authorizedFacts,
+      };
+
+      return {
+        contract: 'noria_business_result_v1',
+        operation,
+        status: 'ok',
+        data: decision,
+        handoff: decision.handoff,
       };
     }
 
@@ -903,7 +1378,9 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
 // conversation.evaluate is the bounded turn dispatch: retain its trusted
 // envelope and let the standard context builder below produce the response.
 if ((input.contract === 'noria_business_operation_v1' || input.operation)
-  && input.operation !== 'conversation.evaluate') {
+  && input.operation !== 'conversation.evaluate'
+  && input.operation !== 'commercial.decide'
+  && input.noria_phase !== 'commercial_decision') {
   const op = input.operation;
   const result = await executeBusinessOperation(op, input.payload || input, {
     tenant_slug: expectedSlug,
@@ -914,8 +1391,89 @@ if ((input.contract === 'noria_business_operation_v1' || input.operation)
   return { json: result };
 }
 
+// The EXT, not the shared CORE, interprets the tenant's commercial settings.
+// Qualification configuration is operational only; it never implies that the
+// business offers financing.  All values here are a bounded projection of the
+// verified tenant settings supplied by the preceding identity node.
+// Contract vocabulary of sales.hot_lead_rule: which criteria a recognised rule
+// combines. Numeric parameters (percentage) always come from sdr_rules; an
+// unrecognised or absent rule never classifies a lead.
+const HOT_LEAD_RULE_CRITERIA = {
+  deposit_and_financing_documents_v2: ['deposit_percent', 'financing_documents'],
+  deposit_30_and_financing_documents_v1: ['deposit_percent', 'financing_documents'],
+};
+function genesisCommercialPolicy(settings = {}, tenantId = '') {
+  const sales = settings.sales && typeof settings.sales === 'object' ? settings.sales : {};
+  const rules = settings.sdr_rules && typeof settings.sdr_rules === 'object' ? settings.sdr_rules : {};
+  const facts = settings.business_facts && typeof settings.business_facts === 'object' ? settings.business_facts : {};
+  const financingFact = facts.financing && typeof facts.financing === 'object' ? facts.financing : {};
+  const offeredValue = financingFact.offered_by_business;
+  const financingStatus = offeredValue === true ? 'enabled' : offeredValue === false ? 'disabled' : 'not_configured';
+  const hotLeadCriteria = Object.prototype.hasOwnProperty.call(HOT_LEAD_RULE_CRITERIA, sales.hot_lead_rule)
+    ? HOT_LEAD_RULE_CRITERIA[sales.hot_lead_rule] : [];
+  const qualificationEnabled = hotLeadCriteria.length > 0
+    && sales.collect_documents === true
+    && Number.isFinite(Number(rules.hot_lead_percent)) && Number(rules.hot_lead_percent) > 0 && Number(rules.hot_lead_percent) <= 100;
+  const configuredDocuments = Array.isArray(sales.required_financing_documents)
+    ? [...new Set(sales.required_financing_documents.filter(value => typeof value === 'string' && value.trim()))] : [];
+  const requiredInformation = financingFact.required_information && typeof financingFact.required_information === 'object'
+    ? financingFact.required_information : {};
+  const requiredDocuments = qualificationEnabled
+    ? configuredDocuments.filter(field => requiredInformation[field]?.required === true) : [];
+  const requiredInformationContract = Object.fromEntries(requiredDocuments.map(field => {
+    const requirement = requiredInformation[field] && typeof requiredInformation[field] === 'object'
+      ? requiredInformation[field] : {};
+    return [field, {
+      required: true,
+      ...(Array.isArray(requirement.one_of) ? { one_of: [...new Set(requirement.one_of.filter(value => typeof value === 'string' && value.trim()))] } : {}),
+      ...(typeof requirement.format === 'string' && requirement.format.trim() ? { format: requirement.format } : {}),
+    }];
+  }));
+  const tradeInFact = facts.trade_in_policy && typeof facts.trade_in_policy === 'object' ? facts.trade_in_policy : {};
+  const tradeInValue = tradeInFact.accepted_subject_to_appraisal;
+  const tradeInStatus = tradeInValue === true ? 'enabled' : tradeInValue === false ? 'disabled' : 'not_configured';
+  const appraisal = facts.vehicle_appraisal && typeof facts.vehicle_appraisal === 'object' ? facts.vehicle_appraisal : {};
+  return {
+    contract: 'noria_commercial_policy_v1', tenant_id: String(tenantId || ''),
+    financing: {
+      qualification_enabled: qualificationEnabled,
+      offered_by_business: financingStatus === 'enabled' ? true : financingStatus === 'disabled' ? false : null,
+      offered_by_business_status: financingStatus,
+      collection_enabled: qualificationEnabled && financingStatus === 'enabled' && requiredDocuments.length > 0,
+      required_documents: requiredDocuments,
+      required_information: requiredInformationContract,
+      require_full_name: requiredDocuments.includes('full_name'),
+      redact_document_values: true,
+      hot_lead_percent: qualificationEnabled ? Number(rules.hot_lead_percent) : null,
+      hot_lead_rule: qualificationEnabled ? String(sales.hot_lead_rule) : '',
+      hot_lead_criteria: qualificationEnabled ? hotLeadCriteria : [],
+      // The configured percentage classifies lead temperature; no official
+      // setting authorizes treating it as a universal financing down payment.
+      deposit_required_for_progress: sales.financing_require_deposit_for_progress === true,
+    },
+    trade_in: {
+      accepted_subject_to_appraisal: tradeInStatus === 'enabled' ? true : tradeInStatus === 'disabled' ? false : null,
+      status: tradeInStatus,
+    },
+    appraisal: { vehicle_appraisal: appraisal },
+    lead_rules: {
+      hot_lead_percent: Number.isFinite(Number(rules.hot_lead_percent)) ? Number(rules.hot_lead_percent) : null,
+      minimum_purchase_year: Number.isInteger(Number(rules.minimum_purchase_year)) ? Number(rules.minimum_purchase_year) : null,
+      rejected_purchase_brands: Array.isArray(rules.rejected_purchase_brands) ? rules.rejected_purchase_brands.filter(value => typeof value === 'string').slice(0, 50) : [],
+      preferred_purchase_models: Array.isArray(rules.preferred_purchase_models) ? rules.preferred_purchase_models.filter(value => typeof value === 'string').slice(0, 50) : [],
+      warranty_response: typeof rules.warranty_response === 'string' ? rules.warranty_response : '',
+      document_processing: typeof rules.document_processing === 'string' ? rules.document_processing : '',
+    },
+    semantic_operations: {
+      contract: 'noria_semantic_operation_contract_v1',
+      requires_valid_semantic_intent: ['vehicle.trade_in', 'auction.classify_intent', 'auction.evaluate_handoff'],
+    },
+  };
+}
+
 // Standard policy generation with commercial capabilities
 const profile = 'vehicle_sales_v1';
+const commercialPolicy = genesisCommercialPolicy(settings, input.tenant_id);
 const policy = {
   contract: 'noria_policy_v2',
   tenant_id: input.tenant_id,
@@ -925,31 +1483,121 @@ const policy = {
   audio_enabled: settings.whatsapp_audio_enabled === true,
   scheduling_enabled: settings.appointment_scheduling?.enabled === true,
   modules: {
+    product_images: { contract: 'noria_product_images_v1' },
     qualification: true,
     vehicle_inventory: true,
-    financing: true,
+    financing: commercialPolicy.financing.offered_by_business === true,
     financing_collection: {
-      enabled: settings.sales?.collect_documents === true,
-      required_documents: settings.sales?.required_financing_documents || [],
-      require_full_name: true,
-      redact_document_values: true,
-      source: 'tenant_settings.sales',
+      enabled: commercialPolicy.financing.collection_enabled,
+      required_documents: commercialPolicy.financing.required_documents,
+      require_full_name: commercialPolicy.financing.require_full_name,
+      redact_document_values: commercialPolicy.financing.redact_document_values,
+      source: 'genesis_extension.commercial_policy',
     },
     appraisal: true,
     auction_rules: 'genesis_evaluated_v2',
     kanban_source: 'tenant_settings.sales.stage_keys',
-    policies_source: 'tenant_settings.sales + tenant_settings.sdr_rules',
+    commercial_policy: commercialPolicy,
+    policies_source: 'genesis_extension.commercial_policy',
     commercial_engine: 'genesis_v2',
   },
 };
 
+// Phase B: the CORE sent a validated intermediate turn envelope. The decision is
+// returned INSIDE that envelope: identity, session, semantic intent and all CORE
+// context survive, and success/failure is explicit. The EXT never answers with an
+// isolated result and never lets the finalisation node proceed on a failure.
+function commercialDecisionNeedsInventory(input = {}) {
+  const semantic = input.semantic_intent && typeof input.semantic_intent === 'object'
+    ? input.semantic_intent : (input.generated?.semantic_intent || {});
+  const references = semantic.references && typeof semantic.references === 'object' ? semantic.references : {};
+  const primary = String(semantic.primary_intent || '');
+  // A product already in commercial focus must be re-authorised on every turn:
+  // financing collection and lead temperature depend on its current price and
+  // eligibility even when this turn's message does not mention the vehicle.
+  const focusedProductId = String(input.generated?.product?.id || input.product?.id || input.state?.product_id || '').trim();
+  return Boolean(focusedProductId)
+    || semantic.catalog?.requested === true
+    || ['catalog', 'price_question', 'product_details', 'availability', 'inventory_search'].includes(primary)
+    || (Array.isArray(references.mentioned_product_ids) && references.mentioned_product_ids.length > 0)
+    || references.selected_ordinal !== null && references.selected_ordinal !== undefined;
+}
+
+if (input.noria_phase === 'commercial_decision' || input.operation === 'commercial.decide') {
+  const turn = input.turn && typeof input.turn === 'object' ? input.turn : {};
+  const business = input.noria_business_context && typeof input.noria_business_context === 'object' ? input.noria_business_context : {};
+  const identity = {
+    tenant_id: String(input.tenant_id || ''), tenant_slug: expectedSlug, instance: String(input.instance || ''),
+    remote_jid: String(input.remoteJid || ''), session_id: String(business.session_id || turn.boundary_id || ''),
+    request_id: String(business.request_id || ''), turn_token: String(turn.token || ''),
+  };
+  const refuse = (code) => ({
+    json: {
+      ...input, noria_phase: 'finalize', commercial_decision: null,
+      commercial_decision_status: 'error', commercial_decision_error: code, commercial_identity: identity
+    }
+  });
+  if (turn.claimed !== true || !identity.turn_token || identity.session_id !== String(turn.boundary_id || '')
+    || !identity.request_id.endsWith(':' + identity.turn_token)) return refuse('COMMERCIAL_TURN_IDENTITY_MISMATCH');
+  const inventoryRequired = commercialDecisionNeedsInventory(input);
+  let authorisedInventory = [], inventoryStatus = inventoryRequired ? 'ok' : 'not_required';
+  if (inventoryRequired) {
+    try {
+      authorisedInventory = await loadSupabaseInventory({
+        tenantId: input.tenant_id, supabaseUrl: base, serviceRoleKey: key,
+        includeImages: [settings.sales?.whatsapp_catalog_photo_enabled, settings.sales?.vehicle_photos_enabled].some(value => value === true || value === 'true'),
+        httpRequest: this.helpers.httpRequest.bind(this.helpers),
+      });
+    } catch (error) {
+      // A decision that depends on stock cannot fall back to CORE payload data.
+      return refuse('COMMERCIAL_INVENTORY_UNAVAILABLE');
+    }
+  }
+  const suppliedProduct = input.generated?.product || input.product || null;
+  const suppliedProductId = String(suppliedProduct?.id || input.state?.product_id || '').trim();
+  const authorisedProduct = inventoryRequired && suppliedProductId
+    ? authorisedInventory.find(product => String(product.id) === suppliedProductId) || null
+    : null;
+  const inventoryFocus = inventoryRequired && suppliedProductId ? {
+    product_id: suppliedProductId,
+    eligible: Boolean(authorisedProduct && commercialEligibility(authorisedProduct).eligible),
+    status: authorisedProduct?.status || 'unavailable',
+  } : null;
+  let decisionResult;
+  try {
+    // The EXT's own authorised snapshot always wins over CORE-supplied stock.
+    decisionResult = await executeBusinessOperation('commercial.decide',
+      {
+        ...input, tenant_slug: expectedSlug, session_id: identity.session_id, request_id: identity.request_id,
+        product: inventoryFocus?.eligible === false ? null : authorisedProduct,
+        inventory: authorisedInventory, inventory_status: inventoryStatus, inventory_focus: inventoryFocus
+      },
+      { tenant_slug: expectedSlug, tenant_id: input.tenant_id, inventory: authorisedInventory });
+  } catch (error) { return refuse('COMMERCIAL_DECISION_EXCEPTION'); }
+  if (decisionResult?.status !== 'ok' || decisionResult.data?.contract !== 'noria_commercial_decision_v1') {
+    return refuse(String(decisionResult?.error || 'COMMERCIAL_DECISION_INVALID').slice(0, 120));
+  }
+  return {
+    json: {
+      ...input, noria_phase: 'finalize', commercial_decision: { ...decisionResult.data, inventory_status: inventoryStatus },
+      commercial_decision_status: 'ok', commercial_decision_error: null, commercial_identity: identity
+    }
+  };
+}
+
 // Bootstrap validates policy only. The authenticated Sheets request belongs to
 // the second, post-claim dispatch and therefore sees the real grouped turn.
 if (input.noria_dispatch_phase === 'bootstrap') {
-  return { json: { ...input, noria_client_policy: policy,
-    noria_business_context: { contract:'noria_business_result_v1', tenant_slug:expectedSlug,
-      phase:'bootstrap', inventory:null, offerable_catalog:null, resolved_selection:null,
-      auction:null, financing:null, catalog_filters:null } } };
+  return {
+    json: {
+      ...input, noria_client_policy: policy,
+      noria_business_context: {
+        contract: 'noria_business_result_v1', tenant_slug: expectedSlug,
+        phase: 'bootstrap', inventory: null, offerable_catalog: null, resolved_selection: null,
+        auction: null, financing: null, catalog_filters: null, commercial_policy: commercialPolicy
+      }
+    }
+  };
 }
 
 // A claimed but human-owned turn, or an empty claim, must continue through the
@@ -957,11 +1605,17 @@ if (input.noria_dispatch_phase === 'bootstrap') {
 // The Core will make the final ownership/queue decision with this typed result.
 if (input.noria_dispatch_skip) {
   const skippedDispatch = input.payload && typeof input.payload === 'object' ? input.payload : {};
-  return { json: { ...input, noria_client_policy: policy,
-    noria_business_context: { contract:'noria_business_result_v1', tenant_slug:expectedSlug,
-      phase:'turn_skipped', skipped:String(input.noria_dispatch_skip),
-      session_id:skippedDispatch.session_id || null, request_id:skippedDispatch.request_id || null,
-      inventory:null, offerable_catalog:null, resolved_selection:null, auction:null, financing:null, catalog_filters:null } } };
+  return {
+    json: {
+      ...input, noria_client_policy: policy,
+      noria_business_context: {
+        contract: 'noria_business_result_v1', tenant_slug: expectedSlug,
+        phase: 'turn_skipped', skipped: String(input.noria_dispatch_skip),
+        session_id: skippedDispatch.session_id || null, request_id: skippedDispatch.request_id || null,
+        inventory: null, offerable_catalog: null, resolved_selection: null, auction: null, financing: null, catalog_filters: null, commercial_policy: commercialPolicy
+      }
+    }
+  };
 }
 
 // Pre-evaluate commercial context for this turn if messages are present
@@ -975,6 +1629,7 @@ let businessContext = {
   auction: null,
   financing: null,
   catalog_filters: null,
+  commercial_policy: commercialPolicy,
 };
 
 const turnMessages = Array.isArray(input.messages) ? input.messages : [];
@@ -1004,6 +1659,7 @@ if (snapshotBase && snapshotKey) {
   try {
     const inventory = await loadSupabaseInventory({
       tenantId: input.tenant_id, supabaseUrl: snapshotBase, serviceRoleKey: snapshotKey,
+      includeImages: [settings.sales?.whatsapp_catalog_photo_enabled, settings.sales?.vehicle_photos_enabled].some(value => value === true || value === 'true'),
       httpRequest: this.helpers.httpRequest.bind(this.helpers),
     });
     const offerable = filterOfferableCatalog(inventory, 'all');
@@ -1016,7 +1672,8 @@ if (snapshotBase && snapshotKey) {
     };
 
     if (turnText) {
-      businessContext.resolved_selection = resolveSelection(turnText, inventory, dispatch?.catalog_context || input.catalog_context);
+      const turnSemantic = dispatch?.semantic_intent || input.semantic_intent || input.payload?.semantic_intent;
+      businessContext.resolved_selection = resolveSelection(turnSemantic, inventory, dispatch?.catalog_context || input.catalog_context);
       // A numeric choice is resolved against the list that was actually sent,
       // but price/availability must always come from the freshly authorised
       // inventory.  Keep the stable displayed id; never reinterpret "6" using
@@ -1056,18 +1713,25 @@ if (snapshotBase && snapshotKey) {
       // A previously selected SKU that disappeared from the authorised snapshot
       // is no longer a resolvable product, not a fresh conversation without focus.
       const persistedMissing = !selectedNow && !!persistedProductId && !persistedProduct;
-      const unavailableSelection = selectedNotOfferable || persistedNotOfferable || persistedMissing;
-      const effectiveProduct = unresolvedSelection || unavailableSelection ? null : selectedNow || persistedProduct;
+      const unavailableSelection = Boolean(selectedNotOfferable || persistedNotOfferable || persistedMissing);
+      const semanticRequestsCatalog = Boolean(turnSemantic?.valid === true && (
+        turnSemantic.catalog?.requested === true ||
+        turnSemantic.primary_intent === 'inventory_search' ||
+        turnSemantic.conversation?.changes_preference === true
+      ));
+      const effectiveProduct = unresolvedSelection || unavailableSelection || (!selectedNow && semanticRequestsCatalog)
+        ? null
+        : (selectedNow || persistedProduct);
       // Facts for Gemini are keyed to the authoritative inventory row, never
       // to a stale lead/product object. No customer-vehicle details live here.
       businessContext.conversation_facts = {
         contract: 'noria_genesis_conversation_facts_v1',
         selection_status: unresolvedSelection ? 'unresolved'
           : unavailableSelection ? 'unavailable'
-          : effectiveProduct ? 'resolved' : 'none',
+            : effectiveProduct ? 'resolved' : 'none',
         selection_source: unresolvedSelection ? 'ambiguous_or_invalid'
           : unavailableSelection ? 'no_longer_offerable'
-          : selectedNow ? 'current_turn' : persistedProduct ? 'persisted_lead' : 'none',
+            : selectedNow ? 'current_turn' : persistedProduct ? 'persisted_lead' : 'none',
         selected_product: effectiveProduct ? {
           id: effectiveProduct.id, name: effectiveProduct.name,
           brand: effectiveProduct.brand, model: effectiveProduct.model,
@@ -1082,16 +1746,18 @@ if (snapshotBase && snapshotKey) {
           source_observed_at: effectiveProduct.source_observed_at || null,
         } : null,
       };
-      const turnSemantic = dispatch?.semantic_intent || input.semantic_intent || input.payload?.semantic_intent;
       businessContext.auction = evaluateAuctionHandoff(turnText, dispatch?.commercial_state?.state || input.conversation_state, inventory, effectiveProduct, turnSemantic);
       businessContext.financing = isFinancingQuestion(turnText, dispatch?.commercial_state?.state?.dialogue_context?.pending_requirement || '', turnSemantic)
-        ? { active: true, reply: formatFinancingReply(turnText, effectiveProduct) }
+        ? { active: true, reply: null }
         : { active: false, reply: null };
-      if (dispatch) {
+      if (dispatch && turnSemantic?.valid === true) {
         businessContext.operations = {};
         businessContext.operations['vehicle.trade_in'] = await executeBusinessOperation('vehicle.trade_in', {
           tenant_slug: expectedSlug, messages: effectiveMessages, previous: dispatch.commercial_state?.state || {},
           prior_pending: dispatch.commercial_state?.state?.dialogue_context?.pending_requirement || '', inventory,
+          semantic_intent: turnSemantic,
+          product: effectiveProduct,
+          catalog_context: effectiveProduct ? { category: effectiveProduct.category, year: effectiveProduct.year, model: effectiveProduct.model, make: effectiveProduct.make } : null,
         }, { tenant_slug: expectedSlug, inventory });
         businessContext.operations['customer.name_progress'] = await executeBusinessOperation('customer.name_progress', {
           tenant_slug: expectedSlug, text: turnText, state: dispatch.commercial_state?.state || {},
@@ -1107,6 +1773,7 @@ if (snapshotBase && snapshotKey) {
       code: authFailure ? 'INVENTORY_SNAPSHOT_AUTH_UNAVAILABLE' : 'INVENTORY_SNAPSHOT_UNAVAILABLE',
       retryable: authFailure || /TIMEOUT|HTTP|NETWORK|ECONN|FETCH/i.test(rawCode),
       message: 'Não foi possível consultar o estoque no momento',
+      detail: rawCode.slice(0, 200),
     };
   }
 } else {

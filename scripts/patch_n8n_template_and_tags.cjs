@@ -97,14 +97,32 @@ function extractMessageContent(msg = {}, mType = '') {
     if (full) return { text: full, type: 'interactive' };
   }
 
-  // 4. Respostas de botão
+  // 4. Resposta de fluxo nativo (listas, formulários e botões modernos do
+  // WhatsApp). Evolution expõe a seleção em paramsJson; manter o identificador
+  // quando não houver rótulo é preferível ao placeholder [nativeflowresponse].
+  const nativeFlow = current.nativeFlowResponseMessage || current.interactiveResponseMessage?.nativeFlowResponseMessage;
+  if (nativeFlow) {
+    let params = {};
+    const rawParams = text(nativeFlow.paramsJson || nativeFlow.params_json || nativeFlow.params);
+    if (rawParams) {
+      try { params = JSON.parse(rawParams); } catch {}
+    }
+    const selected = text(
+      params.display_text || params.displayText || params.title || params.name ||
+      params.description || params.id || params.selection || params.selectedId ||
+      nativeFlow.name || nativeFlow.id
+    );
+    if (selected) return { text: selected, type: 'native_flow_response' };
+  }
+
+  // 5. Respostas de botão
   const buttonReply = current.templateButtonReplyMessage || current.buttonsResponseMessage;
   if (buttonReply) {
     const btnText = text(buttonReply.selectedDisplayText || buttonReply.selectedButtonId || buttonReply.selectedId);
     if (btnText) return { text: btnText, type: 'button_reply' };
   }
 
-  // 5. Respostas de lista
+  // 6. Respostas de lista
   const listReply = current.listResponseMessage;
   if (listReply) {
     const title = text(listReply.title || listReply.singleSelectReply?.selectedRowId);
@@ -136,7 +154,9 @@ let tenantSlug = fallbackTenant;
 let tenantResolution = { tenant_slug: fallbackTenant, source: 'env_fallback' };
 const supabaseUrl = text(env('SUPABASE_URL')).replace(/\\/$/, '');
 const serviceKey = text(env('SUPABASE_SERVICE_ROLE_KEY'));
-let isContactSavedInDb = false;
+const isEvolutionOwnerSaved = data.isMyContact === true
+  || data.contact?.isMyContact === true
+  || input.isMyContact === true;
 
 if (supabaseUrl && serviceKey && instance) {
   try {
@@ -153,19 +173,15 @@ if (supabaseUrl && serviceKey && instance) {
   } catch {}
 
   // Consulta se o contato já existe salvo na tabela de contatos
-  if (phone) {
-    try {
-      const savedRows = await this.helpers.httpRequest({
-        method: 'GET',
-        url: \`\${supabaseUrl}/rest/v1/contacts?phone=eq.\${phone}&select=name,id&limit=1\`,
-        headers: { apikey: serviceKey, Authorization: \`Bearer \${serviceKey}\` },
-        json: true,
-        timeout: 4000
-      });
-      if (Array.isArray(savedRows) && savedRows.length > 0 && text(savedRows[0].name)) {
-        isContactSavedInDb = true;
-      }
-    } catch {}
+}
+
+// Per-tenant ingress forwarding credential. Other existing routes remain opt-in.
+// The tenant must come from the channel registry, never a body-supplied slug.
+const ingressForwardToken = text(env('NORIA_INGRESS_FORWARD_TOKEN_' + tenantSlug.toUpperCase().replace(/[^A-Z0-9]/g, '_')));
+if (ingressForwardToken) {
+  const authorization = text($json.headers?.authorization || $json.headers?.Authorization);
+  if (tenantResolution.source !== 'channels.config' || authorization !== 'Bearer ' + ingressForwardToken) {
+    throw new Error('AUTHENTICATED_INGRESS_REQUIRED');
   }
 }
 
@@ -186,7 +202,7 @@ let contactCategoryLabel = 'Cliente';
 if (isLandline || isBusinessAccount) {
   contactCategory = 'commercial';
   contactCategoryLabel = 'Número comercial';
-} else if (isContactSavedInDb || data.contact?.isMyContact || data.isMyContact) {
+} else if (isEvolutionOwnerSaved) {
   contactCategory = 'saved';
   contactCategoryLabel = 'Contato salvo';
 }
@@ -251,6 +267,7 @@ return { json: {
   instance, remoteJid, phone, messageId: text(key.id || data.id || remoteJid + ':' + Date.now()),
   contactName: safeContactName, messageText, contentType, base64,
   contact_category: contactCategory, contact_category_label: contactCategoryLabel,
+  isMyContact: isEvolutionOwnerSaved,
   is_manual_whatsapp_outbound: fromMe, raw_payload: input, channel_type: 'whatsapp',
 } };`;
 

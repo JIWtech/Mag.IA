@@ -63,17 +63,39 @@ export function AudioMessagePlayer({
     setIsLoading(false);
   }, [src]);
 
+  const onLoadRef = useRef(onLoad);
+  useEffect(() => {
+    onLoadRef.current = onLoad;
+  }, [onLoad]);
+
+  const isSeekingRef = useRef(isSeeking);
+  useEffect(() => {
+    isSeekingRef.current = isSeeking;
+  }, [isSeeking]);
+
   const retryAudio = useCallback(async () => {
-    if (!onRetry || isRetrying) return;
+    if (isRetrying) return;
     setIsRetrying(true);
+    setHasError(false);
+    setIsLoading(true);
     try {
-      await onRetry();
+      if (onRetry) await onRetry();
+      if (audioRef.current) {
+        audioRef.current.load();
+      }
+    } catch (err) {
+      console.warn('Audio retry failed:', err);
+      setHasError(true);
     } finally {
       setIsRetrying(false);
+      setIsLoading(false);
     }
   }, [isRetrying, onRetry]);
 
   // Sincroniza elemento de áudio real e eventos do ciclo de vida
+  // O efeito depende ESTRITAMENTE de `src`, garantindo que re-renderizações do pai
+  // (ex: chegada de novas mensagens no chat) ou ações de arraste na timeline (isSeeking)
+  // NUNCA pausem ou reiniciem o áudio que está tocando.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -83,7 +105,7 @@ export function AudioMessagePlayer({
         setDuration(audio.duration);
       }
       setIsLoading(false);
-      onLoad?.();
+      onLoadRef.current?.();
     };
 
     const handleDurationChange = () => {
@@ -93,7 +115,7 @@ export function AudioMessagePlayer({
     };
 
     const handleTimeUpdate = () => {
-      if (!isSeeking) {
+      if (!isSeekingRef.current) {
         setCurrentTime(audio.currentTime);
       }
     };
@@ -126,7 +148,8 @@ export function AudioMessagePlayer({
       setIsLoading(false);
     };
 
-    const handleError = () => {
+    const handleError = (e) => {
+      console.warn('Audio element error:', audio.error?.code, audio.error?.message, e);
       setHasError(true);
       setIsLoading(false);
       setIsPlaying(false);
@@ -156,7 +179,7 @@ export function AudioMessagePlayer({
       audio.removeEventListener('error', handleError);
       audio.pause();
     };
-  }, [src, isSeeking, onLoad]);
+  }, [src]);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
@@ -302,7 +325,10 @@ export function AudioMessagePlayer({
         src={src}
         preload="metadata"
         style={{ display: 'none' }}
-      />
+      >
+        <source src={src} type={media?.mimeType || 'audio/ogg; codecs=opus'} />
+        <source src={src} type="audio/ogg" />
+      </audio>
 
       <button
         type="button"

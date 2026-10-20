@@ -10,10 +10,10 @@ import { conversationPhoneFallback } from '../contacts/contactPhones.js';
 import { extractAvatarUrlFromEvent, extractPayloadAvatar } from '../contacts/contactPayload.js';
 import { resolveConversationDisplayName } from '../contacts/contactDisplayName.js';
 import { normalizeAvatarUrl } from '../contacts/contactIdentity.js';
-import { normalizeAudioTranscription, normalizeLocation, normalizeStage, resolveConversationOwnerDetails, resolveEventMessagePreview } from './conversationPresentation.js';
+import { normalizeAudioTranscription, normalizeLocation, normalizeStage, resolveConversationOwnerDetails, resolveEventMessagePreview, resolveEventVisibleText } from './conversationPresentation.js';
 import { isConversationWaitingForFollowUp } from '../timeline/conversationFilters.js';
 import { sortConversationsByRecentActivity } from '../timeline/conversationOrdering.js';
-import { mediaPreview, isGeneratedMediaLabel } from '../media/mediaPresentation.js';
+import { mediaPreview } from '../media/mediaPresentation.js';
 import { normalizeMedia } from '../media/mediaNormalization.js';
 import { resolveSalesControlMode } from '../leads/leadDataReads.js';
 import { getStageLabel, findKanbanColumn } from '../kanban/stageResolution.js';
@@ -103,7 +103,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         lastMessageSenderType: initialPreview?.senderType || null,
         lastAt: formatDate(event.created_at),
         lastActivityAt: event.created_at || null,
-        tags: [event.service, stageName].filter(Boolean),
+        tags: [event.service, stageName, (payload?.payment_mode === 'financing' || payload?.state?.payment_mode === 'financing' || payload?.financing || payload?.sales_stage === 'sales_financing' || event.service === 'sales_financing') ? 'Financiamento' : null].filter(Boolean),
         sentiment: sentimentFromEventWithStage(event, normalizeStage),
         value: estimatedValue(event),
         messages: [],
@@ -150,8 +150,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
     const media = normalizeMedia(event.raw_payload, event);
     const audioTranscription = normalizeAudioTranscription(event.raw_payload, event);
     const location = normalizeLocation(event.raw_payload, event);
-    const text = event.message_text || media?.caption || '';
-    const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
+    const visibleText = resolveEventVisibleText(event, media);
     const eventTime = event.created_at ? Date.parse(event.created_at) : NaN;
     const currentActivityTime = conversation.lastActivityAt ? Date.parse(conversation.lastActivityAt) : NaN;
     if (!Number.isNaN(eventTime) && (Number.isNaN(currentActivityTime) || eventTime >= currentActivityTime)) {
@@ -181,7 +180,7 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
       conversation.ownerId = initialOwnerId;
     }
     conversation.value = Math.max(conversation.value, estimatedValue(event));
-    conversation.tags = Array.from(new Set([...conversation.tags, event.service, stageName].filter(Boolean)));
+    conversation.tags = Array.from(new Set([...conversation.tags, event.service, stageName, (payload?.payment_mode === 'financing' || payload?.state?.payment_mode === 'financing' || payload?.financing || payload?.sales_stage === 'sales_financing' || event.service === 'sales_financing') ? 'Financiamento' : null].filter(Boolean)));
     if (event.direction === 'outbound') {
       const isOperator = ['agent', 'human', 'operator', 'atendente'].includes(event.sender_type);
       conversation.messages.push({
@@ -296,6 +295,9 @@ export function eventsToConversations(events = [], tenantSlug = '', teamAgents =
         if (conversation.status !== 'finalizado') {
           conversation.stage = matchingColumn?.title || matchingCard.stage || getStageLabel(matchingCard.stage, { kanbanColumns, tenantSlug });
         }
+      }
+      if (matchingCard.salesLead?.state?.payment_mode === 'financing' || matchingCard.subtitle?.includes('Financiamento') || matchingCard.salesStageKey === 'sales_financing') {
+        conversation.tags = Array.from(new Set([...conversation.tags, 'Financiamento'])).filter(Boolean);
       }
     } else {
       const isHumanControlled = conversation.status === 'atendimento_humano'

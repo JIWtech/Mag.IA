@@ -1,0 +1,30 @@
+{
+  "deployment": {
+    "contract": "noria_turn_lifecycle_v1",
+    "preflight_rpc": "magia_turn_lifecycle_status",
+    "migration": "supabase/migrations_pending_review/turn_queue_lifecycle_v1.sql",
+    "requires_coordinated_deployment": true,
+    "production_approved": false
+  },
+  "core_revision": "conversation_core_v2_1_34_core_ext_decision_identity_2026_10_20",
+  "built_at": "2026-10-20T04:05:54.238Z",
+  "core_sha256": "10d16d2c0ce80ff82a72e0876acb978c0e1af55679d66d7c163cff6c7a0151d2",
+  "raw_disk_sha256": "6f282e39c07bbbf466841eef881b9498e13b9e9b45ee84f10147ad75f58d8091",
+  "hash_explanation": "core_sha256 is the deterministic normalized hash embedded into the runtime code block; raw_disk_sha256 is the direct sha256 of the generated source file on disk after metadata embedding.",
+  "ext_sha256": "36904449f32a890a387961d0036a5e22d7b24d59e3ec6cc316aeca516a68031e",
+  "recovery_sha256": "fb87f86b48634d5e62778d55bfba1f95d7f19157fde823eab36704efe8a643ab",
+  "control_origin_adapter_sha256": "a1ad08d1e95826cefaf15ca738fa5418f29725938624ee6b24972cfc10524c40",
+  "operations_bridge_sha256": "cbd0b15fda75245dd0e27eaff10f008a306ffeeffb934c36b5735a65c9b723c7",
+  "artifacts": [
+    "n8n/sources/noria_core.js",
+    "n8n/sources/genesis_extension.js",
+    "n8n/sources/genesis_tenant_identity.js",
+    "n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json",
+    "n8n/workflows/NORIA EXT _ Gênesis _ Política comercial v2 (1).json",
+    "n8n/code/whatsapp_conversation_core.generated.js",
+    "n8n/code/whatsapp_sales.js",
+    "n8n/code/whatsapp_recover_core.js",
+    "n8n/code/command_router.js",
+    "scripts/turn_queue_operational_bridge.cjs"
+  ]
+}

@@ -769,7 +769,6 @@
   border-radius: 14px;
   box-shadow: none;
   color: var(--cv-text);
-  animation: cvBubbleIn 180ms var(--cv-ease) both;
   transition: none;
 }
 
@@ -1537,7 +1536,391 @@
   .conversation-layout .composer-right-actions > .mic-btn { margin-right: 4px; width: 34px; height: 34px; }
 }
 
+/* ==========================================================================
+   NORIA Chat Stream & Message Bubbles (Refined Design System)
+   ========================================================================== */
+
+/* Container da timeline de mensagens */
+.conversation-layout .message-stream {
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 16px 20px 20px;
+}
+
+/* Botão flutuante para retorno rápido às mensagens recentes */
+.conversation-layout .timeline-scroll-bottom-btn {
+  position: sticky;
+  bottom: 12px;
+  margin-left: auto;
+  margin-right: 12px;
+  margin-top: -36px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: rgba(15, 24, 43, 0.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--brand);
+  border: 1px solid rgba(0, 224, 255, 0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), 0 0 12px var(--brand-glow);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  user-select: none;
+  animation: scrollBottomEnter 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 140ms ease;
+}
+
+.conversation-layout .timeline-scroll-bottom-btn:hover {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #0B1220;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 224, 255, 0.35);
+}
+
+@keyframes scrollBottomEnter {
+  from { opacity: 0; transform: translateY(6px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Bolhas de Mensagem Base */
+.conversation-layout .bubble {
+  position: relative;
+  width: fit-content;
+  min-width: 68px;
+  max-width: min(72%, 600px);
+  padding: 9px 13px 7px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  margin-top: 3px;
+  box-sizing: border-box;
+  content-visibility: auto;
+  contain-intrinsic-size: 65px;
+  transition: transform 120ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.conversation-layout .bubble.is-group-start {
+  margin-top: 14px;
+}
+
+.conversation-layout .bubble:first-child {
+  margin-top: 6px;
+}
+
+/* 1. Bolha do Cliente (Inbound - Esquerda) */
+.conversation-layout .bubble.contact {
+  align-self: flex-start;
+  margin-right: auto;
+  background: #142036;
+  border: 1px solid rgba(242, 244, 247, 0.08);
+  color: #f1f5f9;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.conversation-layout .bubble.contact.pos-single,
+.conversation-layout .bubble.contact.pos-first {
+  border-radius: 14px 14px 14px 3px;
+}
+
+.conversation-layout .bubble.contact.pos-middle {
+  border-radius: 4px 14px 14px 4px;
+}
+
+.conversation-layout .bubble.contact.pos-last {
+  border-radius: 4px 14px 14px 14px;
+}
+
+/* 2. Bolha do Atendente Humano (Outbound - Direita) */
+.conversation-layout .bubble.agent {
+  align-self: flex-end;
+  margin-left: auto;
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.12) 0%, rgba(15, 24, 43, 0.96) 100%);
+  border: 1px solid rgba(0, 224, 255, 0.24);
+  color: #f1f5f9;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32), 0 0 14px rgba(0, 224, 255, 0.04);
+}
+
+.conversation-layout .bubble.agent.pos-single,
+.conversation-layout .bubble.agent.pos-first {
+  border-radius: 14px 14px 3px 14px;
+}
+
+.conversation-layout .bubble.agent.pos-middle {
+  border-radius: 14px 4px 4px 14px;
+}
+
+.conversation-layout .bubble.agent.pos-last {
+  border-radius: 14px 4px 14px 14px;
+}
+
+/* 3. Bolha do Assistente IA (Outbound Automatizado - Direita) */
+.conversation-layout .bubble.ai {
+  align-self: flex-end;
+  margin-left: auto;
+  background: linear-gradient(135deg, rgba(120, 97, 255, 0.13) 0%, rgba(15, 24, 43, 0.96) 100%);
+  border: 1px solid rgba(120, 97, 255, 0.26);
+  color: #f1f5f9;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32), 0 0 14px rgba(120, 97, 255, 0.04);
+}
+
+.conversation-layout .bubble.ai.pos-single,
+.conversation-layout .bubble.ai.pos-first {
+  border-radius: 14px 14px 3px 14px;
+}
+
+.conversation-layout .bubble.ai.pos-middle {
+  border-radius: 14px 4px 4px 14px;
+}
+
+.conversation-layout .bubble.ai.pos-last {
+  border-radius: 14px 4px 14px 14px;
+}
+
+/* Header de Identificação do Remetente */
+.conversation-layout .bubble-sender {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+  margin-bottom: 2px;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conversation-layout .bubble.contact .bubble-sender {
+  color: #8da2be;
+}
+
+.conversation-layout .bubble.agent .bubble-sender {
+  color: var(--brand);
+}
+
+.conversation-layout .bubble.ai .bubble-sender {
+  color: #a5b4fc;
+}
+
+/* Tipografia do Texto da Mensagem */
+.conversation-layout .bubble-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.48;
+  letter-spacing: -0.005em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #f8fafc;
+}
+
+/* Metadados (Horário e Checks) */
+.conversation-layout .bubble-meta {
+  margin-top: 2px;
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: rgba(242, 244, 247, 0.5);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.conversation-layout .bubble-check {
+  color: var(--brand);
+}
+
+/* Separadores de Data e Eventos de Sistema */
+.conversation-layout .date-separator {
+  display: flex;
+  justify-content: center;
+  margin: 18px 0 10px;
+}
+
+.conversation-layout .date-separator-pill {
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(11, 18, 32, 0.75);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--cv-border);
+  color: var(--cv-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.conversation-layout .system-event-row {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0;
+  content-visibility: auto;
+  contain-intrinsic-size: 32px;
+}
+
+.conversation-layout .system-event-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: rgba(15, 24, 43, 0.7);
+  border: 1px solid var(--cv-border);
+  font-size: 11px;
+  color: var(--cv-muted);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.conversation-layout .system-event-text {
+  font-weight: 550;
+  color: var(--cv-text-soft);
+}
+
+.conversation-layout .system-event-time {
+  font-size: 10px;
+  color: var(--cv-faint);
+}
+
+/* ==========================================================================
+   Mídias Visuais (Imagens, Vídeos, Stickers e Legendas)
+   ========================================================================== */
+.conversation-layout .bubble.has-visual-media {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.conversation-layout .bubble.has-visual-media:hover {
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+}
+
+.conversation-layout .media-message {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.conversation-layout .media-image {
+  border-radius: 11px;
+  transition: transform 180ms ease;
+}
+
+.conversation-layout .bubble.has-visual-media:hover .media-image {
+  transform: scale(1.015);
+}
+
+.conversation-layout .bubble-meta.is-media-overlay {
+  background: rgba(11, 18, 32, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.conversation-layout .media-caption {
+  padding: 8px 11px 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.conversation-layout .bubble.contact .media-caption {
+  background: #142036;
+}
+
+.conversation-layout .bubble.agent .media-caption {
+  background: #111e33;
+}
+
+.conversation-layout .bubble.ai .media-caption {
+  background: #151a36;
+}
+
+/* ==========================================================================
+   Mensagens de Áudio & Transcrição
+   ========================================================================== */
+.conversation-layout .audio-message-player {
+  padding: 3px 2px 2px;
+}
+
+.conversation-layout .audio-play-button {
+  background: var(--brand-soft);
+  border: 1px solid rgba(0, 224, 255, 0.28);
+  color: var(--brand);
+}
+
+.conversation-layout .bubble.agent .audio-play-button {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #0B1220;
+}
+
+.conversation-layout .bubble.ai .audio-play-button {
+  background: var(--violet-soft);
+  border-color: rgba(120, 97, 255, 0.35);
+  color: #a5b4fc;
+}
+
+.conversation-layout .audio-play-button:hover:not(:disabled) {
+  box-shadow: 0 0 12px var(--brand-glow);
+  transform: scale(1.05);
+}
+
+.conversation-layout .transcribed-audio-card.compact {
+  background: rgba(11, 18, 32, 0.65);
+  border: 1px solid rgba(242, 244, 247, 0.08);
+  border-left: 2px solid var(--brand);
+  border-radius: var(--radius-sm);
+  padding: 7px 11px;
+}
+
+.conversation-layout .transcribed-audio-card.compact .transcribed-audio-badge {
+  color: var(--brand);
+  font-size: 10.5px;
+  font-weight: 650;
+  gap: 4px;
+}
+
+.conversation-layout .transcribed-audio-card.compact .transcribed-audio-text {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #f1f5f9;
+}
+
+.conversation-layout .transcribed-audio-card.compact .transcribed-audio-note {
+  font-size: 9.5px;
+  color: var(--muted-soft);
+}
+
+/* ==========================================================================
+   Localização Estilizada (WhatsApp/Google Maps Style)
+   ========================================================================== */
+.conversation-layout .location-card {
+  border-radius: 12px;
+  background: rgba(11, 18, 32, 0.85);
+  border: 1px solid rgba(242, 244, 247, 0.1);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.conversation-layout .location-card:hover {
+  border-color: rgba(0, 224, 255, 0.35);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
 /* ---------- Movimento reduzido ---------- */
+
 @media (prefers-reduced-motion: reduce) {
   .conversation-layout,
   .conversation-layout *,

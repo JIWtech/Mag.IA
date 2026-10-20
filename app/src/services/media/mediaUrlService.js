@@ -1,11 +1,12 @@
 import { asObject } from '../../utils/asObject.js';
 import { isExplicitOutboundMedia } from './mediaDirection.js';
 import { normalizeMedia, isUsableBrowserUrl } from './mediaNormalization.js';
-import { isTransientStorageError } from './storageErrors.js';
+import { isTransientStorageError, isStorageNotFoundError } from './storageErrors.js';
 
 export const SIGNED_URL_EXPIRES_IN = 86400;
 const MEDIA_SIGNING_CONCURRENCY = 4;
 const SIGNED_URL_RETRY_DELAY_MS = 300;
+const NEGATIVE_CACHE_TTL_MS = 300_000; // 5 minutos para arquivos não encontrados
 const mediaObjectUrlCache = new Map();
 const mediaUrlRequestCache = new Map();
 
@@ -14,7 +15,9 @@ export function clearMediaUrlCache() {
   mediaUrlRequestCache.clear();
 }
 
-export function getMediaUrlFromCache(key) {
+export function getMediaUrlFromCache(bucketOrKey, storagePath) {
+  if (!bucketOrKey) return null;
+  const key = storagePath ? `${bucketOrKey}:${storagePath}` : bucketOrKey;
   const cached = mediaObjectUrlCache.get(key);
   if (!cached) return null;
   if (typeof cached === 'string') return cached;
@@ -22,6 +25,7 @@ export function getMediaUrlFromCache(key) {
     mediaObjectUrlCache.delete(key);
     return null;
   }
+  if (cached.error) return { error: true, code: cached.code };
   return cached.url;
 }
 
@@ -55,7 +59,7 @@ async function createSignedUrlWithRetry(storageBucket, storagePath) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const { data, error } = await storageBucket.createSignedUrl(storagePath, SIGNED_URL_EXPIRES_IN);
-      if (!error && data?.signedUrl) return data.signedUrl;
+      if (!error && data?.signedUrl) return { url: data.signedUrl, error: null };
       lastError = error;
     } catch (error) {
       lastError = error;
@@ -68,8 +72,10 @@ async function createSignedUrlWithRetry(storageBucket, storagePath) {
     break;
   }
 
-  if (lastError) console.warn('createSignedUrl error:', lastError?.message || lastError);
-  return '';
+  if (lastError && !isStorageNotFoundError(lastError)) {
+    console.warn('createSignedUrl error:', lastError?.message || lastError);
+  }
+  return { url: '', error: lastError };
 }
 
 async function mapWithConcurrency(items, concurrency, mapper) {
@@ -89,36 +95,47 @@ async function mapWithConcurrency(items, concurrency, mapper) {
 }
 
 async function resolveStoredMediaUrl(media, supabase) {
-  if (!supabase?.storage?.from) return '';
+  if (!supabase?.storage?.from) return { url: '', error: new Error('Storage indisponível') };
   const storageBucket = supabase.storage.from(media.bucket);
   let resolvedUrl = '';
+  let lastError = null;
 
   // 1. Preferir createSignedUrl diretamente do Storage (sem baixar Blob nem usar FileReader)
   // Seguro para bucket privado e diretamente utilizável por <img>, <audio>, <video>
   if (media.encoding !== 'base64' && typeof storageBucket?.createSignedUrl === 'function') {
-    resolvedUrl = await createSignedUrlWithRetry(storageBucket, media.storagePath);
+    const signResult = await createSignedUrlWithRetry(storageBucket, media.storagePath);
+    resolvedUrl = signResult.url;
+    lastError = signResult.error;
   }
 
-  // 2. Fallback de download se createSignedUrl não estiver disponível ou falhar
+  // 2. Se for erro de arquivo inexistente (404/NoSuchKey), NÃO tenta download!
+  if (isStorageNotFoundError(lastError)) {
+    return { url: '', error: lastError };
+  }
+
+  // 3. Fallback de download apenas se createSignedUrl não estiver disponível ou para base64
   if (!resolvedUrl && typeof storageBucket?.download === 'function') {
     try {
       const { data, error } = await storageBucket.download(media.storagePath);
       if (error) {
-        console.warn('Media download fallback:', error.message);
-        return '';
+        lastError = error;
+        if (!isStorageNotFoundError(error)) {
+          console.warn('Media download fallback:', error.message);
+        }
+        return { url: '', error: lastError };
       }
       if (data?.size) {
         if (media.encoding === 'base64') {
           const base64 = (await data.text()).trim();
           if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
             console.warn('Media download fallback: conteúdo Base64 inválido.');
-            return '';
+            return { url: '', error: new Error('Base64 inválido') };
           }
           resolvedUrl = `data:${media.mimeType || 'application/octet-stream'};base64,${base64}`;
         } else {
           if (media.kind === 'image' && data.type && !String(data.type).startsWith('image/')) {
             console.warn('Media download fallback: arquivo não é uma imagem válida.', data.type || 'tipo ausente');
-            return '';
+            return { url: '', error: new Error('Arquivo não é imagem') };
           }
           resolvedUrl = media.kind === 'image'
             ? await blobToDataUrl(data)
@@ -126,11 +143,59 @@ async function resolveStoredMediaUrl(media, supabase) {
         }
       }
     } catch (err) {
+      lastError = err;
       console.warn('Media download fallback error:', err?.message || err);
     }
   }
 
-  return resolvedUrl;
+  return { url: resolvedUrl, error: lastError };
+}
+
+export async function resolveSingleMediaUrl(media, supabase, { force = false } = {}) {
+  if (!media?.bucket || !media?.storagePath || !supabase) return '';
+  const key = `${media.bucket}:${media.storagePath}`;
+
+  if (force) {
+    invalidateMediaUrl(key);
+  } else {
+    const cached = mediaObjectUrlCache.get(key);
+    if (cached) {
+      if (typeof cached === 'string') return cached;
+      if (cached.expiresAt > Date.now()) {
+        if (cached.error) return '';
+        return cached.url;
+      }
+      mediaObjectUrlCache.delete(key);
+    }
+  }
+
+  let request = mediaUrlRequestCache.get(key);
+  if (!request) {
+    request = resolveStoredMediaUrl(media, supabase);
+    mediaUrlRequestCache.set(key, request);
+  }
+
+  let result = null;
+  try {
+    result = await request;
+  } finally {
+    if (mediaUrlRequestCache.get(key) === request) mediaUrlRequestCache.delete(key);
+  }
+
+  const resolvedUrl = typeof result === 'string' ? result : (result?.url || '');
+  const resultError = typeof result === 'object' ? result?.error : null;
+
+  if (resolvedUrl) {
+    const expiresAt = Date.now() + (SIGNED_URL_EXPIRES_IN - 300) * 1000;
+    mediaObjectUrlCache.set(key, { url: resolvedUrl, expiresAt });
+    return resolvedUrl;
+  }
+
+  if (resultError && isStorageNotFoundError(resultError)) {
+    mediaObjectUrlCache.set(key, { url: '', error: true, code: 'not_found', expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS });
+  }
+
+  return '';
 }
 
 export async function enrichMediaUrls(events, supabase) {
@@ -153,9 +218,12 @@ export async function enrichMediaUrls(events, supabase) {
     const cached = mediaObjectUrlCache.get(key);
     const cachedUrl = typeof cached === 'string'
       ? cached
-      : (cached && cached.expiresAt > Date.now() ? cached.url : null);
+      : (cached && !cached.error && cached.expiresAt > Date.now() ? cached.url : null);
     if (cachedUrl) {
       mediaUrls.set(key, cachedUrl);
+      return;
+    }
+    if (cached && cached.error && cached.expiresAt > Date.now()) {
       return;
     }
 
@@ -164,17 +232,22 @@ export async function enrichMediaUrls(events, supabase) {
       request = resolveStoredMediaUrl(media, supabase);
       mediaUrlRequestCache.set(key, request);
     }
-    let resolvedUrl = '';
+    let result = null;
     try {
-      resolvedUrl = await request;
+      result = await request;
     } finally {
       if (mediaUrlRequestCache.get(key) === request) mediaUrlRequestCache.delete(key);
     }
+
+    const resolvedUrl = typeof result === 'string' ? result : (result?.url || '');
+    const resultError = typeof result === 'object' ? result?.error : null;
 
     if (resolvedUrl) {
       const expiresAt = Date.now() + (SIGNED_URL_EXPIRES_IN - 300) * 1000;
       mediaObjectUrlCache.set(key, { url: resolvedUrl, expiresAt });
       mediaUrls.set(key, resolvedUrl);
+    } else if (resultError && isStorageNotFoundError(resultError)) {
+      mediaObjectUrlCache.set(key, { url: '', error: true, code: 'not_found', expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS });
     }
   });
 
@@ -201,7 +274,9 @@ export async function enrichMediaUrls(events, supabase) {
   });
 }
 
-export function invalidateMediaUrl(key) {
+export function invalidateMediaUrl(bucketOrKey, storagePath) {
+  if (!bucketOrKey) return;
+  const key = storagePath ? `${bucketOrKey}:${storagePath}` : bucketOrKey;
   mediaObjectUrlCache.delete(key);
   mediaUrlRequestCache.delete(key);
 }

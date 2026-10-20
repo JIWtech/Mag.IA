@@ -1,0 +1,29 @@
+// Tenant-scoped settings: commercial fields are explicitly allowlisted.
+// This is the canonical source for the EXT identity node.  It deliberately
+// carries only the configuration the Genesis extension needs to build its
+// tenant-scoped commercial contract.
+const input = $json || {};
+const expectedSlug = 'wesley_automoveis';
+if (String(input.tenant_slug || '') !== expectedSlug || String(input.noria_extension || '') !== 'genesis' || String(input.noria_contract_version || '') !== '1.0') throw new Error('NORIA_EXTENSAO_TENANT_INCORRETO');
+const uuid = String(input.tenant_id || ''), instance = String(input.instance || ''), chatId = String(input.remoteJid || '');
+if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(uuid) || !instance || !chatId) throw new Error('NORIA_IDENTIDADE_INCOMPLETA');
+const base = String($env.SUPABASE_URL || '').replace(/\/$/, ''), key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');
+if (!base || !key) throw new Error('NORIA_CREDENCIAIS_SUPABASE_AUSENTES');
+const headers = {apikey:key,Authorization:'Bearer '+key};
+const get = endpoint => this.helpers.httpRequest({method:'GET',url:base+'/rest/v1/'+endpoint,headers,json:true,timeout:7000});
+const tenants = await get('tenants?select=id,slug,status&id=eq.'+encodeURIComponent(uuid)+'&slug=eq.'+encodeURIComponent(expectedSlug)+'&limit=1');
+if (!Array.isArray(tenants) || tenants.length!==1 || tenants[0].status!=='active') throw new Error('NORIA_TENANT_INVALIDO');
+const settingsRows = await get('tenant_settings?select=settings&tenant_id=eq.'+encodeURIComponent(uuid)+'&limit=1');
+const s = settingsRows?.[0]?.settings || {};
+if (s.whatsapp_processing_mode!=='conversation_core_v1') throw new Error('NORIA_MOTOR_INATIVO_TENANT');
+if (s.conversation_capability!=='sales_v1') throw new Error('NORIA_CAPACIDADE_DIVERGENTE');
+const channels = await get('channels?select=external_id,config,status&tenant_id=eq.'+encodeURIComponent(uuid)+'&type=eq.whatsapp&status=eq.active&limit=25');
+if (!Array.isArray(channels) || !channels.some(c => [c.external_id,c.config?.instance_name,c.config?.instance,c.config?.evolution_instance,c.config?.instance_id].filter(Boolean).includes(instance))) throw new Error('NORIA_INSTANCIA_NAO_PERTENCE_AO_TENANT');
+const sourceSales = s.sales && typeof s.sales==='object' ? s.sales : {}, sales = {};
+for (const field of ['sheet_id','sheet_tab','google_sheets_access_token_env','google_sheets_refresh_token_env','google_sheets_client_id_env','google_sheets_client_secret_env','stages','stage_keys','conversation_contract','ad_campaign_routing','required_financing_documents','whatsapp_catalog_price_mode','catalog','commercial_rules','hot_lead_rule','collect_documents','financing_require_deposit_for_progress','birth_date_required','document_ocr_enabled','whatsapp_catalog_photo_enabled','whatsapp_catalog_sync_enabled','whatsapp_catalog_fallback_max_age_minutes']) if (Object.prototype.hasOwnProperty.call(sourceSales,field)) sales[field]=sourceSales[field];
+const sourceRules = s.sdr_rules && typeof s.sdr_rules==='object' ? s.sdr_rules : {}, sdr_rules = {};
+for (const field of ['hot_lead_percent','minimum_purchase_year','rejected_purchase_brands','preferred_purchase_models','warranty_response','document_processing']) if (Object.prototype.hasOwnProperty.call(sourceRules,field)) sdr_rules[field]=sourceRules[field];
+const sourceFacts = s.business_facts && typeof s.business_facts==='object' ? s.business_facts : {}, business_facts = {};
+for (const field of ['name','payment_methods','vehicle_appraisal','financing','trade_in_policy','opening_hours','locations','vehicle_types']) if (Object.prototype.hasOwnProperty.call(sourceFacts,field)) business_facts[field]=sourceFacts[field];
+const verified = {tenant_id:uuid,whatsapp_processing_mode:s.whatsapp_processing_mode,conversation_capability:s.conversation_capability,whatsapp_audio_enabled:s.whatsapp_audio_enabled===true,appointment_scheduling:{enabled:s.appointment_scheduling?.enabled===true},approved_messages:{enabled:s.approved_messages?.enabled===true},vehicle_sheet_id:typeof s.vehicle_sheet_id==='string'?s.vehicle_sheet_id:'',sales,sdr_rules,business_facts};
+return {json:{...input,noria_verified_settings:verified}};

@@ -892,15 +892,9 @@ export function resolveAudioNoticeState(media = {}, audioTranscription = null) {
     };
   }
   if (media?.status === 'stored' && (media?.storagePath || media?.bucket)) {
-    if (media?.loadState === 'retryable_error') {
-      return {
-        type: 'retryable_error',
-        text: 'Não foi possível carregar este áudio agora.',
-      };
-    }
     return {
-      type: 'resolving',
-      text: 'Preparando áudio…',
+      type: 'retryable_error',
+      text: 'Não foi possível carregar este áudio agora.',
     };
   }
   if (media?.status === 'pending' || media?.loadState === 'resolving') {

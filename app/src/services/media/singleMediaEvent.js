@@ -1,4 +1,5 @@
 import { asObject } from '../../utils/asObject.js';
+import { getAuthClient } from '../auth/authService.js';
 import { hasStoredMediaNeedingUrl } from './mediaNormalization.js';
 import { enrichMediaUrls, invalidateMediaUrl } from './mediaUrlService.js';
 
@@ -11,11 +12,11 @@ export async function enrichSingleMediaEvent(event, client, { force = false } = 
     : event;
 
   if (!hasStoredMediaNeedingUrl(candidate)) return event;
-  if (force) {
+  if (force && media.bucket && media.storagePath) {
     const key = `${media.bucket}:${media.storagePath}`;
     invalidateMediaUrl(key);
   }
-  const supabase = client;
+  const supabase = client || getAuthClient();
   if (!supabase) return event;
   const [enriched] = await enrichMediaUrls([candidate], supabase);
   return enriched || event;

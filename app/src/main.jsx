@@ -2,6 +2,12 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
 import { AppErrorBoundary } from './app/AppErrorBoundary';
+
+if (import.meta.hot) {
+  import.meta.hot.on('vite:ws:disconnect', () => {
+    console.debug('[Vite] WebSocket disconnected in background tab. Auto full-reload intercepted.');
+  });
+}
 import '@fontsource-variable/manrope';
 import './styles/base/tokens.css';
 import './styles/base/reset.css';

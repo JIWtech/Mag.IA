@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Loader2,
   Image as ImageIcon,
@@ -25,6 +25,13 @@ import {
   formatFriendlyMimeType,
   formatFileSize,
 } from '../../../utils/audioUtils.js';
+import {
+  getMediaUrlFromCache,
+  resolveSingleMediaUrl,
+  invalidateMediaUrl,
+} from '../../../services/media/mediaUrlService.js';
+import { getAuthClient } from '../../../services/auth/authService.js';
+import { isStorageNotFoundError } from '../../../services/media/storageErrors.js';
 
 export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetry, caption = '', meta = null, gallery = null }) {
   if (!media) return null;
@@ -37,7 +44,126 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [processingTimedOut, setProcessingTimedOut] = useState(false);
-  const imageSource = `${media.thumbnailUrl || media.url || ''}\u0000${media.url || ''}`;
+
+  const [resolvedUrl, setResolvedUrl] = useState(() => {
+    if (media.url) return media.url;
+    if (media.bucket && media.storagePath) {
+      const cached = getMediaUrlFromCache(media.bucket, media.storagePath);
+      if (typeof cached === 'string') return cached;
+    }
+    return '';
+  });
+
+  const [isResolvingUrl, setIsResolvingUrl] = useState(false);
+  const [isObjectNotFound, setIsObjectNotFound] = useState(() => {
+    if (media.bucket && media.storagePath) {
+      const cached = getMediaUrlFromCache(media.bucket, media.storagePath);
+      return Boolean(cached && typeof cached === 'object' && cached.error);
+    }
+    return false;
+  });
+  const [resolveError, setResolveError] = useState(false);
+
+  const effectiveUrl = media.url || resolvedUrl || '';
+
+  // Sincroniza ou resolve URL automaticamente para mídias confirmadas (stored)
+  useEffect(() => {
+    if (media.url) {
+      setResolvedUrl(media.url);
+      setIsResolvingUrl(false);
+      setResolveError(false);
+      setIsObjectNotFound(false);
+      return;
+    }
+
+    if (media.status === 'stored' && media.bucket && media.storagePath) {
+      const cached = getMediaUrlFromCache(media.bucket, media.storagePath);
+      if (typeof cached === 'string') {
+        setResolvedUrl(cached);
+        setIsResolvingUrl(false);
+        setResolveError(false);
+        setIsObjectNotFound(false);
+        return;
+      }
+      if (cached && typeof cached === 'object' && cached.error) {
+        setIsObjectNotFound(true);
+        setIsResolvingUrl(false);
+        setResolveError(false);
+        return;
+      }
+
+      let isCurrent = true;
+      setIsResolvingUrl(true);
+      setResolveError(false);
+
+      resolveSingleMediaUrl(media, getAuthClient())
+        .then((url) => {
+          if (!isCurrent) return;
+          if (url) {
+            setResolvedUrl(url);
+            setResolveError(false);
+            setIsObjectNotFound(false);
+          } else {
+            setResolveError(true);
+          }
+        })
+        .catch((err) => {
+          if (!isCurrent) return;
+          if (isStorageNotFoundError(err)) {
+            setIsObjectNotFound(true);
+          } else {
+            setResolveError(true);
+          }
+        })
+        .finally(() => {
+          if (isCurrent) setIsResolvingUrl(false);
+        });
+
+      return () => {
+        isCurrent = false;
+      };
+    }
+  }, [media.url, media.status, media.bucket, media.storagePath]);
+
+  const handleRetryMedia = () => {
+    if (media.bucket && media.storagePath) {
+      invalidateMediaUrl(media.bucket, media.storagePath);
+      setIsObjectNotFound(false);
+      setResolveError(false);
+      setImageError(false);
+      setImageLoaded(false);
+      setIsResolvingUrl(true);
+
+      if (typeof onRetry === 'function') {
+        onRetry();
+      }
+
+      resolveSingleMediaUrl(media, getAuthClient(), { force: true })
+        .then((url) => {
+          if (url) {
+            setResolvedUrl(url);
+            setResolveError(false);
+            setIsObjectNotFound(false);
+          } else {
+            setResolveError(true);
+          }
+        })
+        .catch((err) => {
+          if (isStorageNotFoundError(err)) {
+            setIsObjectNotFound(true);
+          } else {
+            setResolveError(true);
+          }
+        })
+        .finally(() => {
+          setIsResolvingUrl(false);
+        });
+    } else if (typeof onRetry === 'function') {
+      onRetry();
+    }
+  };
+
+  const imageSource = `${media.thumbnailUrl || effectiveUrl || ''}\u0000${effectiveUrl || ''}`;
   const previousImageSourceRef = useRef(imageSource);
 
   useEffect(() => {
@@ -48,7 +174,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
     setViewerKind(null);
   }, [imageSource]);
 
-  const isStalePending = React.useMemo(() => {
+  const isStalePending = useMemo(() => {
     if (media.status !== 'pending') return false;
     const ts = media.createdAt || media.created_at || meta?.createdAt || meta?.created_at;
     if (!ts) return false;
@@ -57,14 +183,14 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
   }, [media.status, media.createdAt, media.created_at, meta?.createdAt, meta?.created_at]);
 
   useEffect(() => {
-    const isProcessing = (media.status === 'pending' && !isStalePending) || media.loadState === 'resolving';
+    const isProcessing = (media.status === 'pending' && !isStalePending) || media.loadState === 'resolving' || isResolvingUrl;
     if (!isProcessing) {
       setProcessingTimedOut(false);
       return undefined;
     }
     const timer = window.setTimeout(() => setProcessingTimedOut(true), 30_000);
     return () => window.clearTimeout(timer);
-  }, [media.status, media.loadState, media.storagePath, isStalePending]);
+  }, [media.status, media.loadState, media.storagePath, isStalePending, isResolvingUrl]);
 
   const config = {
     image: { label: 'Imagem', icon: ImageIcon },
@@ -81,57 +207,86 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
   }
 
   if (kind === 'audio') {
-    if (media.url) {
+    if (effectiveUrl) {
       const canRetry = media.status === 'stored' && media.bucket && media.storagePath;
-      return <AudioMessagePlayer media={media} onLoad={onMediaLoad} onRetry={canRetry ? onRetry : undefined} />;
+      const activeMedia = { ...media, url: effectiveUrl };
+      return (
+        <AudioMessagePlayer
+          media={activeMedia}
+          /* <AudioMessagePlayer media={media} */
+          onLoad={onMediaLoad}
+          onRetry={canRetry ? handleRetryMedia : undefined}
+        />
+      );
     }
-    // Caso A: stored com storagePath mas sem URL -> resolving / retry
+    if (isObjectNotFound) {
+      return <AudioRecoveryNotice state="missing_source" />;
+    }
+    if (isResolvingUrl || media.loadState === 'resolving') {
+      return <AudioRecoveryNotice state="resolving" />;
+    }
     if (media.status === 'stored' && media.bucket && media.storagePath) {
-      if (media.loadState === 'retryable_error') {
-        return <AudioRecoveryNotice state="retryable_error" onRetry={onRetry} />;
+      if (resolveError || media.loadState === 'retryable_error') {
+        return <AudioRecoveryNotice state="retryable_error" onRetry={handleRetryMedia} />;
       }
       return <AudioRecoveryNotice state="resolving" />;
     }
-    // Caso B: pending -> preparando
     if (processingTimedOut || isStalePending) {
       return <AudioRecoveryNotice state="missing_source" />;
     }
-    if (media.status === 'pending' || media.loadState === 'resolving') {
+    if (media.status === 'pending') {
       return <AudioRecoveryNotice state="resolving" />;
     }
-    // Caso C: erro com retry
     if (['store_failed', 'storage_error', 'persistence_error', 'verification_failed', 'download_failed', 'missing_binary', 'too_large', 'skipped_too_large'].includes(media.status) || media.loadState === 'retryable_error') {
-      return <AudioRecoveryNotice state="retryable_error" onRetry={media.bucket && media.storagePath ? onRetry : undefined} />;
+      return <AudioRecoveryNotice state="retryable_error" onRetry={media.bucket && media.storagePath ? handleRetryMedia : undefined} />;
     }
-    // Caso D: transcrição válida
     const trans = audioTranscription || (media.transcription?.text ? media.transcription : null) || (media.transcript ? { text: media.transcript } : null);
     if (trans?.text) {
       return <TranscribedAudioCard transcription={trans} />;
     }
-    // Caso E: indisponível compacto
     return <AudioRecoveryNotice state="missing_source" />;
   }
 
-  if ((media.status === 'pending' || media.loadState === 'resolving') && !processingTimedOut && !isStalePending) {
+  // Visual, documento ou outras mídias
+  if (isResolvingUrl || ((media.status === 'pending' || media.loadState === 'resolving') && !processingTimedOut && !isStalePending)) {
     return (
       <div className="media-placeholder media-placeholder-loading" role="status" aria-live="polite">
         <Loader2 size={20} className="audio-spinner" aria-hidden="true" />
-        <span>Preparando {config.label.toLowerCase()}…</span>
+        <span>{isResolvingUrl ? `Carregando ${config.label.toLowerCase()}…` : `Preparando ${config.label.toLowerCase()}…`}</span>
+      </div>
+    );
+  }
+
+  if (isObjectNotFound) {
+    return (
+      <div className="media-placeholder" title="Arquivo não encontrado no armazenamento">
+        <Icon size={20} />
+        <span>{media?.fileName || config.label}</span>
+        <small>Arquivo não encontrado</small>
+      </div>
+    );
+  }
+
+  if (resolveError && media.status === 'stored' && media.bucket && media.storagePath && !effectiveUrl) {
+    return (
+      <div className="media-placeholder" title={`Não foi possível carregar ${config.label.toLowerCase()}`}>
+        <Icon size={20} />
+        <span>Não foi possível carregar {config.label.toLowerCase()}.</span>
+        <button type="button" className="media-retry-button" onClick={handleRetryMedia}>
+          Tentar novamente
+        </button>
       </div>
     );
   }
 
   if (['store_failed', 'storage_error', 'persistence_error', 'download_failed', 'missing_binary', 'too_large', 'skipped_too_large', 'unavailable'].includes(media.status) || processingTimedOut || isStalePending) {
-    // The only retry handler currently available reloads a signed URL for an
-    // already stored audio file. Do not show a non-functional retry for videos
-    // pending re-ingestion (or for any other media type).
-    const canRetry = kind === 'audio' && media.status === 'stored' && Boolean(media.bucket && media.storagePath);
+    const canRetry = media.status === 'stored' && Boolean(media.bucket && media.storagePath);
     return (
       <div className="media-placeholder" title={unavailableMediaLabel(kind)}>
         <Icon size={20} />
         <span>{unavailableMediaLabel(kind)}</span>
-        {canRetry && onRetry && (
-          <button type="button" className="media-retry-button" onClick={onRetry}>
+        {canRetry && (
+          <button type="button" className="media-retry-button" onClick={handleRetryMedia}>
             Tentar novamente
           </button>
         )}
@@ -139,13 +294,19 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
     );
   }
 
-  if ((kind === 'image' || kind === 'sticker') && media.url) {
+  if ((kind === 'image' || kind === 'sticker') && effectiveUrl) {
     if (imageError) {
+      const canRetry = media.status === 'stored' && Boolean(media.bucket && media.storagePath);
       return (
         <div className="media-placeholder" title="Não foi possível carregar a imagem original">
           <Icon size={20} />
           <span>{media?.fileName || config.label}</span>
           <small>Falha no carregamento</small>
+          {canRetry && (
+            <button type="button" className="media-retry-button" onClick={handleRetryMedia}>
+              Tentar novamente
+            </button>
+          )}
         </div>
       );
     }
@@ -169,7 +330,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
             )}
             <img
               className={`media-image ${imageLoaded ? 'is-loaded' : 'is-loading'}`}
-              src={media.thumbnailUrl || media.url}
+              src={media.thumbnailUrl || effectiveUrl}
               alt={accessibleAlt || (kind === 'sticker' ? 'Figurinha' : '')}
               decoding="async"
               onLoad={() => {
@@ -184,21 +345,31 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
         </button>
         {hasRealCaption && <MediaCaption caption={caption} meta={meta} />}
         {!hasRealCaption && <MediaMeta meta={meta} overlay />}
-        {viewerKind && <MediaViewer kind={viewerKind} src={media.url} alt={accessibleAlt || config.label} gallery={gallery?.items || []} initialIndex={gallery?.index || 0} onClose={() => setViewerKind(null)} />}
+        {viewerKind && <MediaViewer kind={viewerKind} src={effectiveUrl} alt={accessibleAlt || config.label} gallery={gallery?.items || []} initialIndex={gallery?.index || 0} onClose={() => setViewerKind(null)} />}
       </div>
     );
   }
 
-  if (kind === 'video' && media.url) {
+  if (kind === 'video' && effectiveUrl) {
     return (
       <div className={`media-message media-video-message ${caption ? 'has-caption' : 'is-media-only'}`}>
         <div className="media-video-wrap">
-          <video className="media-video" controls preload="metadata" poster={media.thumbnailUrl || undefined} src={media.url}>Seu navegador não suporta vídeo.</video>
+          <video className="media-video" controls preload="metadata" poster={media.thumbnailUrl || undefined} src={effectiveUrl}>Seu navegador não suporta vídeo.</video>
           <button type="button" className="media-expand-button" aria-label="Abrir vídeo ampliado" onClick={() => setViewerKind('video')}><Maximize2 size={16} /></button>
           {!caption && <MediaMeta meta={meta} overlay />}
         </div>
         {caption && <MediaCaption caption={caption} meta={meta} />}
-        {viewerKind && <MediaViewer kind="video" src={media.url} poster={media.thumbnailUrl} alt="Vídeo" onClose={() => setViewerKind(null)} />}
+        {viewerKind && (
+          <MediaViewer
+            kind="video"
+            src={effectiveUrl}
+            poster={media.thumbnailUrl}
+            alt="Vídeo"
+            gallery={gallery?.items || []}
+            initialIndex={gallery?.index || 0}
+            onClose={() => setViewerKind(null)}
+          />
+        )}
       </div>
     );
   }
@@ -209,7 +380,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
     const friendlySize = formatFileSize(media.size);
     const metaText = [friendlyType, friendlySize].filter(Boolean).join(' • ');
 
-    if (media.url) {
+    if (effectiveUrl) {
       return (
         <div className="document-attachment">
           <div className="document-attachment-icon-wrapper">
@@ -221,7 +392,7 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
           </div>
           <a
             className="document-attachment-action"
-            href={media.url}
+            href={effectiveUrl}
             target="_blank"
             rel="noopener noreferrer"
             download={fileName}
@@ -248,10 +419,10 @@ export function MediaAttachment({ media, audioTranscription, onMediaLoad, onRetr
     );
   }
 
-  // Fallback somente para mídias reais desconhecidas com URL ou com status stored
-  if (media?.url) {
+  // Fallback somente para mídias reais desconhecidas com URL
+  if (effectiveUrl) {
     return (
-      <a className="media-placeholder media-download" href={media.url} target="_blank" rel="noopener noreferrer">
+      <a className="media-placeholder media-download" href={effectiveUrl} target="_blank" rel="noopener noreferrer">
         <Icon size={20} />
         <span>{media.fileName || config.label}</span>
         <ExternalLink size={15} />

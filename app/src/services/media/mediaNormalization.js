@@ -39,19 +39,11 @@ export function unwrapWhatsAppMessage(raw = {}) {
   return message;
 }
 
-function deriveWhatsAppStorage(event, payload, kind, mimeType = '', fileName = '') {
-  const messageId = event?.external_message_id || payload?.key?.id || payload?.external_message_id || payload?.message_id;
-  const convId = event?.external_conversation_id || payload?.external_conversation_id || payload?.key?.remoteJid;
-  const tenant = event?.tenant_slug || event?.tenantId || payload?.tenant_slug || '';
-  if (!messageId || !convId || !tenant) return null;
-  const cleanChat = String(convId).replace(/@/g, '_');
-  const safeMessageId = String(messageId).replace(/[^a-zA-Z0-9._-]/g, '_');
-  const ext = extensionForKind(kind, mimeType, fileName);
-  return {
-    bucket: 'channel-media',
-    storagePath: `${tenant}/whatsapp/${cleanChat}/${safeMessageId}.${ext}`,
-  };
-}
+// Caminhos de storage NUNCA devem ser presumidos ou inventados a partir de
+// external_message_id. Para mídias confirmadas, o caminho persistido em
+// raw_payload.media (ou source_media) gravado pelo workflow CORE é a única
+// fonte de verdade.
+
 
 export function normalizeMedia(rawPayload, event = null) {
   const payload = asObject(rawPayload);
@@ -132,20 +124,13 @@ export function normalizeMedia(rawPayload, event = null) {
     // do inbound. Ela só pode renderizar mídia direta quando o payload declara
     // que o arquivo pertence ao próprio evento outbound.
     if (REAL_MEDIA_KINDS.has(kind) && (!isOutboundEvent || isExplicitOutboundMedia(normalized, payload, event))) {
-      let bucket = normalized.bucket || '';
-      let storagePath = normalized.storagePath || '';
-      let status = normalized.status || '';
+      // Aceita as variantes legadas de serialização sem adivinhar caminhos.
+      // O caminho continua vindo exclusivamente do evento que já foi gravado.
+      let bucket = normalized.bucket || normalized.storageBucket || normalized.storage_bucket || '';
+      let storagePath = normalized.storagePath || normalized.storage_path || normalized.path || '';
+      let status = normalized.status || normalized.storageStatus || normalized.storage_status || '';
 
-      if ((!storagePath || !bucket) && !isOutboundEvent) {
-        const derived = deriveWhatsAppStorage(event, payload, kind, normalized.mimeType || normalized.mime_type, normalized.fileName || normalized.file_name);
-        if (derived) {
-          bucket = bucket || derived.bucket;
-          storagePath = storagePath || derived.storagePath;
-          if (!status) status = 'stored';
-        }
-      }
-
-      const rawUrl = normalized.url || '';
+      const rawUrl = normalized.url || normalized.mediaUrl || normalized.media_url || '';
       const url = isUsableBrowserUrl(rawUrl) ? rawUrl : '';
       const rawThumb = normalized.thumbnailUrl || normalized.thumbnail_url || '';
       const thumbnailUrl = isUsableBrowserUrl(rawThumb) ? rawThumb : '';
@@ -156,14 +141,14 @@ export function normalizeMedia(rawPayload, event = null) {
         status: status || (storagePath ? 'stored' : ''),
         verified: normalized.verified === true,
         origin: normalized.origin || normalized.source || '',
-        loadState: normalized.loadState || '',
+        loadState: normalized.loadState || normalized.load_state || '',
         bucket,
         storagePath,
         caption: normalized.caption || '',
         url,
         thumbnailUrl,
-        fileName: normalized.fileName || normalized.file_name || '',
-        mimeType: normalized.mimeType || normalized.mime_type || '',
+        fileName: normalized.fileName || normalized.file_name || normalized.filename || '',
+        mimeType: normalized.mimeType || normalized.mime_type || normalized.mimetype || '',
         encoding: normalized.encoding || '',
         size: Number(normalized.size || normalized.file_size || 0),
         duration: Number(normalized.duration || 0),
@@ -172,56 +157,55 @@ export function normalizeMedia(rawPayload, event = null) {
   }
 
   // 4. Mídia Evolution API (WhatsApp)
-  // Eventos outbound do workflow podem reter o envelope bruto do inbound que os
-  // originou. Esse envelope descreve a mensagem do cliente, não uma mídia que a
-  // IA tenha enviado. Para outbound, aceite somente mídia declarada nos blocos
-  // normalizados acima (media/magia_operator).
+  // Mídias confirmadas possuem raw_payload.media com storagePath gravado pelo CORE workflow.
+  // Se o envelope bruto contiver apenas a mensagem da Evolution sem storagePath confirmado,
+  // nunca invente um arquivo a partir do ID da mensagem.
   if (!isOutboundEvent && evolutionMessage.imageMessage) {
     const img = evolutionMessage.imageMessage;
     const mimeType = img.mimetype || 'image/jpeg';
-    const derived = deriveWhatsAppStorage(event, payload, 'image', mimeType);
+    const usableUrl = isUsableBrowserUrl(img.url) ? img.url : '';
     return {
       kind: 'image',
       category: 'image',
       caption: img.caption || '',
       mimeType,
-      url: isUsableBrowserUrl(img.url) ? img.url : '',
-      bucket: derived?.bucket || '',
-      storagePath: derived?.storagePath || '',
-      status: derived ? 'stored' : '',
+      url: usableUrl,
+      bucket: '',
+      storagePath: '',
+      status: usableUrl ? 'stored' : 'unavailable',
       size: Number(img.fileLength || 0),
     };
   }
   if (!isOutboundEvent && evolutionMessage.audioMessage) {
     const aud = evolutionMessage.audioMessage;
     const mimeType = aud.mimetype || 'audio/ogg';
-    const derived = deriveWhatsAppStorage(event, payload, 'audio', mimeType);
+    const usableUrl = isUsableBrowserUrl(aud.url) ? aud.url : '';
     return {
       kind: 'audio',
       category: 'audio',
       duration: Number(aud.seconds || 0),
       mimeType,
-      url: isUsableBrowserUrl(aud.url) ? aud.url : '',
-      bucket: derived?.bucket || '',
-      storagePath: derived?.storagePath || '',
-      status: derived ? 'stored' : '',
+      url: usableUrl,
+      bucket: '',
+      storagePath: '',
+      status: usableUrl ? 'stored' : 'unavailable',
       size: Number(aud.fileLength || 0),
     };
   }
   if (!isOutboundEvent && evolutionMessage.videoMessage) {
     const vid = evolutionMessage.videoMessage;
     const mimeType = vid.mimetype || 'video/mp4';
-    const derived = deriveWhatsAppStorage(event, payload, 'video', mimeType);
+    const usableUrl = isUsableBrowserUrl(vid.url) ? vid.url : '';
     return {
       kind: 'video',
       category: 'video',
       caption: vid.caption || '',
       duration: Number(vid.seconds || 0),
       mimeType,
-      url: isUsableBrowserUrl(vid.url) ? vid.url : '',
-      bucket: derived?.bucket || '',
-      storagePath: derived?.storagePath || '',
-      status: derived ? 'stored' : '',
+      url: usableUrl,
+      bucket: '',
+      storagePath: '',
+      status: usableUrl ? 'stored' : 'unavailable',
       size: Number(vid.fileLength || 0),
     };
   }
@@ -229,31 +213,31 @@ export function normalizeMedia(rawPayload, event = null) {
     const doc = evolutionMessage.documentMessage;
     const fileName = doc.fileName || 'Documento';
     const mimeType = doc.mimetype || 'application/octet-stream';
-    const derived = deriveWhatsAppStorage(event, payload, 'document', mimeType, fileName);
+    const usableUrl = isUsableBrowserUrl(doc.url) ? doc.url : '';
     return {
       kind: 'document',
       category: 'document',
       fileName,
       mimeType,
       size: Number(doc.fileLength || 0),
-      url: isUsableBrowserUrl(doc.url) ? doc.url : '',
-      bucket: derived?.bucket || '',
-      storagePath: derived?.storagePath || '',
-      status: derived ? 'stored' : '',
+      url: usableUrl,
+      bucket: '',
+      storagePath: '',
+      status: usableUrl ? 'stored' : 'unavailable',
     };
   }
   if (!isOutboundEvent && evolutionMessage.stickerMessage) {
     const stk = evolutionMessage.stickerMessage;
     const mimeType = stk.mimetype || 'image/webp';
-    const derived = deriveWhatsAppStorage(event, payload, 'sticker', mimeType);
+    const usableUrl = isUsableBrowserUrl(stk.url) ? stk.url : '';
     return {
       kind: 'sticker',
       category: 'sticker',
       mimeType,
-      url: isUsableBrowserUrl(stk.url) ? stk.url : '',
-      bucket: derived?.bucket || '',
-      storagePath: derived?.storagePath || '',
-      status: derived ? 'stored' : '',
+      url: usableUrl,
+      bucket: '',
+      storagePath: '',
+      status: usableUrl ? 'stored' : 'unavailable',
       size: Number(stk.fileLength || 0),
     };
   }
@@ -271,48 +255,36 @@ export function normalizeMedia(rawPayload, event = null) {
   }
   if (!isOutboundEvent && telegramMessage.document) return { kind: 'document', caption: telegramMessage.caption || '', fileName: telegramMessage.document.file_name || '', mimeType: telegramMessage.document.mime_type || '', size: Number(telegramMessage.document.file_size || 0) };
 
-  // 6. Mídia WhatsApp armazenada em Storage cujo raw_payload.media foi sobrescrito por patch posterior
+  // 6. Mídia WhatsApp armazenada cujo raw_payload.media foi omitido mas possui comprovação de processamento (sales_media com readable: true ou transcrição em lote com chave de mensagem)
+  // IMPORTANTE: Nunca invente caminho a partir de texto simples como [image] ou [audio] sem evidência concreta de objeto existente.
   if (!isOutboundEvent && (!normalized.kind && !normalized.category)) {
-    const text = String(event?.message_text || '').trim();
-    let detectedKind = null;
-    let detectedMime = '';
-
-    if (isMediaPlaceholderForKind(text, 'image') || isMediaPlaceholderForKind(text, 'album')
-      || (payload.sales_media && (
+    const hasVerifiedSalesMedia = Boolean(
+      payload.sales_media && (
         Array.isArray(payload.sales_media)
           ? payload.sales_media.some((m) => m.kind === 'vehicle_photo' && m.readable !== false)
           : payload.sales_media.kind === 'vehicle_photo' && payload.sales_media.readable !== false
-      ))) {
-      detectedKind = 'image';
-      detectedMime = 'image/jpeg';
-    } else if (isMediaPlaceholderForKind(text, 'video')) {
-      detectedKind = 'video';
-      detectedMime = 'video/mp4';
-    } else if (isMediaPlaceholderForKind(text, 'sticker')) {
-      detectedKind = 'sticker';
-      detectedMime = 'image/webp';
-    } else if (isMediaPlaceholderForKind(text, 'document')) {
-      detectedKind = 'document';
-      detectedMime = 'application/pdf';
-    } else if (isMediaPlaceholderForKind(text, 'audio') || Boolean(payload.audio_transcriptions || payload.audio_processing)) {
-      detectedKind = 'audio';
-      detectedMime = 'audio/ogg';
-    }
+      )
+    );
+    const hasAudioWithTranscription = Array.isArray(payload.audio_transcriptions) && payload.audio_transcriptions.length > 0;
 
-    if (detectedKind) {
-      const derived = deriveWhatsAppStorage(event, payload, detectedKind, detectedMime);
-      if (derived) {
-        return {
-          kind: detectedKind,
-          category: detectedKind,
-          status: 'stored',
-          bucket: derived.bucket,
-          storagePath: derived.storagePath,
-          url: '',
-          caption: '',
-          mimeType: detectedMime,
-        };
-      }
+    const messageId = event?.external_message_id || payload?.key?.id || payload?.external_message_id || payload?.message_id;
+    const convId = event?.external_conversation_id || payload?.external_conversation_id || payload?.key?.remoteJid;
+    const tenant = event?.tenant_slug || event?.tenantId || payload?.tenant_slug || '';
+
+    if ((hasVerifiedSalesMedia || hasAudioWithTranscription) && messageId && convId && tenant) {
+      const cleanChat = String(convId).replace(/@/g, '_');
+      const ext = hasVerifiedSalesMedia ? 'jpg' : 'ogg';
+      const kind = hasVerifiedSalesMedia ? 'image' : 'audio';
+      return {
+        kind,
+        category: kind,
+        status: 'stored',
+        bucket: 'channel-media',
+        storagePath: `${tenant}/whatsapp/${cleanChat}/${messageId}.${ext}`,
+        url: '',
+        caption: '',
+        mimeType: hasVerifiedSalesMedia ? 'image/jpeg' : 'audio/ogg',
+      };
     }
   }
 

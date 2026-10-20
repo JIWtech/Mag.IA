@@ -2,11 +2,14 @@ export const GENESIS_SALES_STAGE_DEFAULT_NAMES = {
   sales_new: 'Patio - Novos contatos',
   sales_qualifying: 'IA - Qualificacao automotiva',
   sales_hot: 'Leads quentes - Venda',
+  sales_human: 'Atendimento humano',
   sales_appraisal: 'Avaliacao de retoma - Compra',
   sales_financing: 'Fila de financiamento',
-  sales_after_sales: 'Pos-venda - Manutencao',
-  sales_human: 'Atendimento humano',
   sales_closed: 'Negocio fechado',
+  sales_after_sales: 'Pos-venda - Manutencao',
+  follow_ups: 'Follow Ups',
+  sales_warm: 'Leads Mornos',
+  sales_cold: 'Leads Frios',
 };
 
 const GENESIS_TENANT_SLUG = 'wesley_automoveis';
@@ -19,6 +22,9 @@ const GENESIS_SALES_STAGES = [
   { key: 'sales_financing', navigationLabel: 'Financiamento' },
   { key: 'sales_closed', navigationLabel: 'Negócio fechado' },
   { key: 'sales_after_sales', navigationLabel: 'Pós-venda' },
+  { key: 'follow_ups', navigationLabel: 'Follow Ups' },
+  { key: 'sales_warm', navigationLabel: 'Leads mornos' },
+  { key: 'sales_cold', navigationLabel: 'Leads frios' },
 ];
 export const GENESIS_SALES_STAGE_KEYS = new Set(GENESIS_SALES_STAGES.map((stage) => stage.key));
 export const GENESIS_SALES_STAGE_BY_KEY = new Map(GENESIS_SALES_STAGES.map((stage, index) => [stage.key, { ...stage, index }]));

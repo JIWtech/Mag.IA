@@ -18,7 +18,8 @@ const selected={...blank,intent:'buy',customer_name:'Maria Souza',name_evidence:
 async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 12.894,00'],
   response={action:'register_interest',reason:'none',reply:'',state:selected},
   lead=null,history=[],stale=false,stockError=false,priceChanged=false,humanRace=false,disabled=false,
-  collect=false,media=false,ocr=null,documents=[],sendError=false,exclusion=false,exclusionResult=false,followUp=false,financing=false}={}) {
+  collect=false,media=false,ocr=null,documents=[],sendError=false,exclusion=false,exclusionResult=false,followUp=false,financing=false,
+  closeAt=null}={}) {
   const calls=[],sent=[],saved=[];let generated=0,reads=0,currentLead=lead,exclusionChecks=0;
   const settings={conversation_capability:'sales_v1',whatsapp_processing_mode:'conversation_core_v1',grounding_mode:'canonical_v2',
     system_prompt:'Sales test',ai_model:'gemini-3.5-flash-lite',ai_enabled:!disabled,gemini_daily_limit:80,whatsapp_audio_enabled:false,
@@ -48,9 +49,11 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
     if(table==='tenants')return [{id:'tenant-sales',slug:'sales',status:'active',name:'Sales'}];
     if(table==='tenant_settings')return [{settings}];
     if(table==='channels')return [{external_id:'sales-instance'}];
-    if(table==='magia_claim_turn')return {claimed:true,token:'token',boundary_id:'initial',messages:texts.map((text,i)=>({id:'m'+i,event_id:'e'+i,text,received_at:new Date().toISOString()}))};
+    if(table==='magia_claim_turn')return {claimed:true,token:'token',boundary_id:closeAt?'closed-boundary':'initial',messages:texts.map((text,i)=>({id:'m'+i,event_id:'e'+i,text,received_at:new Date().toISOString()}))};
     if(table==='magia_commit_turn')return {committed:!stale,reason:stale?'new_messages':undefined};
     if(table==='magia_finish_turn')return {};
+    if(table==='magia_begin_turn_delivery')return {id:'delivery-attempt'};
+    if(table==='magia_confirm_turn_delivery')return {confirmed:true};
     if(table==='sales_leads')return currentLead?[humanRace?{...currentLead,revision:99}:currentLead]:[];
     if(table==='sales_documents')return documents;
     if(table==='magia_sales_save'){
@@ -66,13 +69,15 @@ async function run({texts=['Quero Sandero GT Line','Maria Souza','Entrada de R$ 
     if(table==='channel_events'){
       if(method!=='GET')return [{id:'event'}];
       if(u.searchParams.get('id'))return [{external_message_id:u.searchParams.get('id').slice(3).replace('e','m')}];
-      if(u.searchParams.get('or')?.includes('conversation_closed')||u.searchParams.get('or')?.includes('sender_type.eq.human'))return [];
+      if(u.searchParams.get('or')?.includes('conversation_closed'))return closeAt?[{id:'closed-boundary',created_at:closeAt}]:[];
+      if(u.searchParams.get('or')?.includes('sender_type.eq.human'))return [];
       return [...history].reverse();
     }
     throw Error('Unexpected '+table);
   };
   const result=await new AsyncFunction('$json','$env','$vars','$getWorkflowStaticData',code).call({helpers:{httpRequest:request}},
-    {tenant_slug:'sales',tenant_id:'tenant-sales',remoteJid:'5511999999999@s.whatsapp.net',instance:'sales-instance'},
+    {tenant_slug:'sales',tenant_id:'tenant-sales',remoteJid:'5511999999999@s.whatsapp.net',instance:'sales-instance',
+      noria_client_policy:{profile:'vehicle_sales_v1',capability:'sales_v1',contract:'noria_policy_v2',tenant_slug:'sales',tenant_id:'tenant-sales',audio_enabled:false,scheduling_enabled:false}},
     {SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake',GEMINI_ENABLED:'true',GEMINI_API_KEY:'fake',
       EVOLUTION_API_URL_SALES:'https://evo.test',EVOLUTION_API_KEY_SALES:'fake',EVOLUTION_INSTANCE_SALES:'sales-instance'}, {},()=>({}));
   return {result:result.json,calls,sent,saved,generated};
@@ -150,6 +155,20 @@ test('vehicle model shorthand and split variant evidence do not cause a handoff'
 test('verified price at the end of a sentence is not treated as an invented value',async()=>{
   const r=await run({response:{action:'reply',reason:'none',reply:'O Sandero esta listado por R$ 42.980,00.',state:blank}});
   assert.equal(r.result.handoff,false);assert.match(r.sent[0],/42.980,00/);
+});
+test('Genesis greeting completes the generated CORE without an unavailable dialogue guard variable',async()=>{
+  assert.doesNotMatch(code,/\bdialogueNeedsReview\b/);
+  const r=await run({texts:['Oi'],response:{action:'reply',reason:'none',reply:'Ol\u00e1! Como posso ajudar?',state:blank}});
+  assert.equal(r.result.ok,true,JSON.stringify(r.result));
+  assert.equal(r.sent.length,1,JSON.stringify(r.result));
+  assert.doesNotMatch(String(r.result.error||''),/dialogueNeedsReview/);
+});
+test('a new Genesis message after operator closure is processed and delivered',async()=>{
+  const r=await run({closeAt:new Date(Date.now()-3000).toISOString(),texts:['Oi'],
+    response:{action:'reply',reason:'none',reply:'Ol\u00e1! Como posso ajudar?',state:blank}});
+  assert.equal(r.result.ok,true,JSON.stringify(r.result));
+  assert.equal(r.sent.length,1,JSON.stringify(r.result));
+  assert.equal(r.result.delivery_ok,true,JSON.stringify(r.result));
 });
 test('new messages or human transition discard all commercial side effects',async()=>{
   for(const flags of [{stale:true},{humanRace:true}]) {const r=await run(flags);assert.equal(r.sent.length,0);assert.equal(r.saved.length,0);}
@@ -231,7 +250,7 @@ test('split seller details are accepted and excluded brands are not registered',
   assert.equal(r.saved[0].p_register,false);assert.match(r.sent[0],/nao se enquadra/);
 });
 test('inventory typed numbers are preserved, duplicate identities fail closed',()=>{
-  const context=vm.createContext({normalizeText:v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()});
+  const context=vm.createContext({tenantSlug:'sales',normalizeText:v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()});
   vm.runInContext(fs.readFileSync(path.join(root,'n8n/code/whatsapp_sales.js'),'utf8'),context);
   const rows=context.salesParseInventory(stock);assert.equal(rows.length,6);assert.equal(rows[4].price_cents,4298000);
   assert.equal(context.salesAmount('Entrada de R$ 12.894,00'),1289400);

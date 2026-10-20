@@ -222,6 +222,8 @@ function App() {
   const [appData, setAppData] = useState(initialSetup.data);
   const [appDataReady, setAppDataReady] = useState(initialSetup.ready);
   const [agentsReady, setAgentsReady] = useState(false);
+  const appDataRef = useRef(appData);
+  appDataRef.current = appData;
 
   const activeTenantSlug = tenantSlug || null;
   const selectedTenant = availableTenants.find((tenant) => tenant.slug === activeTenantSlug)
@@ -253,14 +255,15 @@ function App() {
 
   const scheduleConversationRead = useCallback((conversation) => {
     const userId = session?.user?.id || null;
-    const tenantId = appData.tenantId;
+    const currentAppData = appDataRef.current;
+    const tenantId = currentAppData?.tenantId;
     const latestEvent = getLatestReadableEvent(conversation);
     if (!tenantId || !userId || !conversation || !latestEvent?.eventId || !latestEvent?.createdAt) return;
 
     const channelType = conversation.channelType || conversation.channel;
     const externalConversationId = conversation.externalConversationId || conversation.normalizedExternalId;
     const key = conversationReadKey(tenantId, userId, channelType, externalConversationId);
-    const knownMarker = (appData.conversationReads || []).find((marker) => conversationReadKey(
+    const knownMarker = (currentAppData?.conversationReads || []).find((marker) => conversationReadKey(
       marker.tenant_id,
       marker.user_id,
       marker.channel_type,
@@ -320,7 +323,7 @@ function App() {
       }
     }, 180);
     conversationReadTimersRef.current.set(key, timer);
-  }, [appData.conversationReads, appData.tenantId, session?.user?.id]);
+  }, [session?.user?.id]);
 
   const handleConversationViewStateChange = useCallback(({ conversation, visible } = {}) => {
     conversationViewRef.current = {
@@ -384,7 +387,7 @@ function App() {
     if (kanbanMoveInFlightRef.current.has(moveKey)) return;
     kanbanMoveInFlightRef.current.add(moveKey);
     const targetStageLabel = targetColObj?.title || getStageLabel(targetColumnKey, {
-      kanbanColumns: appData.kanbanColumns,
+      kanbanColumns: appDataRef.current?.kanbanColumns || appData.kanbanColumns,
       tenantSettings,
       tenantSlug: activeTenantSlug,
     });
@@ -632,7 +635,7 @@ function App() {
   async function handleAssignAgent(conversationOrId, agent) {
     const selectedConversation = typeof conversationOrId === 'object'
       ? conversationOrId
-      : appData.conversations.find((conv) => conv.id === conversationOrId);
+      : (appDataRef.current?.conversations || []).find((conv) => conv.id === conversationOrId);
     const conversationId = selectedConversation?.id || conversationOrId;
 
     setAppData((prev) => {
@@ -730,16 +733,26 @@ function App() {
     const unsubscribe = subscribeToAuthState((nextSession, event) => {
       if (!mounted) return;
       authSeq += 1;
-      if (event === 'SIGNED_OUT' || !nextSession) {
+      if (event === 'SIGNED_OUT') {
         setSession(null);
         setCheckingAuth(false);
         clearSessionBootstrapped();
+        return;
+      }
+      if (!nextSession) {
+        setCheckingAuth(false);
         return;
       }
       setSession((prevSession) => {
         if (prevSession?.user?.id && nextSession?.user?.id && prevSession.user.id !== nextSession.user.id) {
           setTenantAccess({ userId: nextSession.user.id, loaded: false, error: '' });
           setAppDataReady(false);
+        }
+        if (
+          prevSession?.access_token === nextSession?.access_token &&
+          prevSession?.user?.id === nextSession?.user?.id
+        ) {
+          return prevSession;
         }
         return nextSession;
       });
@@ -758,15 +771,16 @@ function App() {
     return refreshCoordinator.run(requestedScope, async () => {
       if (showLoading) setLoading(true);
       try {
+        const currentData = appDataRef.current;
         const data = await loadClientData({
-          conversations,
-          kanbanColumns,
-          funnelStages,
-          appointments: appData.appointments || [],
-          broadcastContacts: appData.broadcastContacts || [],
-          broadcastCampaigns: appData.broadcastCampaigns || [],
-          conversationReads: appData.conversationReads || [],
-          tenantId: appData.tenantId || null,
+          conversations: currentData?.conversations || [],
+          kanbanColumns: currentData?.kanbanColumns || [],
+          funnelStages: currentData?.funnelStages || [],
+          appointments: currentData?.appointments || [],
+          broadcastContacts: currentData?.broadcastContacts || [],
+          broadcastCampaigns: currentData?.broadcastCampaigns || [],
+          conversationReads: currentData?.conversationReads || [],
+          tenantId: currentData?.tenantId || null,
         }, activeTenantSlug, session?.user?.id || null);
         if (currentScope.current !== requestedScope) return false;
         setLoadError('');
@@ -810,7 +824,7 @@ function App() {
     });
   }, []);
 
-  const retryConversationAudio = useCallback(async (message) => {
+  const retryConversationMedia = useCallback(async (message) => {
     const media = message?.media;
     if (!message?.eventId || !media?.bucket || !media?.storagePath || media.status !== 'stored') return false;
 
@@ -966,7 +980,7 @@ function App() {
       } else {
         refreshFromRealtime();
       }
-    }, activeTenantSlug);
+    }, activeTenantSlug, appDataRef.current?.tenantId);
 
     const unsubscribeConversationReads = subscribeToConversationReads((payload) => {
       const marker = payload?.new;
@@ -1014,22 +1028,22 @@ function App() {
     };
   }, [activeTenantSlug, session?.user?.id, hasTenantAccess]);
 
+  const activeSubscriptionTenantId = appData?.tenantId;
   useEffect(() => {
-    const tenantId = appData?.tenantId;
-    if (!tenantId) return undefined;
+    if (!activeSubscriptionTenantId) return undefined;
 
     return subscribeToContacts((payload) => {
       const contact = payload?.new;
-      if (!contact || contact.tenant_id !== tenantId) return;
+      if (!contact || contact.tenant_id !== activeSubscriptionTenantId) return;
       setAppData((prev) => {
-        if (!prev || prev.tenantId !== tenantId) return prev;
+        if (!prev || prev.tenantId !== activeSubscriptionTenantId) return prev;
         return {
           ...prev,
-          conversations: applyContactUpdateToConversations(prev.conversations, contact, tenantId),
+          conversations: applyContactUpdateToConversations(prev.conversations, contact, activeSubscriptionTenantId),
         };
       });
-    }, tenantId);
-  }, [appData?.tenantId]);
+    }, activeSubscriptionTenantId);
+  }, [activeSubscriptionTenantId]);
 
   const hasBootstrapped = isSessionBootstrapped();
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
@@ -1154,6 +1168,10 @@ function App() {
           refreshData={refreshData}
           selectedTenant={selectedTenant}
           setTenantSlug={setTenantSlug}
+          notificationTenantId={hasTenantAccess ? appData.tenantId : null}
+          notificationUserId={session?.user?.id || null}
+          notificationConversations={appData.conversations}
+          onOpenNotificationConversation={handleOpenChatFromKanban}
         />
 
         {active === 'dashboard' && (
@@ -1181,7 +1199,7 @@ function App() {
             onInitialConversationOpened={() => setInitialConversationId(null)}
             onNavigateSettings={() => setActive('configuracoes')}
             onConversationViewStateChange={handleConversationViewStateChange}
-            onRetryAudioMedia={retryConversationAudio}
+            onRetryAudioMedia={retryConversationMedia}
             ready={appDataReady}
             kanbanColumns={appData.kanbanColumns}
             tenantSettings={tenantSettings}

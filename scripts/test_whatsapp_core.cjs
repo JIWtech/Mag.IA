@@ -7,9 +7,16 @@ const code = fs.readFileSync(path.join(__dirname,'../n8n/code/whatsapp_conversat
 const execute = new AsyncFunction('$json','$env','$vars','$getWorkflowStaticData',code);
 const services=[{external_id:'bronze',category:'Bronze',name:'Bronze Classico',description:'Bronze em maquina',price:99.99,billing_unit:'sessao',notes:'',active:true}];
 
-async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false, audio=false, transcript='Quero bronze', audioFailure='', audioCache=null }={}) {
+async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria Silva'], response='Perfeito [ACAO: CRIAR_AGENDAMENTO|nome=Maria Silva|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]', history=[], appointments=[], stale=false, sendError=false, failAppointment=false, closeAt=null, enabled=true, grounded=false, businessFacts={}, scheduling=null, available=['10:00'], availabilityError=false, sessionMode=false, usage={}, boundaryChanged=false, audio=false, transcript='Quero bronze', audioFailure='', audioCache=null }={}) {
   const calls=[]; const events=[]; const saved=[]; const finishes=[]; let sent=0; let generated=0;
-  const input={tenant_id:'t-clinic',tenant_slug:'clinic',remoteJid:'5511111111111@s.whatsapp.net',instance:'clinic'};
+  const input={tenant_id:'t-clinic',tenant_slug:'clinic',remoteJid:'5511111111111@s.whatsapp.net',instance:'clinic',
+    noria_client_policy:{
+      contract:'noria_policy_v2',tenant_id:'t-clinic',tenant_slug:'clinic',profile:'nb_bronze_v1',capability:'standard',
+      audio_enabled:Boolean(audio),scheduling_enabled:Boolean(scheduling?.enabled),
+      modules:{scheduling:Boolean(scheduling?.enabled),approved_service_texts:false,specific_service_guidance:false,
+        specific_service_id:'bronze_jato_corpo_todo',payment_report_only:true,manual_signal_confirmation:true,
+        deposit_source:'tenant_settings',messages:{home_booking:'fixture',home_info:'fixture',clinic_prefix:'fixture',clinic_home_note:'fixture',home_schedule:'fixture',spray_schedule:'fixture'}}
+    }};
   const environment={SUPABASE_URL:'https://db.test',SUPABASE_SERVICE_ROLE_KEY:'fake',GEMINI_ENABLED:'true',GEMINI_API_KEY:'fake',
     EVOLUTION_API_URL_CLINIC:'https://evo.test',EVOLUTION_API_KEY_CLINIC:'fake',EVOLUTION_INSTANCE_CLINIC:'clinic'};
   const settings={whatsapp_processing_mode:enabled?'conversation_core_v1':'',ai_model:'gemini-2.5-flash-lite',ai_enabled:true,
@@ -36,6 +43,12 @@ async function run({ texts=['Oi','Quero agendar','Bronze Classico','29/09/2099 a
     assert.equal(u.hostname,'db.test');
     const table=u.pathname.split('/').at(-1);
     if(table==='magia_claim_turn')return {claimed:true,token:'claim-1',boundary_id:closeAt?'close-1':'initial',messages:texts.map((text,i)=>({event_id:'e'+i,id:'m'+i,text,name:'Cliente',received_at:new Date(Date.now()-1000).toISOString()}))};
+    if(table==='magia_begin_turn_delivery')return {id:'delivery-attempt-1'};
+    if(table==='magia_confirm_turn_delivery')return {confirmed:true};
+    if(table==='magia_merge_channel_event_raw'){
+      if(audioFailure==='persist')throw Error('DB failed');
+      return {applied:true};
+    }
     if(table==='magia_commit_turn')return stale?{committed:false,reason:'new_messages'}:{committed:true};
     if(table==='magia_finish_turn'){finishes.push(body.p_outcome);return {finished:true};}
     if(table==='magia_appointment_availability'){if(availabilityError)throw Error('RPC unavailable');return {available_starts:available};}
@@ -84,7 +97,7 @@ test('one combined generation creates one pending appointment and one WhatsApp r
   assert.equal(r.saved[0].status,'pending_payment');assert.equal(r.saved[0].channel_type,'whatsapp');
   assert.equal(r.saved[0].starts_at,'2099-09-29T13:00:00.000Z');
   assert.equal(r.result.grouped,5);assert.equal(r.events.filter(e=>e.direction==='inbound').length,0);
-  const gemini=r.calls.find(c=>c.url.includes('generateContent'));assert.match(gemini.body.contents.at(-1).parts[0].text,/Oi[\s\S]*Maria/);
+  const gemini=r.calls.find(c=>c.url.includes('generateContent'));assert.match(gemini.body.contents.at(-1).parts[0].text,/Oi[\s\S]*Maria Silva/);
   assert.ok(!r.calls.find(c=>c.url.includes('sendText')).body.text.includes('[ACAO'));
 });
 test('SINAL PAGO marks payment_reported, sends only ack, does not call model',async()=>{
@@ -120,7 +133,7 @@ test('core cannot run for tenant without explicit enablement',async()=>{
 });
 
 test('accented action tags still create a pending appointment',async()=>{
-  const r=await run({response:'Pronto [A\u00c7\u00c3O: CRIAR_AGENDAMENTO|nome=Maria|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]'});
+  const r=await run({response:'Pronto [A\u00c7\u00c3O: CRIAR_AGENDAMENTO|nome=Maria Silva|servico=Bronze Classico|data=2099-09-29|hora=10:00|duracao=120|status=pending_payment]'});
   assert.equal(r.saved[0]?.status,'pending_payment');
 });
 
@@ -145,25 +158,26 @@ const singleUnitScheduling=structuredClone(scheduling);
 scheduling.units.rio={...structuredClone(scheduling.units.angra),name:'Rio',aliases:['rio']};
 scheduling.service_resources.bronze='classico';
 singleUnitScheduling.service_resources.bronze='classico';
-const schedulingState={...blankState,customer_name:'Maria',service_id:'bronze',date:'2099-09-29',time:'10:00',
+const schedulingState={...blankState,customer_name:'Maria Silva',service_id:'bronze',date:'2099-09-29',time:'10:00',
   name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3',unit_id:'angra',unit_evidence:'e5'};
-const schedulingTexts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria','Angra'];
+const schedulingTexts=['Oi','Quero agendar','Bronze Classico','29/09/2099 as 10h','Maria Silva','Angra'];
 
 test('audio is transcribed before a single grouped answer and counted separately',async()=>{
   const usage={};
   const r=await run({grounded:true,audio:true,texts:['[audio]','por favor'],usage,
     response:{action:'reply',reply:'Para qual dia?',state:blankState}});
   assert.equal(r.result.ok,true);assert.equal(r.sent,1);assert.equal(r.generated,1);
-  assert.equal(Object.values(usage)[0],2);
+  assert.equal(usage['gemini_clinic_'+new Date().toISOString().slice(0,10)],2);
   const input=r.calls.find(c=>c.url.includes('generateContent')&&!c.body.contents[0].parts[0].inlineData).body.contents[0].parts[0].text;
   assert.match(input,/Quero bronze/);assert.match(input,/por favor/);assert.doesNotMatch(input,/\[audio\]/);
-  assert.equal(r.events[0].raw_payload.audio_transcriptions.e0.text,'Quero bronze');
+  const audioMerge=r.calls.find(c=>c.url.includes('magia_merge_channel_event_raw'));
+  assert.equal(audioMerge.body.p_patch.audio_processing.text,'Quero bronze');
   assert.ok(!JSON.stringify(r.events).includes('base64'));
 });
 
 test('spoken booking date and time become evidence under the original audio event id',async()=>{
   const r=await run({grounded:true,audio:true,scheduling:singleUnitScheduling,sessionMode:true,
-    texts:['Oi','Quero agendar','Bronze Classico','[audio]','Maria'],transcript:'29/09/2099 as 10h',
+    texts:['Oi','Quero agendar','Bronze Classico','[audio]','Maria Silva'],transcript:'29/09/2099 as 10h',
     response:{action:'create_appointment',reply:'Certo',state:{...schedulingState,unit_id:'',unit_evidence:''}}});
   assert.equal(r.result.ok,true);assert.equal(r.saved.length,1);assert.equal(r.sent,1);
 });
@@ -171,8 +185,9 @@ test('spoken booking date and time become evidence under the original audio even
 test('audio failures hand off once without inventing contents or creating bookings',async()=>{
   for(const audioFailure of ['download','format','transcription','truncated','silent','scope','long','persist']) {
     const r=await run({grounded:true,audio:true,texts:['[audio]'],audioFailure});
-    assert.equal(r.sent,1,audioFailure);assert.equal(r.generated,0);assert.equal(r.saved.length,0);
-    assert.equal(r.events[0].handoff,true);assert.match(r.events[0].ai_error,/audio_/);
+    assert.equal(r.sent,1,audioFailure);assert.equal(r.generated,0,audioFailure);assert.equal(r.saved.length,0);
+    const outbound=r.events.find(e=>e.direction==='outbound');
+    assert.equal(outbound.handoff,true);assert.match(outbound.ai_error,/audio_/);
     assert.doesNotMatch(JSON.stringify(r.events),/private URL/);
   }
 });
@@ -188,18 +203,18 @@ test('audio respects human lock, quota, batching and stale-turn fences',async()=
   const locked=await run({audio:true,texts:['[audio]'],history:[{handoff:true}]});
   assert.equal(locked.sent,0);assert.ok(!locked.calls.some(c=>c.url.includes('getBase64FromMediaMessage')));
   const exhausted=await run({audio:true,texts:['[audio]'],usage:{['gemini_clinic_'+new Date().toISOString().slice(0,10)]:80}});
-  assert.match(exhausted.events[0].ai_error,/daily_limit_reached/);
+  assert.match(exhausted.events.find(e=>e.direction==='outbound').ai_error,/daily_limit_reached/);
   assert.ok(!exhausted.calls.some(c=>c.url.includes('getBase64FromMediaMessage')));
   const stale=await run({grounded:true,audio:true,texts:['[audio]'],stale:true,response:{action:'reply',reply:'Para qual dia?',state:blankState}});
   assert.equal(stale.sent,0);assert.equal(stale.saved.length,0);assert.deepEqual(stale.finishes,['retry']);
   const batch=await run({audio:true,texts:['[audio]','[audio]','[audio]']});
-  assert.equal(batch.events[0].ai_error,'audio_batch_limit');
+  assert.equal(batch.events.find(e=>e.direction==='outbound').ai_error,'audio_batch_limit');
 });
 
 test('two audios retain both message IDs and produce only one answer',async()=>{
   const r=await run({grounded:true,audio:true,texts:['[audio]','[audio]'],response:{action:'reply',reply:'Para qual dia?',state:blankState}});
   assert.equal(r.sent,1);assert.equal(r.generated,1);
-  assert.deepEqual(Object.keys(r.events[0].raw_payload.audio_transcriptions),['e0','e1']);
+  assert.deepEqual(r.calls.filter(c=>c.url.includes('magia_merge_channel_event_raw')).map(c=>c.body.p_event),['e0','e1']);
 });
 
 test('transcriptions from previous turns remain available as evidence in the same session',async()=>{
@@ -298,7 +313,7 @@ test('daily limit remains tenant-wide after closure, with a specific diagnostic 
   const usage={[key]:80};
   const r=await run({grounded:true,closeAt:closedYesterday(),texts:['Oi'],usage});
   assert.equal(r.generated,0);assert.equal(r.sent,1);assert.equal(usage[key],80);
-  assert.equal(r.events[0].ai_error,'daily_limit_reached');
+  assert.equal(r.events.find(e=>e.direction==='outbound').ai_error,'daily_limit_reached');
   assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/momentinho/);
 });
 test('unit is asked before booking when customer has not selected a region',async()=>{
@@ -342,8 +357,9 @@ test('selecting Quero 15 ja falei is time evidence, not an age or service price'
       texts:['Bronze Classico','29/09/2099',text],available:['15:00','16:30'],
       response:{action:'reply',reply:'Certo, 15:00. Qual seu nome?',state:{...blankState,
         service_id:'bronze',service_evidence:'e0',date:'2099-09-29',date_evidence:'e1',time:'15:00',time_evidence:'e2'}}});
-    assert.equal(r.events[0].handoff,!valid,text);
-    if(valid)assert.match(r.calls.find(c=>c.url.includes('sendText')).body.text,/nome completo/);
+    const reply=r.calls.find(c=>c.url.includes('sendText')).body.text;
+    if(valid){assert.equal(r.events[0].handoff,false,text);assert.match(reply,/nome completo/);}
+    else {assert.doesNotMatch(reply,/nome completo/);assert.match(reply,/15:00, 16:30/);}
   }
 });
 
@@ -422,7 +438,7 @@ test('full customer history survives twelve events and old hallucinated replies 
 });
 test('structured booking uses catalog and customer evidence, not prose tags',async()=>{
   const r=await run({grounded:true,response:{action:'create_appointment',reply:'Vou registrar.',state:{
-    customer_name:'Maria',service_id:'bronze',date:'2099-09-29',time:'10:00',name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3'}}});
+    customer_name:'Maria Silva',service_id:'bronze',date:'2099-09-29',time:'10:00',name_evidence:'e4',service_evidence:'e2',date_evidence:'e3',time_evidence:'e3'}}});
   assert.equal(r.saved[0]?.status,'pending_payment');assert.equal(r.result.appointment_id,'a-created');
 });
 test('unsupported booking evidence, imaginary price and false registration fail closed',async()=>{
@@ -433,7 +449,7 @@ test('unsupported booking evidence, imaginary price and false registration fail 
     {action:'reply',reply:'Minha memoria falhou, pode me lembrar?',state:blankState},
   ]) {
     const r=await run({grounded:true,response:output});assert.equal(r.saved.length,0);assert.equal(r.events[0].handoff,true);
-    assert.ok(r.events[0].raw_payload.grounding.blocked_reason);
+    assert.ok(r.events.find(e=>e.direction==='outbound').raw_payload.grounding.blocked_reason);
   }
 });
 test('unrequested invented address in generated prose is replaced with official facts',async()=>{

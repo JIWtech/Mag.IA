@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, UserRound } from 'lucide-react';
+import { Bot, ChevronDown, UserRound } from 'lucide-react';
 import {
   isMediaPlaceholderForKind,
   isTechnicalMediaPlaceholder,
@@ -15,12 +15,14 @@ import { MediaAttachment } from './MediaAttachment.jsx';
 import { MediaMeta } from './MediaMeta.jsx';
 import { TranscribedAudioCard } from './TranscribedAudioCard.jsx';
 
-export function ConversationTimeline({
+function ConversationTimelineComponent({
   groupedMessages = [],
   messageStreamRef,
   messagesEndRef,
   onRetryAudioMedia,
   scrollToLatest,
+  isScrolledUp = false,
+  storeLocation = null,
 }) {
   return (
     <div className="message-stream" ref={messageStreamRef}>
@@ -53,8 +55,15 @@ export function ConversationTimeline({
           const isSticker = mediaKind === 'sticker';
           const visualCaption = isVisualMedia ? resolveVisualMediaCaption(message.media, message.text) : '';
           const mediaMeta = isVisualMedia ? { time: message.formattedTime, showChecks: message.isAi || message.isAgent } : null;
-          const imageGallery = ['image', 'sticker'].includes(mediaKind) ? consecutiveImageGallery(groupedMessages, index) : null;
+          const imageGallery = isVisualMedia ? consecutiveImageGallery(groupedMessages, index) : null;
           const senderClass = message.isAi ? 'ai' : message.isAgent ? 'agent' : 'contact';
+
+          const trimmedText = String(message.text || '').trim().toLowerCase();
+          const isLocPlaceholder = ['[location]', 'location', '[localização]', '[localizacao]', '[livelocation]', 'livelocation'].includes(trimmedText);
+          const locationData = message.location || (isLocPlaceholder ? { isLive: trimmedText.includes('live') } : null);
+          const isLocationMedia = Boolean(locationData);
+          const locationMeta = isLocationMedia ? { time: message.formattedTime, showChecks: message.isAi || message.isAgent } : null;
+
           const bubbleClasses = [
             'bubble',
             senderClass,
@@ -63,6 +72,7 @@ export function ConversationTimeline({
             message.isGroupEnd ? 'is-group-end' : '',
             isSticker ? 'is-sticker' : '',
             isVisualMedia ? 'has-visual-media' : '',
+            isLocationMedia ? 'has-visual-media is-location-bubble' : '',
           ].filter(Boolean).join(' ');
 
           return (
@@ -75,8 +85,8 @@ export function ConversationTimeline({
               <div className={bubbleClasses}>
                 {message.isGroupStart && (
                   <div className="bubble-sender">
-                    {message.isAi && <Bot size={12} aria-hidden="true" />}
-                    {message.isAgent && <UserRound size={12} aria-hidden="true" />}
+                    {message.isAi && <Bot size={13} aria-hidden="true" />}
+                    {message.isAgent && <UserRound size={13} aria-hidden="true" />}
                     <span>{message.senderLabel}</span>
                   </div>
                 )}
@@ -97,14 +107,15 @@ export function ConversationTimeline({
                 {!message.media && !message.audioTranscription && isMediaPlaceholderForKind(message.text, 'audio') && (
                   <AudioRecoveryNotice state="missing_source" />
                 )}
-                {(() => {
-                  const loc = message.location || (
-                    (message.text && ['[location]', 'location', '[localização]', '[localizacao]'].includes(message.text.trim().toLowerCase()))
-                      ? { isResolving: true }
-                      : null
-                  );
-                  return loc ? <LocationAttachment location={loc} /> : null;
-                })()}
+                {locationData && (
+                  <LocationAttachment
+                    location={locationData}
+                    meta={locationMeta}
+                    onLocationLoad={scrollToLatest}
+                    storeLocation={storeLocation}
+                    isOutbound={message.isAgent || message.isAi}
+                  />
+                )}
                 {(() => {
                   if (!message.text) return null;
                   if (isVisualMedia) return null;
@@ -114,26 +125,43 @@ export function ConversationTimeline({
                   if (message.media && isTechnicalMediaPlaceholder(message.text, message.media)) {
                     return null;
                   }
-                  const trimmed = message.text.trim().toLowerCase();
-                  if ((message.location || ['[location]', 'location', '[localização]', '[localizacao]'].includes(trimmed)) && (
-                    trimmed === '[location]' ||
-                    trimmed === 'location' ||
-                    trimmed === '[localização]' ||
-                    trimmed === '[localizacao]'
-                  )) {
+                  if (isLocationMedia && [
+                    '[location]',
+                    'location',
+                    '[localização]',
+                    '[localizacao]',
+                    '[livelocation]',
+                    'livelocation',
+                  ].includes(trimmedText)) {
                     return null;
                   }
                   const displayText = normalizeTechnicalMediaPlaceholder(message.text);
                   if (!displayText) return null;
                   return <p className="bubble-text">{displayText}</p>;
                 })()}
-                {!isVisualMedia && <MediaMeta meta={{ time: message.formattedTime, showChecks: message.isAi || message.isAgent }} />}
+                {!isVisualMedia && !isLocationMedia && (
+                  <MediaMeta meta={{ time: message.formattedTime, showChecks: message.isAi || message.isAgent }} />
+                )}
               </div>
             </React.Fragment>
           );
         })}
         <div ref={messagesEndRef} />
       </div>
+
+      {isScrolledUp && (
+        <button
+          type="button"
+          className="timeline-scroll-bottom-btn"
+          onClick={() => scrollToLatest(true)}
+          aria-label="Rolar para as mensagens mais recentes"
+        >
+          <ChevronDown size={14} aria-hidden="true" />
+          <span>Mais recentes</span>
+        </button>
+      )}
     </div>
   );
 }
+
+export const ConversationTimeline = React.memo(ConversationTimelineComponent);

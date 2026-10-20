@@ -1,0 +1,831 @@
+/* ==========================================================================
+   NORIA Notification Center (Compact & Responsive Refined Architecture)
+   Palette: NORIA Deep Navy (#0B1220, #0f182b, #142036) & Brand Cyan (#00E0FF)
+   ========================================================================== */
+
+.notification-center {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* --------------------------------------------------------------------------
+   Bell Trigger Button & Badges
+   -------------------------------------------------------------------------- */
+.notification-bell {
+  position: relative;
+  transition: all 150ms ease;
+}
+
+.notification-bell:hover {
+  background: var(--surface-soft);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.notification-bell.is-active,
+.notification-bell[aria-expanded="true"] {
+  background: var(--surface-soft);
+  border-color: var(--brand);
+  color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand), 0 0 12px var(--brand-glow);
+}
+
+.notification-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+  color: #ffffff;
+  font-size: 9.5px;
+  font-weight: 750;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  border: 1.5px solid var(--surface);
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.45);
+  animation: notificationBadgePop 180ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  user-select: none;
+  pointer-events: none;
+}
+
+.notification-connection-dot {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+  border: 1px solid var(--surface);
+  animation: notificationDotPulse 2s infinite ease-in-out;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   Compact Popover Container
+   -------------------------------------------------------------------------- */
+.notification-popover {
+  position: absolute;
+  z-index: 1000;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 350px;
+  max-width: calc(100vw - 20px);
+  background: rgba(15, 24, 43, 0.96);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  color: var(--text);
+  border: 1px solid rgba(0, 224, 255, 0.16);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(242, 244, 247, 0.05),
+    0 8px 24px rgba(0, 224, 255, 0.06);
+  overflow: hidden;
+  animation: notificationPopoverOpen 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top right;
+}
+
+/* Top cyan hairline shimmer */
+.notification-popover-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--brand) 30%, var(--violet) 70%, transparent 100%);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   Compact Header
+   -------------------------------------------------------------------------- */
+.notification-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px 8px;
+  gap: 10px;
+}
+
+.notification-heading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notification-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notification-heading h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.notification-unread-count-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 224, 255, 0.12);
+  border: 1px solid rgba(0, 224, 255, 0.25);
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.notification-tenant-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notification-close-btn {
+  width: 26px !important;
+  height: 26px !important;
+  flex-shrink: 0;
+  color: var(--muted);
+  border-radius: 6px;
+  transition: all 140ms ease;
+}
+
+.notification-close-btn:hover {
+  color: var(--text);
+  background: var(--surface-soft);
+  transform: rotate(90deg);
+}
+
+/* --------------------------------------------------------------------------
+   Compact Toolbar
+   -------------------------------------------------------------------------- */
+.notification-toolbar {
+  padding: 0 14px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.notification-toolbar-status {
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.notification-mark-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 224, 255, 0.06);
+  border: 1px solid rgba(0, 224, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--brand);
+  cursor: pointer;
+  transition: all 140ms ease;
+  white-space: nowrap;
+}
+
+.notification-mark-all-btn:hover:not(:disabled) {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #0B1220;
+  box-shadow: 0 0 10px var(--brand-glow);
+}
+
+.notification-mark-all-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Shimmer sync progress bar */
+.notification-sync-progress {
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--brand) 40%, var(--violet) 70%, transparent 100%);
+  background-size: 200% 100%;
+  animation: notificationProgressShimmer 1.1s linear infinite;
+}
+
+/* --------------------------------------------------------------------------
+   Scroll Area & List (Controlled Height)
+   -------------------------------------------------------------------------- */
+.notification-scroll {
+  max-height: min(390px, calc(100dvh - 170px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 8px;
+}
+
+.notification-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.notification-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.notification-scroll::-webkit-scrollbar-thumb {
+  background: rgba(242, 244, 247, 0.12);
+  border-radius: 999px;
+}
+
+.notification-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 224, 255, 0.3);
+}
+
+.notification-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   Compact Notification Card
+   -------------------------------------------------------------------------- */
+.notification-item {
+  display: flex;
+  gap: 9px;
+  padding: 10px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  position: relative;
+  transition: all 140ms ease;
+}
+
+.notification-item:hover {
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Unread State with high-contrast NORIA Cyan Accent */
+.notification-item.is-unread {
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.08) 0%, rgba(20, 32, 54, 0.85) 100%);
+  border-color: rgba(0, 224, 255, 0.28);
+  border-left: 3px solid var(--brand);
+}
+
+.notification-item.is-unread:hover {
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.12) 0%, rgba(26, 41, 68, 0.9) 100%);
+  border-color: rgba(0, 224, 255, 0.38);
+}
+
+/* Notification Type Icon Badge (28x28px compact) */
+.notification-type {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  margin-top: 1px;
+}
+
+.notification-type.closed {
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  color: var(--green);
+}
+
+.notification-type.uncertain {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  color: var(--amber);
+}
+
+.notification-type.review {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  color: var(--red);
+}
+
+/* Content */
+.notification-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.notification-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.notification-title h3 {
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.notification-unread-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 6px var(--brand);
+  flex-shrink: 0;
+  animation: notificationDotPulse 2s infinite ease-in-out;
+}
+
+.notification-desc {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  margin: 3px 0 5px;
+  overflow-wrap: break-word;
+}
+
+/* Contact tag */
+.notification-contact {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 224, 255, 0.06);
+  border: 1px solid rgba(0, 224, 255, 0.16);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-weight: 550;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+
+/* Meta status + time */
+.notification-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 10px;
+}
+
+.notification-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1.3;
+}
+
+.notification-status-badge.closed {
+  background: rgba(52, 211, 153, 0.12);
+  color: var(--green);
+}
+
+.notification-status-badge.uncertain {
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--amber);
+}
+
+.notification-status-badge.review {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--red);
+}
+
+.notification-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+
+/* Acknowledged Banner */
+.notification-ack {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(251, 191, 36, 0.08);
+  border-left: 2px solid var(--amber);
+  border-radius: 0 4px 4px 0;
+  padding: 3px 6px;
+  font-size: 10px;
+  color: #fde68a;
+  margin-top: 5px;
+  line-height: 1.3;
+}
+
+/* Item Action Buttons (Compact height: 24px) */
+.notification-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.notification-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: all 130ms ease;
+  user-select: none;
+}
+
+.notification-action-btn.primary {
+  background: var(--brand-soft);
+  border: 1px solid rgba(0, 224, 255, 0.28);
+  color: var(--brand);
+}
+
+.notification-action-btn.primary:hover {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #0B1220;
+  box-shadow: 0 0 10px var(--brand-glow);
+}
+
+.notification-action-btn.secondary {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.notification-action-btn.secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.notification-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   Technical Details Disclosure
+   -------------------------------------------------------------------------- */
+.notification-details {
+  font-size: 11px;
+  margin-top: 6px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.notification-details-summary {
+  cursor: pointer;
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 550;
+  color: var(--muted);
+  padding: 2px 0;
+  user-select: none;
+  transition: color 140ms ease;
+  list-style: none;
+}
+
+.notification-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.notification-details-summary:hover {
+  color: var(--brand);
+}
+
+.notification-details-chevron {
+  transition: transform 160ms ease;
+  flex-shrink: 0;
+}
+
+.notification-details[open] .notification-details-chevron {
+  transform: rotate(90deg);
+  color: var(--brand);
+}
+
+.notification-details-body {
+  margin-top: 4px;
+}
+
+.notification-dl {
+  margin: 4px 0 6px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  padding: 6px 8px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+}
+
+.notification-dl dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.notification-dl dd {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  margin: 0;
+  word-break: break-all;
+}
+
+.notification-details-disclaimer {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 9.5px;
+  color: var(--muted-soft);
+  margin: 3px 0 0;
+  line-height: 1.35;
+}
+
+/* --------------------------------------------------------------------------
+   Messages, Loading, Error & Empty States
+   -------------------------------------------------------------------------- */
+.notification-message {
+  padding: 20px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.notification-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--brand);
+}
+
+.notification-spin {
+  animation: notificationSpin 900ms linear infinite;
+}
+
+.notification-error {
+  background: rgba(248, 113, 113, 0.06);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: var(--radius-sm);
+  margin: 6px 2px;
+  padding: 12px;
+  text-align: left;
+}
+
+.notification-error-content {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.notification-error-icon {
+  color: var(--red);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.notification-error-text-wrap {
+  flex: 1;
+}
+
+.notification-error-title {
+  margin: 0 0 3px;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.notification-error-desc {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.notification-retry-btn {
+  margin-top: 10px;
+  height: 26px;
+  font-size: 11px;
+  gap: 5px;
+  padding: 0 10px;
+}
+
+/* Empty State */
+.notification-empty {
+  padding: 28px 14px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.notification-empty-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 224, 255, 0.16) 0%, rgba(15, 24, 43, 0.4) 100%);
+  border: 1px solid rgba(0, 224, 255, 0.22);
+  display: grid;
+  place-items: center;
+  color: var(--brand);
+  margin-bottom: 10px;
+  box-shadow: 0 0 16px rgba(0, 224, 255, 0.1);
+}
+
+.notification-empty p {
+  color: var(--text);
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notification-empty span {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 220px;
+  line-height: 1.4;
+}
+
+.notification-more {
+  display: block;
+  margin: 10px auto;
+  font-size: 11px;
+  height: 28px;
+  padding: 0 12px;
+}
+
+/* --------------------------------------------------------------------------
+   Compact Footer
+   -------------------------------------------------------------------------- */
+.notification-footer {
+  padding: 7px 14px;
+  font-size: 10px;
+  color: var(--muted-soft);
+  border-top: 1px solid var(--line);
+  background: rgba(7, 13, 24, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  text-align: center;
+}
+
+/* --------------------------------------------------------------------------
+   Focus Visibility
+   -------------------------------------------------------------------------- */
+.notification-center :is(button, summary):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+/* --------------------------------------------------------------------------
+   Keyframe Animations
+   -------------------------------------------------------------------------- */
+@keyframes notificationPopoverOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes notificationBadgePop {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  70% {
+    transform: scale(1.15);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes notificationDotPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes notificationProgressShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes notificationSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Adaptations (Mobile, Tablet, Shorter Viewports)
+   -------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .notification-popover {
+    position: fixed;
+    top: 60px;
+    right: 12px;
+    left: auto;
+    width: calc(100vw - 24px);
+    max-width: 350px;
+    border-radius: var(--radius-md);
+  }
+
+  .notification-scroll {
+    max-height: calc(100dvh - 145px);
+  }
+}
+
+@media (max-width: 380px) {
+  .notification-popover {
+    top: 54px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-width: none;
+  }
+
+  .notification-toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+@media (max-height: 600px) {
+  .notification-scroll {
+    max-height: calc(100dvh - 130px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-popover,
+  .notification-badge,
+  .notification-connection-dot,
+  .notification-sync-progress,
+  .notification-spin,
+  .notification-details-chevron {
+    animation: none !important;
+    transition: none !important;
+  }
+}

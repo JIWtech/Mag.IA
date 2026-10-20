@@ -74,6 +74,9 @@ async function sendCommand(command, payload, activeTenantSlug, { external = true
     throw new Error('n8n command returned invalid JSON');
   }
   if (data?.ok === false) {
+    if (String(data.error || '').startsWith('TURN_CONTROL_RPC_UNAVAILABLE:')) {
+      throw new Error('Não foi possível alterar o atendimento: a atualização do banco e do workflow está incompleta. A operação não foi confirmada.');
+    }
     throw new Error(data.error || 'n8n command failed');
   }
 

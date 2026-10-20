@@ -497,10 +497,10 @@ test('TEST 17: media stored + audio URL -> AudioMessagePlayer (playable)', () =>
   assert.equal(res.url, 'https://example.com/audio.ogg');
 });
 
-test('TEST 18: media stored + storagePath + URL ausente -> estado recuperável/retry, NÃO indisponível definitivo', () => {
+test('TEST 18: áudio stored antigo sem URL vira falha recuperável, não fica preparando para sempre', () => {
   const resolving = resolveAudioNoticeState({ status: 'stored', storagePath: 'audio.ogg' });
-  assert.equal(resolving.type, 'resolving');
-  assert.equal(resolving.text, 'Preparando áudio…');
+  assert.equal(resolving.type, 'retryable_error');
+  assert.equal(resolving.text, 'Não foi possível carregar este áudio agora.');
 
   const failed = resolveAudioNoticeState({ status: 'stored', storagePath: 'audio.ogg', loadState: 'retryable_error' });
   assert.equal(failed.type, 'retryable_error');
@@ -803,4 +803,3 @@ test('TEST I: audio + image em turnos próximos -> cada evento mantém seu próp
   assert.ok(imageMedia.storagePath.includes('MSG_IMAGE.jpg'));
   assert.notEqual(audioMedia.storagePath, imageMedia.storagePath);
 });
-

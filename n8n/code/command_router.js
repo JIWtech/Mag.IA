@@ -118,7 +118,24 @@ async function main(helpers) {
   }
 
   async function insertEvent(event) {
-    const { supabaseUrl } = supabaseConfig();
+    const { supabaseUrl, anonKey } = supabaseConfig();
+    if (event.channel_type === 'whatsapp' && (event.sender_type === 'human'
+      || ['conversation_closed', 'conversation_assigned', 'resume_ai', 'appointment_payment_confirmed', 'manual_reply', 'handoff_requested'].includes(event.service))) {
+      let saved;
+      try {
+        saved = await httpJson('POST', supabaseUrl + '/rest/v1/rpc/magia_record_turn_control_event', {
+          apikey: anonKey, Authorization: 'Bearer ' + bearerToken(), 'Content-Type': 'application/json',
+        }, { p_event: event });
+      } catch (error) {
+        const status = Number(error?.statusCode || error?.response?.status || error?.response?.statusCode || 0);
+        if (status === 404 || error?.response?.data?.code === 'PGRST202') {
+          throw new Error('TURN_CONTROL_RPC_UNAVAILABLE: O banco e o workflow precisam da implantação coordenada do controle de atendimento. A operação não foi confirmada.');
+        }
+        throw error;
+      }
+      if (!(Array.isArray(saved) ? saved[0] : saved)?.id) throw new Error('CONTROL_ORIGIN_NOT_PERSISTED');
+      return saved;
+    }
     return await httpJson('POST', supabaseUrl + '/rest/v1/channel_events', serviceHeaders('return=representation'), event);
   }
 

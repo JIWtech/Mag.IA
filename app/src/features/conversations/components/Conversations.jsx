@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -27,7 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import { CHANNEL_OPTIONS } from '../../../services/tenants/tenantAccess.js';
-import { canCloseConversation } from '../../../services/conversations/conversationLifecycle.js';
+import { canCloseConversation, requirePersistedClosure } from '../../../services/conversations/conversationLifecycle.js';
 import { sendN8nCommand } from '../../../services/integration.js';
 import {
   getStageLabel,
@@ -259,14 +259,19 @@ export function Conversations({
   }, [showCloseModal, showAssignModal, showFilterMenu, isSearchExpanded, ending]);
 
   const lastSelectedIdRef = useRef(null);
-  function scrollToLatest(force = false) {
+  const initialHistoryScrolledRef = useRef(new Set());
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
+
+  const scrollToLatest = useCallback((force = false) => {
     const stream = messageStreamRef.current;
     if (!stream) return;
     const isNearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 120;
     if (force || isNearBottom) {
       stream.scrollTop = stream.scrollHeight;
+      setIsScrolledUp(false);
     }
-  }
+  }, []);
+
 
   const channelCounts = useMemo(() => {
     const counts = { todos: conversations.length, telegram: 0, whatsapp: 0, instagram: 0 };
@@ -446,11 +451,35 @@ export function Conversations({
   const activeMessages = useMemo(() => {
     const full = selected?.externalConversationId ? fullHistoryByChat[selected.externalConversationId] : null;
     if (!full || !full.length) return selected?.messages || [];
-    const existingKeys = new Set(full.map((m) => m.eventId || `${m.at}-${m.text}`));
+
+    const selectedByKey = new Map();
+    for (const m of (selected?.messages || [])) {
+      const key = m.eventId || `${m.createdAt || m.at}-${m.from}-${m.text}`;
+      selectedByKey.set(key, m);
+    }
+
+    const mergedFull = full.map((m) => {
+      const key = m.eventId || `${m.createdAt || m.at}-${m.from}-${m.text}`;
+      const fresh = selectedByKey.get(key);
+      if (!fresh) return m;
+      const mergedMedia = fresh.media ? {
+        ...(m.media || {}),
+        ...fresh.media,
+        url: fresh.media.url || m.media?.url || '',
+        thumbnailUrl: fresh.media.thumbnailUrl || m.media?.thumbnailUrl || '',
+      } : m.media;
+      return {
+        ...m,
+        ...fresh,
+        media: mergedMedia,
+      };
+    });
+
+    const existingKeys = new Set(full.map((m) => m.eventId || `${m.createdAt || m.at}-${m.from}-${m.text}`));
     const newRealtime = (selected?.messages || []).filter(
-      (m) => !existingKeys.has(m.eventId || `${m.at}-${m.text}`)
+      (m) => !existingKeys.has(m.eventId || `${m.createdAt || m.at}-${m.from}-${m.text}`)
     );
-    return newRealtime.length ? [...full, ...newRealtime] : full;
+    return newRealtime.length ? [...mergedFull, ...newRealtime] : mergedFull;
   }, [selected?.externalConversationId, selected?.messages, fullHistoryByChat]);
 
   const groupedMessages = useMemo(() => {
@@ -459,6 +488,14 @@ export function Conversations({
       selectedOwner: validOwnerAgent?.name || selected?.owner || 'Operador',
     });
   }, [activeMessages, selected?.contact, validOwnerAgent?.name, selected?.owner]);
+
+  const storeLocation = useMemo(() => {
+    const locations = tenantSettings?.settings?.business_facts?.locations;
+    if (Array.isArray(locations) && locations.length > 0) {
+      return locations[0];
+    }
+    return null;
+  }, [tenantSettings]);
 
   const composerInputRef = useRef(null);
 
@@ -721,13 +758,41 @@ export function Conversations({
   }, [conversations, initialConversationId, onInitialConversationOpened]);
 
   useEffect(() => {
-    const isNewConversation = lastSelectedIdRef.current !== selected?.id;
-    lastSelectedIdRef.current = selected?.id;
-    scrollToLatest(isNewConversation);
-    const timer = window.setTimeout(() => scrollToLatest(isNewConversation), 120);
+    if (!selected?.id) return;
+    const extId = selected.externalConversationId || selected.id;
+    const isNewConversation = lastSelectedIdRef.current !== selected.id;
+    const hasHistory = Boolean(fullHistoryByChat[extId]?.length);
+    const hasScrolledHistory = initialHistoryScrolledRef.current.has(extId);
 
-    return () => window.clearTimeout(timer);
-  }, [selected?.id, activeMessages.length]);
+    // Deve forçar rolagem na abertura de nova conversa OU quando o histórico completo chegar
+    const shouldForce = isNewConversation || (hasHistory && !hasScrolledHistory);
+
+    lastSelectedIdRef.current = selected.id;
+    if (hasHistory) {
+      initialHistoryScrolledRef.current.add(extId);
+    }
+
+    scrollToLatest(shouldForce);
+    const rafId = requestAnimationFrame(() => scrollToLatest(shouldForce));
+    const timer = window.setTimeout(() => scrollToLatest(shouldForce), 50);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(timer);
+    };
+  }, [selected?.id, selected?.externalConversationId, activeMessages.length, fullHistoryByChat, scrollToLatest]);
+
+  useEffect(() => {
+    const stream = messageStreamRef.current;
+    if (!stream) return undefined;
+    const handleScroll = () => {
+      const distanceFromBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+      setIsScrolledUp(distanceFromBottom > 240);
+    };
+    stream.addEventListener('scroll', handleScroll, { passive: true });
+    return () => stream.removeEventListener('scroll', handleScroll);
+  }, [selected?.id]);
+
 
   async function sendManualReply() {
     const text = draft.trim();
@@ -772,7 +837,7 @@ export function Conversations({
     setSendError('');
     const activeOperator = validOwnerAgent?.name || (agentsList?.length === 1 ? agentsList[0]?.name : null) || 'Operador NORIA';
     try {
-      await sendN8nCommand('close_conversation', {
+      const result = await sendN8nCommand('close_conversation', {
         channel_type: selected.channelType || selected.channel.toLowerCase(),
         external_conversation_id: selected.externalConversationId || selected.id.replace(/^conv-/, ''),
         contact_name: selected.contact,
@@ -780,6 +845,7 @@ export function Conversations({
         sent_by_user: activeOperator,
         reason: 'Atendimento finalizado pelo operador',
       }, tenantSlug);
+      requirePersistedClosure(result);
       setClosedLocally((current) => ({
         ...current,
         [selectedCloseKey]: {
@@ -929,6 +995,8 @@ export function Conversations({
             messagesEndRef={messagesEndRef}
             onRetryAudioMedia={onRetryAudioMedia}
             scrollToLatest={scrollToLatest}
+            isScrolledUp={isScrolledUp}
+            storeLocation={storeLocation}
           />
           <ConversationComposer
             activeEmojiTab={activeEmojiTab}

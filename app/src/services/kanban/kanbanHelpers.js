@@ -71,6 +71,9 @@ export const KANBAN_KEY_ALIASES = {
   agenda: 'agendamentos',
   concluido: 'conversas_andamento',
   concluidos: 'conversas_andamento',
+  fila_de_financiamento: 'sales_financing',
+  financiamento: 'sales_financing',
+  sales_financing: 'sales_financing',
 };
 
 export function normalizeKey(value) {

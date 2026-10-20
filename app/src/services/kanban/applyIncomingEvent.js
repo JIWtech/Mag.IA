@@ -11,6 +11,59 @@ import { normalizeAvatarUrl } from '../contacts/contactIdentity.js';
 import { cleanAgentName } from '../agents/agentNames.js';
 import { canEventMoveOwnershipToAi } from '../conversations/ownershipEvidence.js';
 
+import { findKanbanColumn } from './stageResolution.js';
+import { isGenesisSalesTenant } from './commercialStages.js';
+
+function resolveEventTargetColumn(event, card, resolvedTenant, columns) {
+  const payload = asObject(event?.raw_payload);
+  const isGenesis = isGenesisSalesTenant(resolvedTenant);
+
+  // 1. Explicit manual transition in raw_payload
+  const manualTransition = payload?.kanban_transition?.to_column;
+  if (manualTransition) {
+    const col = findKanbanColumn(columns, manualTransition);
+    if (col) return col;
+  }
+
+  // 2. Closed conversation
+  const isClosed = normalizeStage(event?.stage) === 'Finalizado'
+    || event?.service === 'conversation_closed'
+    || event?.ai_provider === 'conversation_closed'
+    || payload?.event_type === 'conversation_closed';
+  if (isClosed) {
+    const closedKey = isGenesis ? 'sales_closed' : 'finalizadas';
+    const col = findKanbanColumn(columns, closedKey);
+    if (col) return col;
+  }
+
+  // 3. Sales stage from raw_payload (e.g. sales_financing, sales_human, sales_appraisal, sales_hot, sales_qualifying)
+  const rawSalesStage = payload?.sales_stage;
+  if (rawSalesStage) {
+    const col = findKanbanColumn(columns, rawSalesStage);
+    if (col) return col;
+  }
+
+  // 4. Handoff or assignment to human
+  const isHandoff = Boolean(event?.handoff)
+    || event?.service === 'handoff_requested'
+    || event?.service === 'conversation_assigned'
+    || normalizeStage(event?.stage) === 'Atendimento humano'
+    || event?.stage === 'sales_human';
+  if (isHandoff) {
+    const humanKey = isGenesis ? 'sales_human' : 'conversas_humanos';
+    const col = findKanbanColumn(columns, humanKey) || findKanbanColumn(columns, 'com_humano');
+    if (col) return col;
+  }
+
+  // 5. Stage specified in event.stage (if present and maps to a column)
+  if (event?.stage) {
+    const col = findKanbanColumn(columns, event.stage);
+    if (col) return col;
+  }
+
+  return null;
+}
+
 export function applyIncomingEventToKanban(columns = [], event, tenantSlug = '', teamAgents = []) {
   if (!event || isInternalOperationalEvent(event) || !Array.isArray(columns)) return columns;
   const channelType = normalizeChannel(event.channel_type);
@@ -58,101 +111,141 @@ export function applyIncomingEventToKanban(columns = [], event, tenantSlug = '',
   }
   const lastAt = formatDate(event.created_at);
 
-  let modified = false;
-  const nextColumns = columns.map((col) => {
-    let colModified = false;
-    const nextCards = (col.cards || []).map((card) => {
-      const matches =
-        card.id === `card-${event.id}` ||
-        card.id === conversationId ||
-        card.id === legacyConversationId ||
-        (card.canonicalKey && card.canonicalKey === canonicalKey) ||
-        (normalizedExtId && card.normalizedExternalId && card.normalizedExternalId === normalizedExtId) ||
-        (event.external_conversation_id && (card.externalConversationId === event.external_conversation_id || card.normalizedExternalId === normalizedExtId)) ||
-        (event.contact_handle && card.contactHandle === event.contact_handle);
-      if (matches) {
-        colModified = true;
-        modified = true;
-        const incomingPayloadAvatar = extractPayloadAvatar(event);
-        const incomingEventAvatar = normalizeAvatarUrl(event.avatar_url);
+  let sourceColIndex = -1;
+  let cardIndex = -1;
+  let matchedCard = null;
 
-        const payload = asObject(event.raw_payload);
-        const assignee = asObject(payload.assignee);
-        const candidateAssignee = assignee.name || payload.assigned_to || (event.service === 'conversation_assigned' ? event.sent_by_user : null);
-        const newAssigneeName = cleanAgentName(candidateAssignee);
-        const hasExplicitAssignment = Boolean(newAssigneeName);
+  for (let cIdx = 0; cIdx < columns.length; cIdx += 1) {
+    const col = columns[cIdx];
+    const idx = (col.cards || []).findIndex((card) => (
+      card.id === `card-${event.id}` ||
+      card.id === conversationId ||
+      card.id === legacyConversationId ||
+      (card.canonicalKey && card.canonicalKey === canonicalKey) ||
+      (normalizedExtId && card.normalizedExternalId && card.normalizedExternalId === normalizedExtId) ||
+      (event.external_conversation_id && (card.externalConversationId === event.external_conversation_id || card.normalizedExternalId === normalizedExtId)) ||
+      (event.contact_handle && card.contactHandle === event.contact_handle)
+    ));
+    if (idx >= 0) {
+      sourceColIndex = cIdx;
+      cardIndex = idx;
+      matchedCard = col.cards[idx];
+      break;
+    }
+  }
 
-        const isHandoff = Boolean(event.handoff)
-          || event.service === 'handoff_requested'
-          || event.service === 'conversation_assigned'
-          || normalizeStage(event.stage) === 'Atendimento humano'
-          || payload?.kanban_transition?.to_column === 'sales_human'
-          || payload?.kanban_transition?.to_column === 'com_humano'
-          || payload?.kanban_transition?.to_column === 'conversas_humanos';
-        const eventTime = Date.parse(event.created_at || '');
-        const cardTime = Date.parse(card.lastActivityAt || '');
-        const isNewerControl = !Number.isFinite(cardTime)
-          || (Number.isFinite(eventTime) && eventTime >= cardTime);
+  if (!matchedCard) return columns;
 
-        let nextOwner = card.owner;
-        let nextOwnerId = card.ownerId;
-        let nextOwnerKind = card.ownerKind;
+  const incomingPayloadAvatar = extractPayloadAvatar(event);
+  const incomingEventAvatar = normalizeAvatarUrl(event.avatar_url);
 
-        if (isNewerControl && canEventMoveOwnershipToAi({
-          status: card.ownerKind === 'agent' ? 'atendimento_humano' : 'ia_ativa',
-          handoff: card.ownerKind === 'agent',
-          currentSessionId: card.sessionId || null,
-        }, event, event.stage)) {
-          nextOwner = 'Assistente IA';
-          nextOwnerId = null;
-          nextOwnerKind = 'ai';
-        } else if (isNewerControl && hasExplicitAssignment) {
-          nextOwner = newAssigneeName;
-          nextOwnerId = assignee.id ? String(assignee.id) : null;
-          nextOwnerKind = 'agent';
-        } else if (isNewerControl && isHandoff && (card.ownerKind === 'ai' || card.owner === 'Assistente IA')) {
-          let activeAgents = Array.isArray(teamAgents) && teamAgents.length ? teamAgents : null;
-          if (!activeAgents && typeof window !== 'undefined' && window.localStorage && resolvedTenant) {
-            try {
-              const cached = window.localStorage.getItem(`magia:team-agents:${resolvedTenant}`);
-              if (cached) activeAgents = JSON.parse(cached);
-            } catch (_) {}
-          }
-          const resolvedAgents = Array.isArray(activeAgents) ? activeAgents : [];
-          const humanFallback = resolveConversationOwnerDetails({
-            explicitOwner: null,
-            activeAgents: resolvedAgents,
-            isHumanControlled: true,
-          });
-          nextOwner = humanFallback.name;
-          nextOwnerId = humanFallback.id;
-          nextOwnerKind = humanFallback.kind;
-        }
+  const assignee = asObject(payload.assignee);
+  const candidateAssignee = assignee.name || payload.assigned_to || (event.service === 'conversation_assigned' ? event.sent_by_user : null);
+  const newAssigneeName = cleanAgentName(candidateAssignee);
+  const hasExplicitAssignment = Boolean(newAssigneeName);
 
+  const isHandoff = Boolean(event.handoff)
+    || event.service === 'handoff_requested'
+    || event.service === 'conversation_assigned'
+    || normalizeStage(event.stage) === 'Atendimento humano'
+    || payload?.kanban_transition?.to_column === 'sales_human'
+    || payload?.kanban_transition?.to_column === 'com_humano'
+    || payload?.kanban_transition?.to_column === 'conversas_humanos';
+  const eventTime = Date.parse(event.created_at || '');
+  const cardTime = Date.parse(matchedCard.lastActivityAt || '');
+  const isNewerControl = !Number.isFinite(cardTime)
+    || (Number.isFinite(eventTime) && eventTime >= cardTime);
+
+  let nextOwner = matchedCard.owner;
+  let nextOwnerId = matchedCard.ownerId;
+  let nextOwnerKind = matchedCard.ownerKind;
+
+  if (isNewerControl && canEventMoveOwnershipToAi({
+    status: matchedCard.ownerKind === 'agent' ? 'atendimento_humano' : 'ia_ativa',
+    handoff: matchedCard.ownerKind === 'agent',
+    currentSessionId: matchedCard.sessionId || null,
+  }, event, event.stage)) {
+    nextOwner = 'Assistente IA';
+    nextOwnerId = null;
+    nextOwnerKind = 'ai';
+  } else if (isNewerControl && hasExplicitAssignment) {
+    nextOwner = newAssigneeName;
+    nextOwnerId = assignee.id ? String(assignee.id) : null;
+    nextOwnerKind = 'agent';
+  } else if (isNewerControl && isHandoff && (matchedCard.ownerKind === 'ai' || matchedCard.owner === 'Assistente IA')) {
+    let activeAgents = Array.isArray(teamAgents) && teamAgents.length ? teamAgents : null;
+    if (!activeAgents && typeof window !== 'undefined' && window.localStorage && resolvedTenant) {
+      try {
+        const cached = window.localStorage.getItem(`magia:team-agents:${resolvedTenant}`);
+        if (cached) activeAgents = JSON.parse(cached);
+      } catch (_) {}
+    }
+    const resolvedAgents = Array.isArray(activeAgents) ? activeAgents : [];
+    const humanFallback = resolveConversationOwnerDetails({
+      explicitOwner: null,
+      activeAgents: resolvedAgents,
+      isHumanControlled: true,
+    });
+    nextOwner = humanFallback.name;
+    nextOwnerId = humanFallback.id;
+    nextOwnerKind = humanFallback.kind;
+  }
+
+  const updatedCard = {
+    ...matchedCard,
+    subtitle: (isReaction || isSecret) ? matchedCard.subtitle : (text || mediaPreview(media) || matchedCard.subtitle),
+    avatarUrl: incomingPayloadAvatar || matchedCard.avatarUrl || incomingEventAvatar || null,
+    owner: nextOwner,
+    ownerId: nextOwnerId,
+    ownerKind: nextOwnerKind,
+    lastAt: lastAt || matchedCard.lastAt,
+    lastActivityAt: event.created_at || matchedCard.lastActivityAt,
+  };
+
+  const targetCol = resolveEventTargetColumn(event, updatedCard, resolvedTenant, columns);
+  const targetColIndex = targetCol ? columns.findIndex((col) => col.id === targetCol.id) : -1;
+
+  if (targetColIndex >= 0 && targetColIndex !== sourceColIndex) {
+    const isGenesis = isGenesisSalesTenant(resolvedTenant);
+    updatedCard.stage = targetCol.title || targetCol.name || updatedCard.stage;
+    if (isGenesis) {
+      updatedCard.salesStageKey = targetCol.automationKey || targetCol.id;
+    }
+
+    const nextColumns = columns.map((col, cIdx) => {
+      if (cIdx === sourceColIndex) {
+        const remainingCards = col.cards.filter((_, idx) => idx !== cardIndex);
         return {
-          ...card,
-          subtitle: (isReaction || isSecret) ? card.subtitle : (text || mediaPreview(media) || card.subtitle),
-          avatarUrl: incomingPayloadAvatar || card.avatarUrl || incomingEventAvatar || null,
-          owner: nextOwner,
-          ownerId: nextOwnerId,
-          ownerKind: nextOwnerKind,
-          lastAt: lastAt || card.lastAt,
-          lastActivityAt: event.created_at || card.lastActivityAt,
+          ...col,
+          cards: sortKanbanCardsByConversationActivity(remainingCards),
         };
       }
-      return card;
+      if (cIdx === targetColIndex) {
+        const newCards = [updatedCard, ...col.cards];
+        return {
+          ...col,
+          cards: sortKanbanCardsByConversationActivity(newCards),
+        };
+      }
+      return col;
     });
 
-    if (colModified) {
+    return nextColumns;
+  }
+
+  const nextColumns = columns.map((col, cIdx) => {
+    if (cIdx === sourceColIndex) {
+      const updatedCards = [...col.cards];
+      updatedCards[cardIndex] = updatedCard;
       return {
         ...col,
-        cards: sortKanbanCardsByConversationActivity(nextCards),
+        cards: sortKanbanCardsByConversationActivity(updatedCards),
       };
     }
     return col;
   });
 
-  return modified ? nextColumns : columns;
+  return nextColumns;
 }
 
 export function sortKanbanCardsByConversationActivity(cards = []) {

@@ -3,10 +3,10 @@ import { formatDate } from '../../utils/dateFormatting.js';
 import { applyConversationLifecycle } from './conversationLifecycle.js';
 import { isInternalOperationalEvent } from '../timeline/eventClassification.js';
 import { canonicalConversationKey, normalizeChannel, normalizeExternalConversationId } from '../identity/conversationIdentity.js';
-import { getStageLabel } from '../kanban/stageResolution.js';
+import { findKanbanColumn, getStageLabel } from '../kanban/stageResolution.js';
 import { normalizeMedia } from '../media/mediaNormalization.js';
-import { isGeneratedMediaLabel } from '../media/mediaPresentation.js';
-import { normalizeAudioTranscription, normalizeLocation, resolveEventMessagePreview } from './conversationPresentation.js';
+import { normalizeAudioTranscription, normalizeLocation, normalizeStage, resolveConversationOwnerDetails, resolveEventMessagePreview, resolveEventVisibleText } from './conversationPresentation.js';
+import { cleanAgentName } from '../agents/agentNames.js';
 import { getUsefulTrustedContactName, isUsefulContactName } from '../contacts/contactNames.js';
 import { conversationPhoneFallback } from '../contacts/contactPhones.js';
 import { extractPayloadAvatar } from '../contacts/contactPayload.js';
@@ -51,8 +51,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
   const media = normalizeMedia(event.raw_payload, event);
   const audioTranscription = normalizeAudioTranscription(event.raw_payload, event);
   const location = normalizeLocation(event.raw_payload, event);
-  const text = event.message_text || media?.caption || '';
-  const visibleText = media && isGeneratedMediaLabel(text) ? '' : text;
+  const visibleText = resolveEventVisibleText(event, media);
   const at = formatDate(event.created_at);
   const payload = asObject(event.raw_payload);
 
@@ -92,11 +91,18 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
           && m.createdAt === msg.createdAt
           && m.from === msg.from);
       if (existingMsgIndex >= 0) {
+        const prevMedia = newMessages[existingMsgIndex].media;
+        const mergedMedia = media ? {
+          ...prevMedia,
+          ...media,
+          url: media.url || prevMedia?.url || '',
+          thumbnailUrl: media.thumbnailUrl || prevMedia?.thumbnailUrl || '',
+        } : prevMedia;
         newMessages[existingMsgIndex] = {
           ...newMessages[existingMsgIndex],
           status: event.delivery_status || newMessages[existingMsgIndex].status,
           text: msg.text || newMessages[existingMsgIndex].text,
-          media: media || newMessages[existingMsgIndex].media,
+          media: mergedMedia,
           audioTranscription: audioTranscription || newMessages[existingMsgIndex].audioTranscription || null,
           location: (location || newMessages[existingMsgIndex].location) ? {
             ...(newMessages[existingMsgIndex].location || {}),
@@ -125,11 +131,18 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
           && m.createdAt === msg.createdAt
           && m.from === 'contact');
       if (existingMsgIndex >= 0) {
+        const prevMedia = newMessages[existingMsgIndex].media;
+        const mergedMedia = media ? {
+          ...prevMedia,
+          ...media,
+          url: media.url || prevMedia?.url || '',
+          thumbnailUrl: media.thumbnailUrl || prevMedia?.thumbnailUrl || '',
+        } : prevMedia;
         newMessages[existingMsgIndex] = {
           ...newMessages[existingMsgIndex],
           status: event.delivery_status || newMessages[existingMsgIndex].status,
           text: msg.text || newMessages[existingMsgIndex].text,
-          media: media || newMessages[existingMsgIndex].media,
+          media: mergedMedia,
           audioTranscription: audioTranscription || newMessages[existingMsgIndex].audioTranscription || null,
           location: (location || newMessages[existingMsgIndex].location) ? {
             ...(newMessages[existingMsgIndex].location || {}),
@@ -231,6 +244,47 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
     // remain in the timeline, but must not replace the current control state.
     if (isNewer || Number.isNaN(eventTime)) {
       applyConversationLifecycle(updated, event, stageName);
+
+      const assignee = asObject(payload.assignee);
+      const candidateAssignee = assignee.name || payload.assigned_to || (event.service === 'conversation_assigned' ? event.sent_by_user : null);
+      const newAssigneeName = cleanAgentName(candidateAssignee);
+      if (newAssigneeName) {
+        updated.owner = newAssigneeName;
+        updated.ownerId = assignee.id ? String(assignee.id) : (payload.assignee_id ? String(payload.assignee_id) : updated.ownerId);
+        updated.ownerKind = 'agent';
+        updated.status = 'atendimento_humano';
+      } else {
+        const isHumanHandoff = Boolean(event.handoff)
+          || event.service === 'handoff_requested'
+          || event.service === 'conversation_assigned'
+          || normalizeStage(event.stage) === 'Atendimento humano'
+          || event.stage === 'sales_human';
+        if (isHumanHandoff && (updated.ownerKind === 'ai' || updated.owner === 'Assistente IA' || !updated.owner)) {
+          const resolvedOwner = resolveConversationOwnerDetails({
+            explicitOwner: null,
+            activeAgents: teamAgents,
+            isHumanControlled: true,
+          });
+          if (resolvedOwner?.name) {
+            updated.owner = resolvedOwner.name;
+            updated.ownerId = resolvedOwner.id || null;
+            updated.ownerKind = resolvedOwner.kind;
+          }
+        }
+      }
+
+      const stageKey = payload?.sales_stage || payload?.sales_stage_key || event.salesStageKey;
+      if (stageKey) {
+        updated.salesStageKey = stageKey;
+        const matchingCol = findKanbanColumn(kanbanColumns, stageKey);
+        if (matchingCol) {
+          updated.stage = matchingCol.title || matchingCol.name || updated.stage;
+        }
+      }
+    }
+
+    if (payload?.payment_mode === 'financing' || payload?.state?.payment_mode === 'financing' || payload?.financing || payload?.sales_stage === 'sales_financing' || payload?.sales_stage_key === 'sales_financing' || event.service === 'sales_financing' || event.stage === 'sales_financing' || event.stage === 'Fila de financiamento') {
+      updated.tags = Array.from(new Set([...(updated.tags || []), 'Financiamento'])).filter(Boolean);
     }
 
     updated.waitingForFollowUp = isConversationWaitingForFollowUp(updated);

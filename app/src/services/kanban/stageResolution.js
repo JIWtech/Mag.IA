@@ -15,7 +15,7 @@ export function findKanbanColumn(columns, targetKey) {
     normalizeKey(column.title) === targetNorm ||
     normalizeKey(column.name) === targetNorm ||
     String(column.id) === String(targetKey) ||
-    String(column.boardColumnId) === String(targetKey)
+    String(column.boardColumnId) === String(targetKey) || (targetKey === 'sales_human' && (column.id === 'conversas_humanos' || column.automationKey === 'conversas_humanos' || column.automation_key === 'conversas_humanos'))
   ));
 }
 

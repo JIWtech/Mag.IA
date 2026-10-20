@@ -199,11 +199,11 @@ export async function loadAvailableTenants(fallbackTenants = []) {
   return loadUserTenants(supabase);
 }
 
-export function subscribeToClientEvents(onChange, activeTenantSlug) {
+export function subscribeToClientEvents(onChange, activeTenantSlug, activeTenantId) {
   const supabase = getClient();
   if (!supabase || !activeTenantSlug) return () => { };
 
-  let channel = supabase
+  const channel = supabase
     .channel(`tenant-events:${activeTenantSlug}`)
     .on(
       'postgres_changes',
@@ -235,13 +235,40 @@ export function subscribeToClientEvents(onChange, activeTenantSlug) {
     );
 
   channel.subscribe((status, err) => {
+    if (status === 'CHANNEL_ERROR') {
+      console.warn(`[Realtime] Erro no canal tenant-events:${activeTenantSlug}`, err);
+    }
+  });
+
+  // Canal secundário opcional para sales_leads: isolado para não degradar channel_events
+  // caso a tabela sales_leads ainda não esteja incluída na publicação supabase_realtime.
+  let leadsChannel = null;
+  if (activeTenantId) {
+    leadsChannel = supabase
+      .channel(`tenant-leads:${activeTenantSlug}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'sales_leads',
+          filter: `tenant_id=eq.${activeTenantId}`,
+        },
+        (payload) => onChange?.({ table: 'sales_leads', ...payload }),
+      );
+
+    leadsChannel.subscribe((status) => {
       if (status === 'CHANNEL_ERROR') {
-        console.warn(`[Realtime] Erro no canal tenant-events:${activeTenantSlug}`, err);
+        // Falha tolerada e silenciosa se a tabela não estiver na publicação do banco
       }
     });
+  }
 
   return () => {
     supabase.removeChannel(channel);
+    if (leadsChannel) {
+      supabase.removeChannel(leadsChannel);
+    }
   };
 }
 

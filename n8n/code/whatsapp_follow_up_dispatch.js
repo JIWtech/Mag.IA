@@ -74,6 +74,52 @@ function salesFollowUp(job, settings) {
   return { reply: text.trim(), model: null, usage: {} };
 }
 
+// Same durable reservation contract as the CORE (magia_gemini_reserve): the
+// tenant's daily Gemini budget and, when configured, the shared RPM/TPM/RPD/
+// concurrency controller. No Gemini HTTP call happens without a reservation.
+function geminiFollowUpRateConfig() {
+  const scope = env('GEMINI_RATE_SCOPE');
+  const maxRpm = Number(env('GEMINI_MAX_RPM', '0')), maxTpm = Number(env('GEMINI_MAX_TPM', '0')), maxRpd = Number(env('GEMINI_MAX_RPD', '0'));
+  const required = env('GEMINI_RATE_CONTROL_REQUIRED', 'false').toLowerCase() === 'true';
+  const distributed = /^[a-zA-Z0-9._:-]{1,120}$/.test(scope) && [maxRpm, maxTpm, maxRpd].every(value => Number.isFinite(value) && value > 0);
+  return { scope, maxRpm, maxTpm, maxRpd, required, distributed };
+}
+async function reserveGeminiFollowUp(job, settings, model, payload) {
+  const config = geminiFollowUpRateConfig();
+  // Every pre-send quota/controller refusal carries the same marker so deferred jobs are queryable
+  // (follow_up_jobs.error like 'GEMINI_QUOTA_DEFERRED:%'). The job is NOT retried or resent automatically.
+  if (config.required && !config.distributed) throw new Error('GEMINI_QUOTA_DEFERRED:controller_not_configured');
+  const configuredLimit = Number(settings.gemini_daily_limit ?? 500);
+  const dailyLimit = Number.isFinite(configuredLimit) ? Math.trunc(configuredLimit) : 500;
+  const leaseId = 'followup:' + String(job.id) + ':' + Date.now() + ':' + Math.random().toString(36).slice(2, 10);
+  const leaseTtlMs = Math.max(20000, Math.min(Number(env('GEMINI_LEASE_TTL_MS', '30000')) || 30000, 120000));
+  const cooldownMs = Math.max(1000, Math.min(Number(env('GEMINI_CIRCUIT_COOLDOWN_MS', '30000')) || 30000, 300000));
+  let estimated = 1000;
+  try {
+    estimated = Math.max(1, Math.ceil(JSON.stringify(payload || {}).length / 3.5)
+      + Math.min(Math.max(Number(payload?.generationConfig?.maxOutputTokens || 512), 1), 8192));
+  } catch (_) { }
+  let result;
+  try {
+    result = await rpc('magia_gemini_reserve', {
+    p_tenant_id: job.tenant_id, p_daily_limit: dailyLimit, p_model: model, p_lease_id: leaseId, p_estimated_tokens: estimated,
+    ...(config.distributed ? {
+      p_scope: config.scope, p_max_concurrent: Math.max(1, Math.min(Number(env('GEMINI_MAX_CONCURRENT_CALLS', '2')) || 2, 20)),
+      p_max_rpm: config.maxRpm, p_max_tpm: config.maxTpm, p_max_rpd: config.maxRpd,
+      p_lease_ttl_ms: leaseTtlMs, p_probe_cooldown_ms: cooldownMs,
+    } : {}),
+    });
+  } catch (_) { throw new Error('GEMINI_QUOTA_DEFERRED:controller_unavailable'); }
+  if (!result || result.allowed !== true) throw new Error('GEMINI_QUOTA_DEFERRED:' + String(result?.reason || 'unavailable').slice(0, 60));
+  return config.distributed ? { scope: config.scope, model, lease_id: leaseId } : null;
+}
+async function releaseGeminiFollowUp(lease, outcome) {
+  if (!lease) return;
+  try {
+    await rpc('magia_gemini_release', { p_scope: lease.scope, p_model: lease.model, p_lease_id: lease.lease_id, p_outcome: outcome, p_cooldown_ms: 30000 });
+  } catch (_) { }
+}
+
 async function generate(job, settings, history) {
   const model = String(settings.ai_model || env('GEMINI_MODEL', 'gemini-2.5-flash')).trim();
   const apiKey = env('GEMINI_API_KEY');
@@ -91,13 +137,22 @@ async function generate(job, settings, history) {
       'Retorne JSON com apenas a chave reply.'
     ],
   };
-  const body = await request.call(this, 'POST', 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent',
-    { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, {
+  const geminiPayload = {
       system_instruction: { parts: [{ text: prompt }] },
       contents: [{ role: 'user', parts: [{ text: JSON.stringify(input) }] }],
       generationConfig: { temperature: 0.35, maxOutputTokens: 500, responseMimeType: 'application/json',
         responseSchema: { type: 'OBJECT', properties: { reply: { type: 'STRING' } }, required: ['reply'] } },
-    });
+  };
+  const geminiLease = await reserveGeminiFollowUp(job, settings, model, geminiPayload);
+  let body;
+  try {
+    body = await request.call(this, 'POST', 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent',
+      { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, geminiPayload);
+  } catch (error) {
+    await releaseGeminiFollowUp(geminiLease, 'released');
+    throw error;
+  }
+  await releaseGeminiFollowUp(geminiLease, 'success');
   const candidate = body?.candidates?.[0];
   if (!candidate || candidate.finishReason !== 'STOP') throw new Error('Gemini nao concluiu o follow-up');
   const text = candidate.content?.parts?.filter(part => !part.thought).map(part => part.text || '').join('') || '';

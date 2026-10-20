@@ -1,6 +1,7 @@
 import React from 'react';
 import { Building2, LogOut, Menu, RefreshCcw } from 'lucide-react';
 import { NoriaSelect } from '../components/NoriaSelect';
+import { NotificationCenter } from '../features/notifications/NotificationCenter';
 
 export function AppTopbar({
   active,
@@ -16,6 +17,10 @@ export function AppTopbar({
   selectedTenant = {},
   setMobileNavOpen,
   setTenantSlug,
+  notificationTenantId,
+  notificationUserId,
+  notificationConversations,
+  onOpenNotificationConversation,
 }) {
   const handleOpenMobileNav = () => {
     if (onOpenMobileNav) {
@@ -59,6 +64,14 @@ export function AppTopbar({
           title={selectedTenant?.name}
         />
         <div className="topbar-utility-buttons">
+          <NotificationCenter
+            key={JSON.stringify([notificationTenantId, notificationUserId])}
+            tenantId={notificationTenantId}
+            userId={notificationUserId}
+            tenantName={selectedTenant?.name}
+            conversations={notificationConversations}
+            onOpenConversation={onOpenNotificationConversation}
+          />
           <button className="icon-button" type="button" title="Atualizar" aria-label="Atualizar" onClick={refreshData}>
             <RefreshCcw size={17} className={loading ? 'spin' : ''} />
           </button>

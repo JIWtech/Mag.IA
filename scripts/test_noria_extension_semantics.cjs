@@ -63,7 +63,17 @@ test('build_context e financing.evaluate propagam semântica de financiamento', 
   const s = {valid:true,primary_intent:'financing',secondary_intents:[]};
   assert.equal((await operation('commercial.build_context', {semantic_intent:s})).data.financing.active,true);
   assert.equal((await operation('financing.evaluate', {semantic_intent:s})).data.is_financing_question,true);
-  assert.equal((await operation('commercial.build_context', {text:'financiamento'})).data.financing.active,false);
+  for (const text of [
+    'Quero saber sobre financiamento.',
+    'Não quero financiamento.',
+    'Ele escreveu "financiamento" no anúncio.',
+    'E se um dia eu fizesse financiamento?',
+    'Agora quero falar de troca, não de financiamento.',
+  ]) {
+    const result = await operation('commercial.build_context', {text});
+    assert.equal(result.data.financing.active,false, 'texto bruto não pode decidir intenção: ' + text);
+  }
+  assert.equal((await operation('financing.evaluate', {text:'financiamento',semantic_intent:{...s,valid:false}})).data.is_financing_question,false);
 });
 test('operação permanece isolada ao tenant Gênesis', async () => {
   const result = await operation('auction.evaluate_handoff', {tenant_slug:'royal_4x4',semantic_intent:semantic('customer_vehicle_offer')});

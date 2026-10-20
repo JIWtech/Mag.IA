@@ -53,6 +53,7 @@ export function eventsToKanban(
   const eventCardsByConversation = new Map();
 
   for (const event of prepareConversationEvents(events).reverse()) {
+    if (tenantSlug && event.tenant_slug && event.tenant_slug !== tenantSlug) continue;
     if (isKnownKanbanTestArtifact(event)) continue;
     if (isInternalOperationalEvent(event)) continue;
     const key = canonicalConversationKey(event.channel_type, event.external_conversation_id, event.id);
@@ -62,6 +63,7 @@ export function eventsToKanban(
 
   // Atribuições precisam ser lidas em ordem temporal, independentemente da ordem da query.
   for (const event of [...events].sort((a, b) => compareDateLabel(a.created_at, b.created_at))) {
+    if (tenantSlug && event.tenant_slug && event.tenant_slug !== tenantSlug) continue;
     if (isKnownKanbanTestArtifact(event)) continue;
     const key = canonicalConversationKey(event.channel_type, event.external_conversation_id, event.id);
     eventCountsByChat.set(key, (eventCountsByChat.get(key) || 0) + 1);
@@ -166,10 +168,14 @@ export function eventsToKanban(
     const isClosedConv = conversationState?.status === 'finalizado' || target === 'finalizadas';
     const chatExplicitOwner = isClosedConv ? null : (explicitOwnerByChat.get(key)
       || cleanAgentName(asObject(event.raw_payload)?.assignee?.name)
+      || cleanAgentName(asObject(event.raw_payload)?.human_dispatch?.assignee_name)
+      || cleanAgentName(salesLead?.state?.human_dispatch?.assignee_name)
       || cleanAgentName(asObject(event.raw_payload)?.assigned_to)
       || null);
     const chatExplicitOwnerId = isClosedConv ? null : (explicitOwnerIdByChat.get(key)
       || asObject(event.raw_payload)?.assignee?.id
+      || asObject(event.raw_payload)?.human_dispatch?.assignee_id
+      || salesLead?.state?.human_dispatch?.assignee_id
       || asObject(event.raw_payload)?.assignee_id
       || null);
 
@@ -196,6 +202,28 @@ export function eventsToKanban(
     // Contatos comerciais / não-clientes não devem poluir o funil de vendas do Kanban
     if (contactCategory.category === 'commercial' || event.service === 'non_customer' || event.ai_provider === 'non_customer_suppression') {
       continue;
+    }
+
+    const rawPayload = asObject(event.raw_payload);
+    const outsideBusinessHours = rawPayload?.human_dispatch?.within_business_hours === false
+      || (rawPayload?.business_hours && rawPayload.business_hours.is_open === false)
+      || Boolean(salesLead?.state?.business_hours && salesLead.state.business_hours.is_open === false);
+    const nextBusinessSession = rawPayload?.human_dispatch?.next_opening
+      || rawPayload?.business_hours?.next_opening?.formatted
+      || salesLead?.state?.business_hours?.next_opening
+      || null;
+
+    const dispatchStatus = rawPayload?.human_dispatch?.status || salesLead?.state?.human_dispatch?.status || null;
+    if (dispatchStatus === 'dispatch_failed') {
+      aiReason = 'Falha no encaminhamento para fila humana';
+    } else if (dispatchStatus === 'dispatch_uncertain') {
+      aiReason = 'Atendimento com status incerto - requer intervenção manual';
+    } else if (outsideBusinessHours && isHumanControlled) {
+      aiReason = nextBusinessSession
+        ? `Aguardando próximo expediente (${nextBusinessSession})`
+        : 'Aguardando próximo expediente comercial';
+    } else if (outsideBusinessHours && !isHumanControlled && !aiReason) {
+      aiReason = 'IA atendendo fora do horário comercial';
     }
 
     const card = {
@@ -225,7 +253,14 @@ export function eventsToKanban(
       salesHot: Boolean(salesLead?.hot),
       salesAiLocked: Boolean(salesLead?.ai_locked),
       salesInterestRegistered: Boolean(salesLead?.interest_registered),
+      salesTemperature: salesLead?.state?.temperature || salesLead?.state?.financing?.temperature || (salesLead?.hot ? 'hot' : null),
+      salesPaymentMode: salesLead?.state?.payment_mode || null,
+      salesDepositCents: Number.isSafeInteger(salesLead?.deposit_cents) ? salesLead.deposit_cents : (Number.isSafeInteger(salesLead?.state?.deposit_cents) ? salesLead.state.deposit_cents : null),
+      humanDispatchStatus: rawPayload?.human_dispatch?.status || salesLead?.state?.human_dispatch?.status || null,
+      outsideBusinessHours,
+      nextBusinessSession,
       aiReason,
+
       appointmentId: relatedAppointmentId,
       appointmentStatus: relatedAppointment?.status || '',
       actionType: target === 'verificar_sinal' && relatedAppointmentId ? 'confirm_signal' : '',
@@ -420,7 +455,6 @@ function isKnownKanbanTestArtifact(event) {
 export function salesFinancingSummary(lead, tenantSlug) {
   if (!isGenesisSalesTenant(tenantSlug)) return '';
   const qualification = lead?.state?.financing_qualification;
-  if (!['deposit_30_and_financing_documents_v1', 'deposit_and_financing_documents_v2'].includes(qualification?.rule)) return '';
 
   const labels = {
     ready: 'Entrada e documentos recebidos',
@@ -433,13 +467,26 @@ export function salesFinancingSummary(lead, tenantSlug) {
     style: 'currency',
     currency: 'BRL',
   });
-  const amount = Number.isSafeInteger(qualification.deposit_cents)
-    ? `Entrada: ${money(qualification.deposit_cents)}`
-    : '';
-  const minimum = Number.isSafeInteger(qualification.minimum_deposit_cents)
-    ? `Mínimo: ${money(qualification.minimum_deposit_cents)}`
-    : '';
-  return [labels[qualification.status], amount, minimum].filter(Boolean).join(' | ');
+
+  if (['deposit_30_and_financing_documents_v1', 'deposit_and_financing_documents_v2'].includes(qualification?.rule)) {
+    const amount = Number.isSafeInteger(qualification.deposit_cents)
+      ? `Entrada: ${money(qualification.deposit_cents)}`
+      : '';
+    const minimum = Number.isSafeInteger(qualification.minimum_deposit_cents)
+      ? `Mínimo: ${money(qualification.minimum_deposit_cents)}`
+      : '';
+    return [labels[qualification.status], amount, minimum].filter(Boolean).join(' | ');
+  }
+
+  if (lead?.state?.payment_mode === 'financing' || Number.isSafeInteger(lead?.deposit_cents) || Number.isSafeInteger(lead?.state?.deposit_cents)) {
+    const depCents = Number.isSafeInteger(lead?.deposit_cents) ? lead.deposit_cents : lead?.state?.deposit_cents;
+    const amount = Number.isSafeInteger(depCents) ? `Entrada: ${money(depCents)}` : '';
+    const temp = lead?.state?.temperature || lead?.state?.financing?.temperature || (lead?.hot ? 'hot' : null);
+    const tempLabel = temp === 'hot' ? 'Quente' : temp === 'warm' ? 'Morno' : temp === 'cold' ? 'Frio' : '';
+    return ['Financiamento', tempLabel, amount].filter(Boolean).join(' | ');
+  }
+
+  return '';
 }
 
 export function resolveTenantKanbanStage({ tenantSlug, salesLead, event, conversationState, context = {} }) {
@@ -452,6 +499,9 @@ export function resolveTenantKanbanStage({ tenantSlug, salesLead, event, convers
   }
 
   const persistedStage = canonicalKanbanKey(salesLead?.stage_key);
+  if (persistedStage === 'sales_qualifying' && salesLead?.state?.payment_mode === 'financing' && salesLead?.state?.financing?.review_status === 'ready_for_human') {
+    return ['sales_financing'];
+  }
   if (GENESIS_SALES_STAGE_KEYS.has(persistedStage)) return [persistedStage];
 
   // Sem etapa comercial persistida, sinais operacionais e o contexto do lead são
@@ -467,12 +517,16 @@ export function resolveTenantKanbanStage({ tenantSlug, salesLead, event, convers
   if (intent === 'after_sales') return ['sales_after_sales'];
   if (intent === 'sell') return ['sales_appraisal'];
   if (salesLead?.hot) return ['sales_hot'];
+  if (salesLead?.state?.payment_mode === 'financing' && (salesLead?.state?.financing?.review_status === 'ready_for_human' || salesLead?.stage_key === 'sales_financing')) {
+    return ['sales_financing'];
+  }
   if (context.isFirstContact && context.direction !== 'outbound') return ['sales_new'];
 
   const genericTarget = pickColumn(event?.stage, event?.handoff, event?.message_text, { ...context, event })[0];
   if (['com_humano', 'conversas_humanos', 'aguardando_humano'].includes(genericTarget)) return ['sales_human'];
   return ['sales_qualifying'];
 }
+
 
 function buildKanbanColumns(kanbanConfig, tenantSlug = '') {
   const configuredColumns = kanbanConfig?.columns;

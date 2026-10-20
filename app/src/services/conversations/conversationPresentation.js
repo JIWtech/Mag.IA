@@ -41,10 +41,18 @@ export function normalizeLocation(rawPayload, event = null) {
   const loc = payload.locationMessage || payload.data?.message?.locationMessage || payload.message?.locationMessage || payload.data?.locationMessage || payload.location || payload.magia_normalized?.location || ev.location || (payload.degreesLatitude !== undefined && payload.degreesLongitude !== undefined ? payload : null) || (payload.latitude !== undefined && payload.longitude !== undefined ? payload : null) || (ev.latitude !== undefined && ev.longitude !== undefined ? ev : null);
   let lat = loc?.degreesLatitude ?? loc?.latitude ?? ev.latitude ?? null; let lng = loc?.degreesLongitude ?? loc?.longitude ?? ev.longitude ?? null; let name = String(loc?.name || ev.location_name || ev.name || '').trim(); let address = String(loc?.address || ev.location_address || ev.address || '').trim();
   const validLat = lat != null && !Number.isNaN(Number(lat)) ? Number(lat) : null; const validLng = lng != null && !Number.isNaN(Number(lng)) ? Number(lng) : null;
-  if (validLat != null && validLng != null) { const cacheKey = `${validLat.toFixed(5)},${validLng.toFixed(5)}`; if (name || address) locationDetailsCache.set(cacheKey, { name, address }); else if (locationDetailsCache.has(cacheKey)) { const cached = locationDetailsCache.get(cacheKey); if (cached.name) name = cached.name; if (cached.address) address = cached.address; } }
-  const trimmedText = String(ev.message_text || payload.message_text || '').trim().toLowerCase(); const isLocationText = trimmedText === '[location]' || trimmedText === 'location' || trimmedText === '[localização]' || trimmedText === '[localizacao]'; const isLocationMsg = String(payload.messageType || payload.data?.messageType || ev.message_type || ev.service || '').toLowerCase().includes('location') || isLocationText || Boolean(loc);
+  const trimmedText = String(ev.message_text || payload.message_text || '').trim().toLowerCase();
+  const isLocationText = trimmedText === '[location]' || trimmedText === 'location' || trimmedText === '[localização]' || trimmedText === '[localizacao]' || trimmedText === '[livelocation]' || trimmedText === 'livelocation';
+  const isLocationMsg = String(payload.messageType || payload.data?.messageType || ev.message_type || ev.service || '').toLowerCase().includes('location') || isLocationText || Boolean(loc);
   if (!isLocationMsg && validLat == null && validLng == null && !name && !address) return null;
-  return { latitude: validLat, longitude: validLng, name, address, url: loc?.url || (validLat != null && validLng != null ? `https://www.google.com/maps?q=${validLat},${validLng}` : ''), isResolving: Boolean(!name && !address && validLat == null && validLng == null) };
+  return {
+    latitude: validLat,
+    longitude: validLng,
+    name,
+    address,
+    url: loc?.url || (validLat != null && validLng != null ? `https://www.google.com/maps?q=${validLat},${validLng}` : ''),
+    isResolving: false,
+  };
 }
 
 export function normalizeAudioTranscription(rawPayload, event = null) {
@@ -54,6 +62,72 @@ export function normalizeAudioTranscription(rawPayload, event = null) {
   if (!record && payload.audio_processing && typeof payload.audio_processing === 'object' && !Array.isArray(payload.audio_processing)) { const isAudioMessage = isMediaPlaceholderForKind(event?.message_text, 'audio') || String(payload.content_type || '').toLowerCase() === 'audio'; if (isAudioMessage && String(payload.audio_processing.status || '').toLowerCase() === 'transcribed') record = payload.audio_processing; }
   if (!record) return null; const status = String(record.status || '').trim().toLowerCase(); const text = String(record.text || '').trim(); const version = String(record.version || '').trim(); const model = String(record.model || '').trim(); if (status !== 'transcribed' || !text) return null;
   return { status: 'transcribed', text, version: version || 'whatsapp_audio_v1', model: model || null, transcribedAt: record.transcribed_at || null };
+}
+
+function pushInteractiveText(target, value) {
+  const text = String(value || '').trim();
+  if (text && !target.includes(text)) target.push(text);
+}
+
+// WhatsApp stores the useful content of button/list messages inside the raw
+// payload. Persisted message_text may legitimately be only "[buttons]".
+export function extractInteractiveMessageText(rawPayload) {
+  const payload = asObject(rawPayload);
+  let message = payload?.data?.message || payload?.message || payload?.data?.msg || null;
+  for (let depth = 0; message && depth < 5; depth += 1) {
+    if (message.ephemeralMessage?.message) message = message.ephemeralMessage.message;
+    else if (message.viewOnceMessage?.message) message = message.viewOnceMessage.message;
+    else if (message.viewOnceMessageV2?.message) message = message.viewOnceMessageV2.message;
+    else if (message.documentWithCaptionMessage?.message) message = message.documentWithCaptionMessage.message;
+    else break;
+  }
+  if (!message || typeof message !== 'object') return '';
+
+  const parts = [];
+  const buttons = message.buttonsMessage || {};
+  pushInteractiveText(parts, buttons.contentText);
+  pushInteractiveText(parts, buttons.footerText);
+  for (const button of buttons.buttons || []) pushInteractiveText(parts, button?.buttonText?.displayText || button?.displayText || button?.title);
+
+  const template = message.templateMessage?.hydratedTemplate || message.templateMessage || message.hydratedTemplate || {};
+  pushInteractiveText(parts, template.hydratedTitleText || template.titleText);
+  pushInteractiveText(parts, template.hydratedContentText || template.contentText);
+  pushInteractiveText(parts, template.hydratedFooterText || template.footerText);
+  for (const button of template.templateButtons || template.buttons || []) {
+    pushInteractiveText(parts, button?.quickReplyButton?.displayText || button?.urlButton?.displayText || button?.callButton?.displayText || button?.displayText || button?.title);
+  }
+
+  const list = message.listMessage || {};
+  pushInteractiveText(parts, list.title);
+  pushInteractiveText(parts, list.description);
+  pushInteractiveText(parts, list.buttonText);
+  for (const section of list.sections || []) {
+    pushInteractiveText(parts, section.title);
+    for (const row of section.rows || []) pushInteractiveText(parts, row.title || row.description);
+  }
+
+  const interactive = message.interactiveMessage || {};
+  pushInteractiveText(parts, interactive.header?.title || interactive.header?.text);
+  pushInteractiveText(parts, interactive.body?.text);
+  pushInteractiveText(parts, interactive.footer?.text);
+  for (const button of interactive.nativeFlowMessage?.buttons || []) {
+    try {
+      const params = typeof button.buttonParamsJson === 'string' ? JSON.parse(button.buttonParamsJson) : button.buttonParamsJson;
+      pushInteractiveText(parts, params?.display_text || params?.title);
+    } catch {
+      // Provider data is optional and must never break the conversation UI.
+    }
+  }
+
+  return parts.join('\n');
+}
+
+export function resolveEventVisibleText(event, media = null) {
+  const text = String(event?.message_text || media?.caption || '').trim();
+  if (/^\[(?:buttons?|list|interactive)\]$/i.test(text)) {
+    return extractInteractiveMessageText(event?.raw_payload) || 'Mensagem interativa recebida';
+  }
+  return media && isGeneratedMediaLabel(text) ? '' : text;
 }
 
 export function resolveConversationOwnerDetails(paramsOrOwner = {}, activeAgentsList = [], isHumanControlledParam = null) {
@@ -377,7 +451,7 @@ export function resolveEventMessagePreview(event, fallbackOwner = '') {
   } else {
     const media = normalizeMedia(event.raw_payload, event);
     const caption = String(media?.caption || '').trim();
-    const eventText = String(event.message_text || '').trim();
+    const eventText = resolveEventVisibleText(event, media);
     const hasRealCaption = caption && !isGeneratedMediaLabel(caption) && !Object.prototype.hasOwnProperty.call(TECHNICAL_MEDIA_LABELS, caption.toLowerCase());
 
     let text = '';
