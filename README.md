@@ -6,6 +6,23 @@ Esta e a pasta oficial do projeto. Todo arquivo necessario para desenvolvimento,
 operacao local, workflows n8n, Supabase, cliente piloto e preparacao de hospedagem
 deve ficar aqui.
 
+## Acessos locais
+
+- Landing page comercial: <http://localhost:5174/>
+- Plataforma/login: <http://localhost:5174/?app=1>
+
+O parâmetro `app=1` abre a plataforma; remova-o para visualizar a landing page.
+
+## Organização dos arquivos
+
+- `app/`: frontend, landing page e painel.
+- `n8n/sources/`: fontes canônicas dos workflows atuais.
+- `n8n/workflows/`: workflows gerados.
+- `n8n/archive/root-exports/`: exports históricos antes soltos na raiz, incluindo
+  suas codificações originais; não são fontes operacionais.
+- `scripts/`: ferramentas mantidas; `scripts/archive/` guarda patches históricos.
+- `docs/archive/`: imagens e diffs históricos antes soltos na raiz.
+
 ## Estado Atual
 
 Estado operacional atual:
