@@ -1,0 +1,163 @@
+{
+  "name": "NORIA EXT | Royal 4x4 | Estoque Live + IA | Subworkflow",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "84d33c0d-3f90-4479-82be-d09a960c32fa",
+      "name": "Entrada do NORIA CORE | Royal 4x4",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        272,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Royal-only adapter. Shared NORIA ingress normalizes WhatsApp payload.\n// No changes to existing tenants; this workflow does not expose a webhook.\nconst v = $json || {};\nconst env = n => { try { return String($env[n] || '').trim(); } catch { return ''; } };\nconst raw = v.raw_payload && typeof v.raw_payload === 'object' ? v.raw_payload : {};\nconst data = raw.data || raw;\nconst key = data.key || data.message?.key || {};\nconst expected = 'Royal 4x4';\n// Deliberately fail closed when pending/unresolved: never process as the fallback JIW tenant.\nif (String(v.instance || '').trim() !== expected) throw Error('ROYAL_WRONG_INSTANCE');\nif (v.tenant_slug !== 'royal_4x4' || v.tenant_resolution?.source !== 'channels.config'\n    || v.tenant_resolution?.channel?.config?.runtime !== 'royal_stock_v1'\n    || v.tenant_resolution?.channel?.external_id !== expected) {\n  return { json: { ok: true, royal: true, ignored: true, reason: 'royal_channel_not_active_or_identity_mismatch' } };\n}\nif (v.shouldProcess !== true || !['messages.upsert', 'messages.update', ''].includes(String(v.event || ''))) {\n  return { json: { ok: true, royal: true, ignored: true, reason: 'unsupported_event' } };\n}\nconst jidAlt = String(key.remoteJidAlt || data.remoteJidAlt || '').trim();\nconst jidOrig = String(v.remoteJid || '').trim();\nconst jid = /^\\d{8,20}@s\\.whatsapp\\.net$/.test(jidAlt) ? jidAlt : jidOrig;\nif (!/^\\d{8,20}@(s\\.whatsapp\\.net|lid)$/.test(jid)) {\n  return { json: {ok:true,royal:true,ignored:true,reason:'unsupported_chat'} };\n}\n// Do not accept the generic normalizer's synthetic message ID for deduplication.\nconst messageId = String(key.id || data.id || '').trim();\nif (!messageId) return { json: {ok:true,royal:true,ignored:true,reason:'missing_real_message_id'} };\nconst message = data.message || {};\nconst sourceText = String(v.messageText || '').trim();\nconst text = v.contentType === 'audio' || Boolean(message.audioMessage)\n  ? '[Áudio não suportado neste canal; por favor, envie uma mensagem de texto.]'\n  : (sourceText && !/^\\[(?:image|video|sticker|document|unknown)\\]$/i.test(sourceText)\n    ? sourceText : '[Mensagem não textual; envie uma descrição por texto.]');\nif (text.length > 12000) return {json:{ok:true,royal:true,ignored:true,reason:'message_too_long'}};\nconst base = env('SUPABASE_URL').replace(/\\/$/,'');\nconst apikey = env('SUPABASE_SERVICE_ROLE_KEY');\nif (!base || !apikey) throw Error('ROYAL_SUPABASE_ENV_MISSING');\nconst result = await this.helpers.httpRequest({\n  method:'POST',url:base+'/rest/v1/rpc/royal_stock_rpc',\n  headers:{apikey,Authorization:'Bearer '+apikey,'Content-Type':'application/json'},\n  json:true,timeout:15000,\n  body:{p_op:'ingest',p_chat:jid,p_data:{instance:expected,message_id:messageId,text,\n    name:String(v.contactName || data.pushName || 'Cliente').slice(0,160),\n    from_me: v.is_manual_whatsapp_outbound === true || key.fromMe === true || data.fromMe === true}}\n});\nreturn {json:{ok:true,royal:true,queued:result?.queued===true,\n  duplicate:result?.duplicate===true,ignored:result?.ignored===true}};\n"
+      },
+      "id": "ba7069f6-8239-49b1-a2e8-86872fdf56c8",
+      "name": "Royal | Ingerir e deduplicar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: $json };"
+      },
+      "id": "9a05c0c3-60c4-4568-a2f6-3dd68f37d52d",
+      "name": "Royal | Retornar resultado ao NORIA Core",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "b9f9e208-d7d0-4bdb-9b75-e5484cdcfbb0",
+      "name": "AGENDA | Worker Royal 10s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        272,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ROYAL-ONLY. Extraction from official public listing; never auto-fallback to stale inventory.\nconst ROYAL_URL = 'https://royal4x4.com.br/Veiculos';\nfunction rlEnv(name) { try { return String($env[name] || $vars?.[name] || '').trim(); } catch (_) { try { return String($env[name] || '').trim(); } catch (_) { return ''; } } }\nfunction rlPlain(v) { return String(v || '').replace(/\\s+/g,' ').trim(); }\nfunction rlNorm(v) { return rlPlain(v).normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase(); }\nfunction rlDecode(v) { return String(v).replace(/&nbsp;|&#160;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'\"').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&#(\\d+);/g,(_,n)=>String.fromCharCode(Number(n))).replace(/&#x([\\da-f]+);/gi,(_,n)=>String.fromCharCode(parseInt(n,16))); }\nfunction rlText(html) {return rlDecode(String(html).replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi,' ').replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi,' ').replace(/<\\/?(?:p|div|h[1-6]|li|br|span|strong|small|a|section|article)\\b[^>]*>/gi,'\\n').replace(/<[^>]*>/g,' ')).split(/[\\r\\n]+/g).map(rlPlain).filter(Boolean);}\nfunction rlVehicleID(url){const m=String(url||'').match(/\\/Veiculo\\/[^\\s\"'<>]*?\\/(\\d{4,12})\\/detalhes\\b/i);return m?.[1]||'';}\nfunction rlPrice(v){const m=String(v||'').match(/R\\$\\s*([\\d.]+,\\d{2})/i);return m?Number(m[1].replace(/\\./g,'').replace(',','.')):null;}\nfunction rlDetailsFromLines(lines){\n const priceIndex=lines.findLastIndex(x=>rlPrice(x)!==null);\n if(priceIndex<0) return null;\n const price=rlPrice(lines[priceIndex]);if(!Number.isFinite(price)||price<=0) return null;\n const pre=lines.slice(Math.max(0,priceIndex-18),priceIndex);\n const yearIndex=pre.findLastIndex(x=>/\\b(?:19|20)\\d{2}\\s*\\/\\s*(?:19|20)\\d{2}\\b/.test(x));\n if(yearIndex<0) return null;\n const yearMatch=pre[yearIndex].match(/\\b((?:19|20)\\d{2}\\s*\\/\\s*(?:19|20)\\d{2})\\b/);\n const year=yearMatch?.[1]?.replace(/\\s/g,'');\n const kmRaw=pre.slice(yearIndex+1).find(x=>/\\b(?:\\d{1,3}(?:\\.\\d{3})*|\\d+)\\s*km\\b/i.test(x))||'';\n const kmMatch=kmRaw.match(/(\\d{1,3}(?:\\.\\d{3})*|\\d+)\\s*km/i);\n const km=kmMatch?Number(kmMatch[1].replace(/\\./g,'')):null;\n const titleCandidates=pre.slice(Math.max(0,yearIndex-8),yearIndex).filter(x=>x.length>=2&&x.length<=135&&!/^(Ver mais|BLINDADO|De R\\$|R\\$|Veiculos|Pesquisar|Filtros|Compartilhar)$/i.test(x));\n if(titleCandidates.length<2) return null;\n const name=titleCandidates.at(-2),version=titleCandidates.at(-1);\n if(/^(\\d+ km|R\\$)/i.test(name)||/(veiculos encontrados|buscar|filtros)/i.test(name))return null;\n const blindado=pre.slice(Math.max(0,yearIndex-10),yearIndex).some(x=>rlNorm(x)==='blindado');\n return {name,version,year,km,price,blindado};\n}\nfunction rlParseInventory(html){\n const raw=String(html||'');\n if(raw.length<10000) throw Error('SITE_BODY_TOO_SHORT');\n const countMatch=rlPlain(rlText(raw).slice(0,350).join(' ')).match(/([\\d.]+)\\s+ve[ií]culos?\\s+encontrados/i)\n   || raw.replace(/<[^>]+>/g,' ').match(/([\\d.]+)\\s+ve[ií]culos?\\s+encontrados/i);\n const declared=countMatch?Number(countMatch[1].replace(/\\./g,'')):0;\n const anchors=[...raw.matchAll(/(?:href\\s*=\\s*[\"'])([^\"']*\\/Veiculo\\/[^\"'<>]*?\\/\\d{4,12}\\/detalhes(?:\\?[^\"']*)?)[\"']/gi)];\n const unique=new Map();\n // Cars frequently contain more than one link. Prefer nearest identifiable listing block.\n for(let i=0;i<anchors.length;i++){\n   const m=anchors[i], link=rlDecode(m[1]);const id=rlVehicleID(link);\n   if(!id || unique.has(id))continue;\n   const origin=/^https?:\\/\\//i.test(link)?link:'https://royal4x4.com.br'+(link.startsWith('/')?'':'/')+link;\n   if(!/^https:\\/\\/(www\\.)?royal4x4\\.com\\.br\\/Veiculo\\//i.test(origin)) continue;\n   // Prefer values before the \"Ver mais\" link, then try card content immediately after it.\n   const prev=anchors[i-1]?.index ?? 0, next=anchors[i+1]?.index ?? raw.length;\n   const before=rlText(raw.slice(Math.max(prev, m.index-5500),m.index));\n   const after=rlText(raw.slice(m.index,Math.min(next,m.index+5500)));\n   const details=rlDetailsFromLines(before.slice(-70))||rlDetailsFromLines(after.slice(0,70));\n   if(details)unique.set(id,{id,url:origin,...details});\n }\n const items=[...unique.values()];\n // A changed upstream HTML must fail closed, rather than inventing names/prices.\n if(!declared || declared>3000 || items.length<Math.min(5,declared) || items.length<Math.ceil(declared*0.75)) {\n   throw Error('SITE_PARSE_MISMATCH:declared='+declared+';parsed='+items.length+';links='+anchors.length);\n }\n return {items,declared,parsed:items.length,fetched_at:new Date().toISOString(),source:ROYAL_URL};\n}\nfunction rlMatches(item, filter){\n const q=rlNorm(filter.query||'');const hay=rlNorm(item.name+' '+item.version);\n const pieces=q.replace(/[^a-z0-9 ]/g,' ').split(' ').filter(w=>w.length>1);\n if(q&&pieces.some(w=>!hay.includes(w)))return false;\n if(filter.max_price && item.price>filter.max_price)return false;\n if(filter.min_price && item.price<filter.min_price)return false;\n if(filter.max_km!=null && item.km!=null && item.km>filter.max_km)return false;\n if(filter.min_year && Number(item.year?.split('/').at(-1))<filter.min_year)return false;\n if(filter.blindado===true && !item.blindado)return false;\n return true;\n}\nfunction rlFormatVehicle(i,index){const brl=Number(i.price).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});return `${index}. ${i.name} — ${i.version}\\n${i.year} | ${i.km==null?'KM não informado':i.km.toLocaleString('pt-BR')+' km'} | ${brl}${i.blindado?' | BLINDADO':''}\\n${i.url}`;}\n\nconst env=n=>rlEnv(n);\nconst base=env('SUPABASE_URL').replace(/\\/$/,'');const key=env('SUPABASE_SERVICE_ROLE_KEY');\nconst evoBase=env('EVOLUTION_API_URL_ROYAL_4X4').replace(/\\/$/,'');const evoKey=env('EVOLUTION_API_KEY_ROYAL_4X4');\nconst geminiKey=env('GEMINI_API_KEY');\nif(!base||!key)throw Error('ROYAL_SUPABASE_ENV_MISSING');\nconst tenantId='ac189d8a-b89a-4b56-af68-0a8b8ea8c46c';\nconst headers={apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json'};\nasync function rpc(op,chat,data={}){return this.helpers.httpRequest({method:'POST',url:base+'/rest/v1/rpc/royal_stock_rpc',\n headers,json:true,timeout:20000,body:{p_op:op,p_chat:chat,p_data:data}});}\nasync function classify(text,state,settings){\n if(!geminiKey)throw Error('ROYAL_GEMINI_KEY_MISSING');\n const model=String(settings.ai_model||'gemini-3.5-flash-lite').replace(/^models\\//,'');\n if(!/^gemini-[\\w.-]+$/.test(model))throw Error('ROYAL_MODEL_INVALID');\n const instructions=`Você é um classificador de intenções de clientes da loja Royal 4x4. Devolva somente JSON com action (\"search\",\"next\",\"hello\",\"human\",\"details\"), query (marca/modelo que consta no pedido, ou vazio), max_price, min_price, min_year, max_km (números ou null), blindado (boolean ou null), page (inteiro ou null), index (inteiro ou null). Nunca invente carros, preços, links, opções ou características. A frase \"mais opções\" ou \"próximos\" significa next. Se cliente pedir vendedor, negociação, financiamento, avaliação ou visita, use human. \"quero ver o 2\" = details,index=2. Para busca genérica use query vazio.`;\n const body={system_instruction:{parts:[{text:instructions}]},contents:[{role:'user',parts:[{text:JSON.stringify({message:text,previous_search:state.filter||{},page:state.page||1})}]}],\n generationConfig:{temperature:0.1,maxOutputTokens:220,responseMimeType:'application/json'}};\n const response=await this.helpers.httpRequest({method:'POST',url:'https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',\n headers:{'Content-Type':'application/json','x-goog-api-key':geminiKey},json:true,body,timeout:30000});\n const candidate=response?.candidates?.[0];if(!candidate||candidate.finishReason!=='STOP')throw Error('ROYAL_GEMINI_NOT_FINISHED');\n const content=candidate.content?.parts?.map(p=>p.text||'').join('')||'';\n const parsed=JSON.parse(content.replace(/^```json\\s*|\\s*```$/g,''));\n if(!['search','next','hello','human','details'].includes(parsed.action))throw Error('ROYAL_GEMINI_ACTION_INVALID');\n return parsed;\n}\nfunction makeReply(stock,ai,state,text){\n if(ai.action==='hello')return {reply:`Olá! Sou a assistente virtual da Royal 4x4. Posso consultar nosso estoque atualizado de ${stock.declared} veículos. Você procura alguma marca, modelo ou faixa de preço?`,stage:'Qualificacao',handoff:false,state:{...state,stock_fetched_at:stock.fetched_at,stock_count:stock.declared}};\n if(ai.action==='human')return {reply:'Vou encaminhar sua mensagem à equipe da Royal 4x4 para ajudar com negociação ou outras informações. Um atendente continuará por aqui.',stage:'Atendimento humano',handoff:true,state:{...state,stock_fetched_at:stock.fetched_at,stock_count:stock.declared}};\n let filter=ai.action==='next'||ai.action==='details'?state.filter||{}:{query:String(ai.query||'').slice(0,85),max_price:ai.max_price||null,min_price:ai.min_price||null,min_year:ai.min_year||null,max_km:ai.max_km??null,blindado:ai.blindado===true?true:null};\n if(ai.action==='details'){\n   const old=state.last_results||[];const idx=Number(ai.index);const prev=Number.isInteger(idx)&&idx>0&&idx<=old.length?old[idx-1]:null;\n   const car=prev?stock.items.find(x=>x.id===prev):null;\n   if(!car)return {reply:'Não consegui localizar essa opção no estoque atual. Me diga o modelo ou faça uma nova busca, por favor.',stage:'Qualificacao',handoff:false,state:{...state,last_results:[],stock_fetched_at:stock.fetched_at,stock_count:stock.declared}};\n   return {reply:rlFormatVehicle(car,1)+'\\n\\nPosso apresentar outras opções ou chamar um vendedor.',stage:'Qualificacao',handoff:false,state:{...state,last_results:[car.id],stock_fetched_at:stock.fetched_at,stock_count:stock.declared}};\n }\n let matches=stock.items.filter(x=>rlMatches(x,filter));\n let page=ai.action==='next'?Number(state.page||1)+1:Math.max(1,Math.min(200,Number(ai.page)||1));\n const pages=Math.max(1,Math.ceil(matches.length/5));if(page>pages)page=pages;\n const list=matches.slice((page-1)*5,page*5);\n const label=filter.query?' para '+filter.query:'';\n const body=!matches.length?`Não encontrei veículos${label} com esses filtros no estoque consultado agora. Quer tentar outro modelo ou faixa de preço?`:\n   `${matches.length} veículo(s) encontrado(s)${label}. Página ${page}/${pages}:\\n\\n${list.map((x,i)=>rlFormatVehicle(x,i+1)).join('\\n\\n')}\\n\\n${page<pages?'Responda \"mais opções\" para ver os próximos. ':'Diga outro modelo para fazer nova busca. '}Para falar com um vendedor, é só pedir.`;\n return {reply:body.slice(0,8500),stage:matches.length?'Qualificacao':'Qualificacao',handoff:false,state:{...state,filter,page,last_results:list.map(x=>x.id),stock_fetched_at:stock.fetched_at,stock_count:stock.declared}};\n}\nconst results=[];\nconst pending=await this.helpers.httpRequest({method:'GET',url:base+'/rest/v1/royal_stock_turns?select=chat_id,phase,quiet_until,pending&tenant_id=eq.'+tenantId+'&order=updated_at.asc&limit=30',headers,json:true,timeout:12000});\nif(!Array.isArray(pending))throw Error('ROYAL_QUEUE_READ_INVALID');\nif(pending.some(r=>Array.isArray(r.pending)&&r.pending.length)&&(!evoBase||!evoKey||!geminiKey))return [{json:{ok:false,reason:'ROYAL_RUNTIME_CREDENTIALS_MISSING',action:'Configure Evolution e Gemini antes de liberar o atendimento.'}}];\nfor(const row of pending){\n if(!Array.isArray(row.pending)||!row.pending.length||new Date(row.quiet_until).getTime()>Date.now())continue;\n const chat=row.chat_id;let c,prepared=false,sendAttempted=false;\n try{\n   c=await rpc.call(this,'claim',chat);if(!c?.claimed_ok)continue;\n   const text=(c.claimed||[]).map(v=>v.text).filter(Boolean).join('\\n').slice(0,10000);\n   const state=c.state&&typeof c.state==='object'?c.state:{};\n   let out;\n   try{\n     if(text.includes('[Áudio não suportado')||text.includes('[Mensagem não textual')){\n       out={reply:'Por enquanto, consigo consultar o estoque por texto. Pode escrever qual carro procura?',stage:'Qualificacao',handoff:false,state};\n     }else{\n       // Live inventory at each conversational turn, not a saved vehicle catalog.\n       const stockHtml=await this.helpers.httpRequest({method:'GET',url:ROYAL_URL,headers:{'User-Agent':'Mozilla/5.0 (compatible; NORIA-Royal-Stock/1.0)','Accept':'text/html'},json:false,timeout:35000});\n       const html=typeof stockHtml==='string'?stockHtml:String(stockHtml?.body||stockHtml?.data||'');\n       const stock=rlParseInventory(html);\n       const ai=await classify.call(this,text,state,c.settings||{});\n       out=makeReply(stock,ai,state,text);\n     }\n   }catch(error){\n     // Fail closed, not invented inventory data or fees.\n     out={reply:'Não consegui consultar o estoque atualizado com segurança agora. Vou encaminhar para a equipe verificar e continuar por aqui.',stage:'Atendimento humano',handoff:true,state:{...state,last_error:String(error?.message||error).slice(0,180)}};\n   }\n   const preparedData={token:c.token,revision:c.revision,reply:out.reply,stage:out.stage,handoff:out.handoff,state:out.state};\n   const prep=await rpc.call(this,'prepare',chat,preparedData);\n   if(!prep?.ok){results.push({chat,result:'aborted_before_send'});continue;}\n   prepared=true;\n   sendAttempted=true;\n   const number=chat.replace(/@.+$/,'');\n   const sent=await this.helpers.httpRequest({method:'POST',url:evoBase+'/message/sendText/'+encodeURIComponent('Royal 4x4'),\n     headers:{apikey:evoKey,'Content-Type':'application/json'},body:{number,text:out.reply},json:true,timeout:30000});\n   const outboundId=String(sent?.key?.id||sent?.message?.key?.id||sent?.id||'');\n   if(!outboundId)throw Error('ROYAL_DELIVERY_MESSAGE_ID_MISSING');\n   const committed=await rpc.call(this,'finish',chat,{token:c.token,message_id:outboundId});\n   if(!committed?.ok)throw Error('ROYAL_DELIVERY_NOT_COMMITTED');\n   results.push({chat,result:'sent',count:out.state.stock_count||null});\n }catch(error){\n   if(prepared){try{await rpc.call(this,'uncertain',chat,{token:c.token});}catch(_){}}\n   results.push({chat,result:prepared?'delivery_uncertain':'failed_before_send',error:String(error?.message||error).slice(0,200)});\n }\n}\nreturn results.length?results.map(r=>({json:r})):[{json:{ok:true,processed:0}}];\n"
+      },
+      "id": "c2a16fd6-65ee-4be3-95c3-9be815b2a92f",
+      "name": "ROYAL | Processar fila estoque IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        256
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c2abdcf1-586d-4eca-92a8-b2369802f7d3",
+      "name": "TESTE MANUAL | Diagnostico Royal",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        272,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ROYAL-ONLY. Extraction from official public listing; never auto-fallback to stale inventory.\nconst ROYAL_URL = 'https://royal4x4.com.br/Veiculos';\nfunction rlEnv(name) { try { return String($env[name] || $vars?.[name] || '').trim(); } catch (_) { try { return String($env[name] || '').trim(); } catch (_) { return ''; } } }\nfunction rlPlain(v) { return String(v || '').replace(/\\s+/g,' ').trim(); }\nfunction rlNorm(v) { return rlPlain(v).normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase(); }\nfunction rlDecode(v) { return String(v).replace(/&nbsp;|&#160;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'\"').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&#(\\d+);/g,(_,n)=>String.fromCharCode(Number(n))).replace(/&#x([\\da-f]+);/gi,(_,n)=>String.fromCharCode(parseInt(n,16))); }\nfunction rlText(html) {return rlDecode(String(html).replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi,' ').replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi,' ').replace(/<\\/?(?:p|div|h[1-6]|li|br|span|strong|small|a|section|article)\\b[^>]*>/gi,'\\n').replace(/<[^>]*>/g,' ')).split(/[\\r\\n]+/g).map(rlPlain).filter(Boolean);}\nfunction rlVehicleID(url){const m=String(url||'').match(/\\/Veiculo\\/[^\\s\"'<>]*?\\/(\\d{4,12})\\/detalhes\\b/i);return m?.[1]||'';}\nfunction rlPrice(v){const m=String(v||'').match(/R\\$\\s*([\\d.]+,\\d{2})/i);return m?Number(m[1].replace(/\\./g,'').replace(',','.')):null;}\nfunction rlDetailsFromLines(lines){\n const priceIndex=lines.findLastIndex(x=>rlPrice(x)!==null);\n if(priceIndex<0) return null;\n const price=rlPrice(lines[priceIndex]);if(!Number.isFinite(price)||price<=0) return null;\n const pre=lines.slice(Math.max(0,priceIndex-18),priceIndex);\n const yearIndex=pre.findLastIndex(x=>/\\b(?:19|20)\\d{2}\\s*\\/\\s*(?:19|20)\\d{2}\\b/.test(x));\n if(yearIndex<0) return null;\n const yearMatch=pre[yearIndex].match(/\\b((?:19|20)\\d{2}\\s*\\/\\s*(?:19|20)\\d{2})\\b/);\n const year=yearMatch?.[1]?.replace(/\\s/g,'');\n const kmRaw=pre.slice(yearIndex+1).find(x=>/\\b(?:\\d{1,3}(?:\\.\\d{3})*|\\d+)\\s*km\\b/i.test(x))||'';\n const kmMatch=kmRaw.match(/(\\d{1,3}(?:\\.\\d{3})*|\\d+)\\s*km/i);\n const km=kmMatch?Number(kmMatch[1].replace(/\\./g,'')):null;\n const titleCandidates=pre.slice(Math.max(0,yearIndex-8),yearIndex).filter(x=>x.length>=2&&x.length<=135&&!/^(Ver mais|BLINDADO|De R\\$|R\\$|Veiculos|Pesquisar|Filtros|Compartilhar)$/i.test(x));\n if(titleCandidates.length<2) return null;\n const name=titleCandidates.at(-2),version=titleCandidates.at(-1);\n if(/^(\\d+ km|R\\$)/i.test(name)||/(veiculos encontrados|buscar|filtros)/i.test(name))return null;\n const blindado=pre.slice(Math.max(0,yearIndex-10),yearIndex).some(x=>rlNorm(x)==='blindado');\n return {name,version,year,km,price,blindado};\n}\nfunction rlParseInventory(html){\n const raw=String(html||'');\n if(raw.length<10000) throw Error('SITE_BODY_TOO_SHORT');\n const countMatch=rlPlain(rlText(raw).slice(0,350).join(' ')).match(/([\\d.]+)\\s+ve[ií]culos?\\s+encontrados/i)\n   || raw.replace(/<[^>]+>/g,' ').match(/([\\d.]+)\\s+ve[ií]culos?\\s+encontrados/i);\n const declared=countMatch?Number(countMatch[1].replace(/\\./g,'')):0;\n const anchors=[...raw.matchAll(/(?:href\\s*=\\s*[\"'])([^\"']*\\/Veiculo\\/[^\"'<>]*?\\/\\d{4,12}\\/detalhes(?:\\?[^\"']*)?)[\"']/gi)];\n const unique=new Map();\n // Cars frequently contain more than one link. Prefer nearest identifiable listing block.\n for(let i=0;i<anchors.length;i++){\n   const m=anchors[i], link=rlDecode(m[1]);const id=rlVehicleID(link);\n   if(!id || unique.has(id))continue;\n   const origin=/^https?:\\/\\//i.test(link)?link:'https://royal4x4.com.br'+(link.startsWith('/')?'':'/')+link;\n   if(!/^https:\\/\\/(www\\.)?royal4x4\\.com\\.br\\/Veiculo\\//i.test(origin)) continue;\n   // Prefer values before the \"Ver mais\" link, then try card content immediately after it.\n   const prev=anchors[i-1]?.index ?? 0, next=anchors[i+1]?.index ?? raw.length;\n   const before=rlText(raw.slice(Math.max(prev, m.index-5500),m.index));\n   const after=rlText(raw.slice(m.index,Math.min(next,m.index+5500)));\n   const details=rlDetailsFromLines(before.slice(-70))||rlDetailsFromLines(after.slice(0,70));\n   if(details)unique.set(id,{id,url:origin,...details});\n }\n const items=[...unique.values()];\n // A changed upstream HTML must fail closed, rather than inventing names/prices.\n if(!declared || declared>3000 || items.length<Math.min(5,declared) || items.length<Math.ceil(declared*0.75)) {\n   throw Error('SITE_PARSE_MISMATCH:declared='+declared+';parsed='+items.length+';links='+anchors.length);\n }\n return {items,declared,parsed:items.length,fetched_at:new Date().toISOString(),source:ROYAL_URL};\n}\nfunction rlMatches(item, filter){\n const q=rlNorm(filter.query||'');const hay=rlNorm(item.name+' '+item.version);\n const pieces=q.replace(/[^a-z0-9 ]/g,' ').split(' ').filter(w=>w.length>1);\n if(q&&pieces.some(w=>!hay.includes(w)))return false;\n if(filter.max_price && item.price>filter.max_price)return false;\n if(filter.min_price && item.price<filter.min_price)return false;\n if(filter.max_km!=null && item.km!=null && item.km>filter.max_km)return false;\n if(filter.min_year && Number(item.year?.split('/').at(-1))<filter.min_year)return false;\n if(filter.blindado===true && !item.blindado)return false;\n return true;\n}\nfunction rlFormatVehicle(i,index){const brl=Number(i.price).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});return `${index}. ${i.name} — ${i.version}\\n${i.year} | ${i.km==null?'KM não informado':i.km.toLocaleString('pt-BR')+' km'} | ${brl}${i.blindado?' | BLINDADO':''}\\n${i.url}`;}\n\nconst result={component:'royal_diagnostics',timestamp:new Date().toISOString(),checks:{}};\nconst uri=rlEnv('SUPABASE_URL').replace(/\\/$/,'');const key=rlEnv('SUPABASE_SERVICE_ROLE_KEY');const gemini=rlEnv('GEMINI_API_KEY');const evo=rlEnv('EVOLUTION_API_URL_ROYAL_4X4').replace(/\\/$/,'');const evoKey=rlEnv('EVOLUTION_API_KEY_ROYAL_4X4');\nresult.checks.env={supabase:!!uri,service_role:!!key,gemini:!!gemini,evolution_base:!!evo,evolution_key:!!evoKey,instance:'Royal 4x4'};\nif(uri&&key){try{\nconst rows=await this.helpers.httpRequest({method:'GET',url:uri+'/rest/v1/channels?select=external_id,status,webhook_path&tenant_id=eq.ac189d8a-b89a-4b56-af68-0a8b8ea8c46c&type=eq.whatsapp',headers:{apikey:key,Authorization:'Bearer '+key},json:true,timeout:9000});\nresult.checks.channel={found:rows?.length===1,instance:rows?.[0]?.external_id,status:rows?.[0]?.status,webhook_path:rows?.[0]?.webhook_path};\n}catch(e){result.checks.channel={ok:false,error:String(e.message||e).slice(0,110)}}}\ntry{\n const html=await this.helpers.httpRequest({method:'GET',url:ROYAL_URL,headers:{'User-Agent':'Mozilla/5.0','Accept':'text/html'},json:false,timeout:40000});\n const stock=rlParseInventory(typeof html==='string'?html:String(html?.body||html?.data||''));\n result.checks.stock={ok:true,declared:stock.declared,parsed:stock.parsed,sample:stock.items.slice(0,2).map(x=>({name:x.name,year:x.year,price:x.price,url:x.url}))};\n}catch(e){result.checks.stock={ok:false,error:String(e.message||e).slice(0,210)}}\nif(gemini){try{\n const body={contents:[{parts:[{text:'Responda apenas OK.'}]}],generationConfig:{temperature:0,maxOutputTokens:50}};\n const resp=await this.helpers.httpRequest({method:'POST',url:'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',headers:{'Content-Type':'application/json','x-goog-api-key':gemini},body,json:true,timeout:28000});\n result.checks.gemini={ok:!!resp?.candidates?.length,finish_reason:resp?.candidates?.[0]?.finishReason||null};\n}catch(e){result.checks.gemini={ok:false,error:String(e.message||e).slice(0,180)}}}\nif(evo&&evoKey){try{\n const state=await this.helpers.httpRequest({method:'GET',url:evo+'/instance/connectionState/'+encodeURIComponent('Royal 4x4'),headers:{apikey:evoKey},json:true,timeout:13000});\n const linkState=String(state?.instance?.state||state?.state||'unknown');\n result.checks.evolution={ok:['open','connected'].includes(linkState.toLowerCase()),state:linkState};\n}catch(e){result.checks.evolution={ok:false,error:String(e.message||e).slice(0,180)}}}\nresult.checks.webhook_security={custom_secret:!!rlEnv('ROYAL_WEBHOOK_SHARED_SECRET'),note:'Configure segredo de webhook ou autenticação equivalente na Evolution/proxy para produção.'};\nresult.ready_for_activation=result.checks.env?.supabase&&result.checks.env?.service_role&&result.checks.env?.gemini&&result.checks.env?.evolution_base&&result.checks.env?.evolution_key&&result.checks.env?.instance&&result.checks.stock?.ok&&result.checks.gemini?.ok&&result.checks.evolution?.ok;\nreturn [{json:result}];\n"
+      },
+      "id": "137726b9-2013-44cc-8716-3025b57d3245",
+      "name": "Royal | Diagnosticar sem enviar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        592
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Royal | Ingerir e deduplicar": {
+      "main": [
+        [
+          {
+            "node": "Royal | Retornar resultado ao NORIA Core",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AGENDA | Worker Royal 10s": {
+      "main": [
+        [
+          {
+            "node": "ROYAL | Processar fila estoque IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TESTE MANUAL | Diagnostico Royal": {
+      "main": [
+        [
+          {
+            "node": "Royal | Diagnosticar sem enviar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrada do NORIA CORE | Royal 4x4": {
+      "main": [
+        [
+          {
+            "node": "Royal | Ingerir e deduplicar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "2b89c372-b4a2-4579-8bbd-7e6e16ff6f98",
+  "meta": {
+    "instanceId": "dbbf78a0c0b813f5d983febddfb5a8e05864e8414fbc23fe3e40a9f77bdbc009"
+  },
+  "nodeGroups": [],
+  "id": "QlKuGOCnI5eKwlSF",
+  "tags": []
+}

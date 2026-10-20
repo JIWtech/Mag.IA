@@ -79,6 +79,38 @@ export async function signInWithPassword(email, password) {
   return data.session;
 }
 
+export async function signUpWithPassword(email, password) {
+  const supabase = getAuthClient();
+  if (!supabase) throw new Error('Supabase Auth nao configurado');
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  return data;
+}
+
+export async function createTenantOnboarding({
+  companyName,
+  segment = 'general_services',
+  tone = 'consultative',
+  businessFacts = '',
+  catalogHighlights = '',
+  customRules = '',
+  systemPrompt = null,
+}) {
+  const supabase = getAuthClient();
+  if (!supabase) throw new Error('Supabase Auth nao configurado');
+  const { data, error } = await supabase.rpc('magia_create_tenant_onboarding', {
+    p_company_name: companyName,
+    p_segment: segment,
+    p_tone: tone,
+    p_business_facts: businessFacts,
+    p_catalog_highlights: catalogHighlights,
+    p_custom_rules: customRules,
+    p_system_prompt: systemPrompt,
+  });
+  if (error) throw error;
+  return data;
+}
+
 export async function signOut() {
   const supabase = getAuthClient();
   if (!supabase) return;

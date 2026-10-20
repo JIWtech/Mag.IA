@@ -131,10 +131,10 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "throw new Error('NORIA_CORE: extensao nao habilitada para '+String($json.tenant_slug||'desconhecido'));"
+        "jsCode": "// Roteador dinâmico: Se o tenant possui noria_client_policy configurada, avança direto para o motor conversacional compartilhado.\nconst v = $json || {};\nif (v.noria_client_policy && v.noria_extension === 'saas_dynamic') {\n  return { json: v };\n}\nthrow new Error('NORIA_CORE: extensao nao habilitada para ' + String(v.tenant_slug || 'desconhecido'));\n"
       },
       "id": "7a18746f-45b5-44ea-99f4-b3626deb6aa9",
-      "name": "CORE - Bloquear destino não configurado",
+      "name": "CORE - Roteador Dinâmico SaaS",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -209,7 +209,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// Only two tenants currently use conversation_core_v1. Fail closed for any other tenant.\nconst v = $json || {};\nfunction required(x, label) { if (typeof x !== 'string' || !x.trim()) throw new Error('NORIA_ROTEAMENTO: '+label+' ausente'); return x.trim(); }\nconst tenant_slug = required(v.tenant_slug, 'tenant_slug');\nrequired(v.tenant_id, 'tenant_id');\nrequired(v.instance, 'instance');\nrequired(v.remoteJid, 'remoteJid');\nconst byTenant = { clinica_nubia_oficial: 'nubia', wesley_automoveis: 'genesis' };\nconst extension = byTenant[tenant_slug];\nif (!extension) throw new Error('NORIA_SEM_EXTENSAO_CONFIGURADA: '+tenant_slug);\nreturn { json: { ...v, noria_extension: extension, noria_contract_version: '1.0', noria_router: 'core_3wf_v1', noria_dispatch_phase: 'bootstrap' } };\n"
+        "jsCode": "// Resolucao de extensao hibrida: Tenants legados usam subworkflows isolados; novos tenants SaaS usam policy dinamica de tenant_settings.\nconst v = $json || {};\nfunction required(x, label) { if (typeof x !== 'string' || !x.trim()) throw new Error('NORIA_ROTEAMENTO: '+label+' ausente'); return x.trim(); }\nconst tenant_slug = required(v.tenant_slug, 'tenant_slug');\nconst tenant_id = required(v.tenant_id, 'tenant_id');\nrequired(v.instance, 'instance');\nrequired(v.remoteJid, 'remoteJid');\n\nconst byTenant = { clinica_nubia_oficial: 'nubia', wesley_automoveis: 'genesis' };\nconst legacyExtension = byTenant[tenant_slug];\nif (legacyExtension) {\n  return { json: { ...v, noria_extension: legacyExtension, noria_contract_version: '1.0', noria_router: 'core_3wf_v1', noria_dispatch_phase: 'bootstrap' } };\n}\n\n// Para novos tenants SaaS autônomos, busca noria_client_policy diretamente em tenant_settings\nconst base = String($env.SUPABASE_URL || '').replace(new RegExp('/$'), '');\nconst key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');\nif (!base || !key) throw new Error('NORIA_ROTEAMENTO_SEM_CREDENCIAIS_DB');\n\nconst rows = await this.helpers.httpRequest({\n  method: 'GET',\n  url: base + '/rest/v1/tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(tenant_id) + '&limit=1',\n  headers: { apikey: key, Authorization: 'Bearer ' + key },\n  json: true,\n  timeout: 7000,\n});\n\nconst s = rows?.[0]?.settings || {};\nif (!s.noria_client_policy) {\n  throw new Error('NORIA_SEM_EXTENSAO_CONFIGURADA: ' + tenant_slug);\n}\n\nreturn {\n  json: {\n    ...v,\n    noria_extension: 'saas_dynamic',\n    noria_client_policy: s.noria_client_policy,\n    noria_contract_version: '1.0',\n    noria_router: 'saas_dynamic_v1',\n  },\n};\n"
       },
       "id": "3a4acd73-166c-498b-bc74-ad187152eba5",
       "name": "CORE - Resolver extensão do tenant",
@@ -1535,7 +1535,7 @@
         ],
         [
           {
-            "node": "CORE - Bloquear destino não configurado",
+            "node": "CORE - Roteador Dinâmico SaaS",
             "type": "main",
             "index": 0
           }
@@ -2214,6 +2214,17 @@
         [
           {
             "node": "CORE | Executar EXT Genesis comercial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CORE - Roteador Dinâmico SaaS": {
+      "main": [
+        [
+          {
+            "node": "CORE | Motor conversacional único",
             "type": "main",
             "index": 0
           }

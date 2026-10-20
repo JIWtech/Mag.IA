@@ -4,7 +4,7 @@ import { ChevronDown, Check } from 'lucide-react';
 
 /**
  * NoriaSelect - Componente reutilizável de seleção estilizado para a NORIA.
- * 
+ *
  * @param {Object} props
  * @param {string} props.value - Valor atualmente selecionado.
  * @param {(value: string) => void} props.onValueChange - Callback acionado na seleção de novo valor.

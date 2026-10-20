@@ -71,6 +71,7 @@ import { Appointments } from '../features/appointments/components/Appointments';
 import { SettingsPage } from '../features/settings/components/SettingsPage';
 import { AuthShell } from '../features/auth/components/AuthShell';
 import { LoginPage } from '../features/auth/components/LoginPage';
+import { HomePage } from '../LandingPage';
 import { NoriaSelect } from '../components/NoriaSelect';
 import {
   activePageStorageKey,
@@ -1048,6 +1049,11 @@ function App() {
   const hasBootstrapped = isSessionBootstrapped();
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const authPreviewMode = urlParams?.get('auth');
+  const showHome = !urlParams?.get('app') && !authPreviewMode;
+
+  if (showHome) {
+    return <HomePage />;
+  }
 
   if (authPreviewMode === 'loading' || checkingAuth) {
     return <AuthShell title="Carregando NORIA..." />;
