@@ -1,3 +1,65 @@
+# Legenda sem contexto de anexo no auditor — 401686 — 20/10/2026
+
+**Última falha real consultada:** execução 401686, às 04:17:11 BRT de 20/10,
+evento `75626a2b-4af1-491d-82e4-b4c398081237`,
+`DIALOGUE_REVIEW_REQUIRED:SEMANTIC_FACT_UNSUPPORTED`. O prepare identifica a
+Crosser e gera `Claro, segue a foto da Yamaha Crosser 2023.`, com facts=[].
+O output EXT commercial.decide mantém ação authorized, produto, URL JPEG e
+image_authorization vinculados ao tenant, sessão, token, request e inbound atual.
+O mesmo envelope da ação aparece no evento auditado. Não foi perda de ação,
+autorização de Storage ou interpretação da mensagem.
+
+**Publicação conferida por export somente leitura:** CORE versão
+`8bc735a9-d54b-456e-8e16-b9a65879c067`, hash
+`8dd4993aa82709120878264689503ebd3b5e534c43d0e43fd875f78762d906c8` nos três nós;
+EXT versão `f31aa519-a8f8-4f6c-a89a-af0b151010a5`, hash
+`c251e7d5d264baf0e65866752d8464db9e80f9302bde13e09e2ac8ee5c830336`.
+Ambos mostravam Published, sem rascunho pendente. O hash executado também consta
+do evento do Supabase. Não é divergência comprovada de publicação.
+
+**Primeira falha de integração:** após validar a ação para transporte, finalize
+não a fornecia ao auditor. semantic_sources derivava somente de facts; neste caso
+o auditor recebia sources=[] e nenhum anexo, enquanto sua instrução exigia prova
+para toda afirmação. Retornou unsupported para a legenda inteira. CORE descartou
+a foto após essa rejeição, antes da chamada Evolution de imagem. O provedor
+confirmou somente a resposta técnica (`3EB0CEF5682C88E1CAE48A`), não a foto.
+
+**Correção pontual:** o validador técnico da ação registra um handle local em
+WeakMap, com snapshot do transporte, produto e identidade completa já verificados.
+Finalize entrega esse handle ao auditor; somente o mesmo objeto intacto, da sessão
+e token atuais, gera o contexto attachments. O modelo recebe identidade do produto
+e estado authorized_for_dispatch, sem URL, segredo ou afirmação de entrega. A chave
+da prova semântica inclui esse contexto para impedir reaproveitamento após mudança.
+Nenhuma decisão comercial foi movida da EXT para o CORE.
+
+Relatório independente pode usar attachment_caption com referência exata ao anexo,
+produto e mode=presentation. O validador exige o contexto autorizado, cobertura
+integral do texto, ausência de evidence factual misturada e preservação da exigência
+de suporte para todos os claims declarados. Referência ausente/de outro produto,
+mode=delivery_confirmation ou visual_description são rejeitados. Preço, condição,
+características e descrição visual continuam exigindo claims/sources normais;
+legenda não pode mascará-los. Technical_media_disclosure continua rejeitado.
+Não há regex de frases, reconhecimento textual de intenção, reescrita da resposta,
+conversão do relatório antigo em sucesso nem confirmação de envio simulada.
+
+**Verificações pontuais offline:** o relatório unsupported original continua
+rejeitado. Mock de um novo relatório com referência válida passa pela auditoria
+integral com o envelope real; o payload inclui o anexo validado apesar de facts=[].
+Falta de anexo, outro produto, confirmação de entrega, descrição visual e facts
+sem suporte são rejeitados. Clonar o objeto ou alterar URLs invalida o handle e a
+chave semântica. Transporte/receipts/fila/gates e EXT não modificados; sintaxe,
+paridade, hashes, anti-hardcode e diff conferidos. Dados privados e exports ficam
+em scratch/photo-caption-401686, ignorada pelo Git, sem inclusão no pacote público.
+
+CORE local `3eecd85216b207782fdd744071bd14d073e8084a83e14bca0e2c7351380b0509`;
+EXT permanece `c251e7d5d264baf0e65866752d8464db9e80f9302bde13e09e2ac8ee5c830336`.
+**Pendente:** publicar CORE mediante autorização, conferir paridade com a EXT e
+homologar um novo relatório Gemini e entrega real com recibo de imagem. O teste
+com mock não comprova a classificação real do Gemini nem o envio em produção.
+Nada publicado, alterado no Supabase, recuperado ou enviado nesta tarefa. Rollback
+para CORE publicado 8dd4993a; EXT não exige alteração. P0 permanece aberto até
+confirmação ponta a ponta; não reenviar automaticamente execuções antigas.
+
 # Ação comercial de fotos e naturalidade — 401337/401365 — 20/10/2026
 
 **Evidência real, somente leitura:** ambas executaram CORE
@@ -29,6 +91,8 @@ settings verificados. Ambiguidade, trava humana, encaminhamento, configuração
 desabilitada ou prova de imagem ausente não autorizam envio. Não infere intenção
 por palavras, não autoriza uma oferta da própria IA sem pedido/aceite e não usa
 imagens fornecidas pelo CORE como substituto do snapshot lido pela EXT.
+Slots de catálogo persistidos na sessão seguem no envelope como IDs para a EXT
+resolver referências ordinais, preservando posições removidas sem trocar veículo.
 
 CORE valida a ação, identidade da decisão, IDs de evidência/requisição, produto e
 URLs contra a prova de mídia; não reinterpreta a mensagem nem escolhe veículo.
@@ -55,7 +119,7 @@ anti-hardcode e diff --check conferidos. Comparação AST confirmou que transpor
 fila e funções fora do escopo permaneceram iguais. Evidência privada em
 scratch/photo-action-401365, ignorada pelo Git. Não adicionar esses dados ao pacote.
 
-CORE local `b6859bdfc484bebccbc42a2c7e9731c94607918711fcd8e0194c0213dca969a8`;
+CORE local `8dd4993aa82709120878264689503ebd3b5e534c43d0e43fd875f78762d906c8`;
 EXT local `c251e7d5d264baf0e65866752d8464db9e80f9302bde13e09e2ac8ee5c830336`.
 **Implantação pendente, sem publicação nesta tarefa:** publicar EXT e depois CORE
 de forma coordenada. O novo CORE exige o contrato da ação; não publicar CORE novo
