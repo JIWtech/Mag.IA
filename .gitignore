@@ -12,3 +12,6 @@ tools/*.exe
 /clients/wesley_automoveis/contacts.vcf
 audit-package-*/
 scratch/
+
+# Configuração MCP local pode conter credenciais.
+/mcp_config.json

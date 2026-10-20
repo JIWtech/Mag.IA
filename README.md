@@ -13,6 +13,10 @@ deve ficar aqui.
 
 O parâmetro `app=1` abre a plataforma; remova-o para visualizar a landing page.
 
+Para configurar o MCP local, copie `mcp_config.example.json` para
+`mcp_config.json` e preencha as credenciais apenas nessa cópia, ignorada pelo Git.
+Nunca versione tokens pessoais ou chaves de acesso.
+
 ## Organização dos arquivos
 
 - `app/`: frontend, landing page e painel.
