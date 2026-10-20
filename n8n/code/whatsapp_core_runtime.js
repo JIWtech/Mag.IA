@@ -30,6 +30,13 @@ async function runTurn() {
   message.message_id = turn.messages.at(-1).id;
   setCurrentText(turn.messages.map(item => item.text).filter(Boolean).join('\n\n'));
   originalTextOrCaption = displayMessageText = rawText;
+  const exclusion = await contactExclusionStatus(context);
+  if (exclusion.blocked) {
+    if (!await commit()) return { ok: true, skipped: true, reason: 'superseded' };
+    await recordContactExclusion(context, exclusion);
+    await complete('done');
+    return { ok: true, skipped: true, reason: exclusion.reason };
+  }
   const controlHistory = await loadRecentHistory(context);
   if (turn.history_boundary_changed) {
     await complete('cancelled'); return { ok:true, skipped:true, reason:'attendance_changed' };

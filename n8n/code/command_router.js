@@ -118,7 +118,24 @@ async function main(helpers) {
   }
 
   async function insertEvent(event) {
-    const { supabaseUrl } = supabaseConfig();
+    const { supabaseUrl, anonKey } = supabaseConfig();
+    if (event.channel_type === 'whatsapp' && (event.sender_type === 'human'
+      || ['conversation_closed', 'conversation_assigned', 'resume_ai', 'appointment_payment_confirmed', 'manual_reply', 'handoff_requested'].includes(event.service))) {
+      let saved;
+      try {
+        saved = await httpJson('POST', supabaseUrl + '/rest/v1/rpc/magia_record_turn_control_event', {
+          apikey: anonKey, Authorization: 'Bearer ' + bearerToken(), 'Content-Type': 'application/json',
+        }, { p_event: event });
+      } catch (error) {
+        const status = Number(error?.statusCode || error?.response?.status || error?.response?.statusCode || 0);
+        if (status === 404 || error?.response?.data?.code === 'PGRST202') {
+          throw new Error('TURN_CONTROL_RPC_UNAVAILABLE: O banco e o workflow precisam da implantação coordenada do controle de atendimento. A operação não foi confirmada.');
+        }
+        throw error;
+      }
+      if (!(Array.isArray(saved) ? saved[0] : saved)?.id) throw new Error('CONTROL_ORIGIN_NOT_PERSISTED');
+      return saved;
+    }
     return await httpJson('POST', supabaseUrl + '/rest/v1/channel_events', serviceHeaders('return=representation'), event);
   }
 
@@ -255,7 +272,7 @@ async function main(helpers) {
   const command = required(input.command, 'command');
   const tenantSlug = required(input.tenant_slug, 'tenant_slug').toLowerCase();
   const payload = input.payload || {};
-  if (!['manual_reply', 'broadcast_send', 'close_conversation', 'assign_conversation', 'confirm_payment_signal', 'suggest_kanban_flow_order', 'apply_kanban_flow_order'].includes(command)) throw new Error('command nao suportado: ' + command);
+  if (!['manual_reply', 'broadcast_send', 'broadcast_campaign', 'close_conversation', 'assign_conversation', 'confirm_payment_signal', 'suggest_kanban_flow_order', 'apply_kanban_flow_order'].includes(command)) throw new Error('command nao suportado: ' + command);
 
   const user = await validateUserSession();
   const tenant = await loadTenant(tenantSlug);
@@ -263,6 +280,25 @@ async function main(helpers) {
 
   if (command === 'suggest_kanban_flow_order') return await suggestKanbanFlowOrder(tenant, payload);
   if (command === 'apply_kanban_flow_order') return await applyKanbanFlowOrder(tenant, payload);
+
+  if (command === 'broadcast_campaign') {
+    const campaignId = required(payload.campaign_id, 'payload.campaign_id');
+    const { supabaseUrl } = supabaseConfig();
+    const campaignPath = supabaseUrl + '/rest/v1/broadcast_campaigns?tenant_id=eq.' + encodeURIComponent(tenant.id)
+      + '&id=eq.' + encodeURIComponent(campaignId);
+    const candidates = await httpJson('GET', campaignPath + '&select=*', serviceHeaders());
+    const candidate = Array.isArray(candidates) ? candidates[0] : null;
+    if (!candidate) throw new Error('Campanha nao encontrada nesta empresa');
+    if (!candidate.consent_confirmed_at) throw new Error('Campanha sem confirmacao de autorizacao dos contatos');
+    if (!['queued', 'scheduled'].includes(candidate.status)) throw new Error('Campanha nao esta aguardando envio');
+
+    const claimedRows = await httpJson('PATCH', campaignPath + '&status=in.(queued,scheduled)',
+      serviceHeaders('return=representation'), { status: 'sending', started_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    const campaign = Array.isArray(claimedRows) ? claimedRows[0] : null;
+    if (!campaign) throw new Error('Campanha ja foi iniciada ou alterada');
+    return { ok: true, command, campaign_id: campaign.id, tenant_id: tenant.id, tenant_slug: tenantSlug,
+      status: 'sending', queued: true, sent_by_user: user.email || payload.sent_by_user || 'NORIA' };
+  }
 
   const channelType = required(payload.channel_type, 'payload.channel_type').toLowerCase();
   const externalConversationId = required(payload.external_conversation_id, 'payload.external_conversation_id');

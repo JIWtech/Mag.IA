@@ -1,0 +1,931 @@
+.appointments-page {
+  grid-template-columns: minmax(340px, 0.75fr) minmax(420px, 1.25fr);
+  align-items: start;
+}
+
+.appointment-form-panel,
+.appointment-list-panel {
+  min-height: 0;
+}
+
+.appointment-groups {
+  max-height: calc(100vh - 190px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: 4px;
+}
+
+.appointment-day {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.appointment-day h3 {
+  margin: 4px 0 2px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: -0.2px;
+  text-transform: capitalize;
+}
+
+.appointment-day h3::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+  flex-shrink: 0;
+}
+
+.appointment-day h3::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.appointment-card {
+  display: grid;
+  grid-template-areas: "time body status";
+  grid-template-columns: 128px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brand);
+}
+
+.appointment-card .appointment-time {
+  grid-area: time;
+}
+
+.appointment-card>div:nth-child(2) {
+  grid-area: body;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.appointment-card>.badge {
+  grid-area: status;
+  justify-self: end;
+}
+
+.appointment-card[data-status="scheduled"],
+.appointment-card[data-status="agendado"] {
+  border-left-color: var(--brand);
+}
+
+.appointment-card[data-status="confirmed"],
+.appointment-card[data-status="confirmado"],
+.appointment-card[data-status="done"],
+.appointment-card[data-status="concluido"] {
+  border-left-color: var(--green);
+}
+
+.appointment-card[data-status="payment_reported"],
+.appointment-card[data-status="aguardando_verificacao"] {
+  border-left-color: var(--amber);
+}
+
+.appointment-card[data-status="cancelled"],
+.appointment-card[data-status="cancelado"] {
+  border-left-color: var(--red);
+}
+
+.appointment-card[data-status="scheduled"] .badge,
+.appointment-card[data-status="agendado"] .badge {
+  background: var(--brand-soft);
+  color: var(--brand);
+  border-color: rgba(0, 224, 255, 0.35);
+}
+
+.appointment-card[data-status="confirmed"] .badge,
+.appointment-card[data-status="confirmado"] .badge,
+.appointment-card[data-status="done"] .badge,
+.appointment-card[data-status="concluido"] .badge {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--green);
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.appointment-card[data-status="payment_reported"] .badge,
+.appointment-card[data-status="aguardando_verificacao"] .badge {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--amber);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.appointment-card[data-status="cancelled"] .badge,
+.appointment-card[data-status="cancelado"] .badge {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--red);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.appointment-card>div:nth-child(2) strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.15px;
+  margin-bottom: 2px;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.appointment-card>div:nth-child(2) span {
+  color: var(--brand);
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+.appointment-time {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  border: 1px solid rgba(0, 224, 255, 0.25);
+  white-space: nowrap;
+}
+
+.appointment-card .appointment-time strong,
+.appointment-time strong {
+  color: var(--brand);
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  line-height: 1;
+}
+
+.appointment-card .appointment-time strong::after,
+.appointment-time strong::after {
+  content: "→";
+  margin-left: 6px;
+  color: #7861FF;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.appointment-card .appointment-time span,
+.appointment-time span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.appointment-card p {
+  margin: 8px 0 0;
+  padding-left: 9px;
+  border-left: 2px solid rgba(0, 224, 255, 0.35);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.appointment-form-panel .textarea-label textarea {
+  min-height: 90px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* ==========================================================================
+   Agendamentos - Padrão Visual NORIA e Responsividade
+   ========================================================================== */
+@media (max-width: 1366px) {
+  .appointments-page {
+    grid-template-columns: minmax(320px, 0.72fr) minmax(380px, 1.28fr);
+    gap: 14px;
+  }
+
+  .appointments-page .form-row-two {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .appointment-card {
+    grid-template-areas:
+      "time status"
+      "body body";
+    grid-template-columns: 1fr auto;
+    gap: 8px 12px;
+    padding: 12px;
+  }
+
+  .appointment-card .appointment-time {
+    width: fit-content;
+  }
+}
+
+@media (max-width: 1280px) {
+  .appointments-page {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    overflow-y: auto;
+  }
+
+  .appointments-page .appointment-form-panel,
+  .appointments-page .appointment-list-panel {
+    flex-shrink: 0;
+    min-height: auto;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .appointments-page .appointment-groups {
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+
+  .appointments-page .form-row-two {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .appointments-page .form-row-two {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+/* Refinamento visual escopado: Agendamentos */
+.appointments-page {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.42fr) minmax(0, 0.58fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.appointments-page .form-row-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  width: 100%;
+}
+
+.appointments-page .form-row-two>.appointment-field-label {
+  min-width: 0;
+  width: 100%;
+}
+
+.appointments-page .appointment-form-panel,
+.appointments-page .appointment-list-panel {
+  background:
+    linear-gradient(135deg, rgba(0, 224, 255, 0.045), transparent 42%),
+    linear-gradient(315deg, rgba(120, 97, 255, 0.035), transparent 48%),
+    var(--surface);
+  border-color: color-mix(in srgb, var(--line) 86%, var(--brand));
+}
+
+.appointment-panel-title {
+  margin-bottom: 16px;
+  padding-bottom: 0;
+  position: relative;
+}
+
+.appointment-panel-title>div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.appointment-panel-title>div>svg {
+  color: var(--brand);
+  flex-shrink: 0;
+}
+
+/* Títulos com sublinhado em degradê NORIA ancorado estritamente ao texto */
+.appointment-panel-title h2 {
+  position: relative;
+  display: inline-block;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  padding-bottom: 6px;
+  margin: 0;
+}
+
+.appointment-panel-title h2::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 38px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), #489cff 54%, var(--violet));
+}
+
+/* Desativa sublinhado incorreto que ficava ancorado no container do campo/input */
+.appointment-panel-title::after,
+.appointment-field-label::after {
+  display: none !important;
+}
+
+/* Labels em coluna sem bordas ou sublinhados no container do campo */
+.appointment-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+  position: static;
+  padding-bottom: 0;
+}
+
+/* Sublinhado em degradê NORIA ancorado exclusivamente ao texto do label */
+.appointment-label-text,
+.appointment-field-label>span {
+  position: relative;
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  padding-bottom: 5px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.1px;
+}
+
+.appointment-label-text::after,
+.appointment-field-label>span::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 26px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), #489cff 54%, var(--violet));
+  pointer-events: none;
+}
+
+.appointment-form-panel .textarea-label {
+  margin-top: 4px;
+}
+
+.appointment-form-panel .form-grid input,
+.appointment-form-panel .form-grid select,
+.appointment-form-panel .textarea-label textarea,
+.appointment-form-panel .appointment-select {
+  min-width: 0;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(5, 14, 29, 0.9);
+  border-color: color-mix(in srgb, var(--line) 88%, var(--brand));
+  color: var(--text);
+}
+
+.appointment-form-panel .form-grid input:hover,
+.appointment-form-panel .form-grid select:hover,
+.appointment-form-panel .textarea-label textarea:hover,
+.appointment-form-panel .appointment-select:hover {
+  border-color: color-mix(in srgb, var(--brand) 38%, var(--line));
+}
+
+.appointment-form-panel .form-grid input:focus,
+.appointment-form-panel .form-grid select:focus,
+.appointment-form-panel .textarea-label textarea:focus,
+.appointment-form-panel .appointment-select:focus-visible,
+.appointment-form-panel .appointment-select[data-state="open"] {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(0, 224, 255, 0.1);
+}
+
+.appointment-form-panel input[type="date"],
+.appointment-form-panel input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
+.appointment-form-panel input::-webkit-calendar-picker-indicator {
+  filter: invert(75%) sepia(75%) saturate(950%) hue-rotate(140deg);
+  cursor: pointer;
+}
+
+.appointment-form-panel .form-grid input,
+.appointment-form-panel .form-grid select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.appointment-form-panel .appointment-select,
+.appointment-field-label .appointment-select,
+.appointment-field-label .noria-select-trigger {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  display: flex !important;
+  box-sizing: border-box !important;
+}
+
+.appointment-form-panel .appointment-select .noria-select-value-wrap {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appointment-form-panel .appointment-select .noria-select-icon,
+.appointment-form-panel .appointment-select .noria-select-chevron {
+  color: var(--brand);
+}
+
+.appointment-form-panel .textarea-label textarea {
+  min-height: 64px;
+  height: 64px;
+}
+
+.appointment-save-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.appointment-save-row .primary-button {
+  width: fit-content;
+  min-height: 36px;
+  height: 36px;
+  padding-inline: 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  background: linear-gradient(135deg, rgba(0, 224, 255, 0.88), rgba(72, 156, 255, 0.82) 58%, rgba(120, 97, 255, 0.8));
+  color: #06111f;
+}
+
+.appointment-groups {
+  max-height: min(640px, calc(100vh - 240px));
+  gap: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.appointment-groups::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.appointment-day h3::before {
+  display: none;
+}
+
+.appointment-day h3 {
+  position: relative;
+  padding-bottom: 8px;
+}
+
+.appointment-day h3::after {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 36px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--brand), #489cff 54%, var(--violet));
+}
+
+.appointment-card {
+  border-left: 1px solid var(--line);
+  background: linear-gradient(105deg, rgba(0, 224, 255, 0.07), rgba(72, 156, 255, 0.035) 46%, rgba(120, 97, 255, 0.045)), var(--surface-soft);
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.appointment-card:hover {
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--violet));
+  background: linear-gradient(105deg, rgba(0, 224, 255, 0.1), rgba(72, 156, 255, 0.05) 46%, rgba(120, 97, 255, 0.065)), var(--surface-soft);
+}
+
+.appointment-card[data-status],
+.appointment-card[data-status="scheduled"],
+.appointment-card[data-status="confirmed"],
+.appointment-card[data-status="payment_reported"],
+.appointment-card[data-status="cancelled"] {
+  border-left-color: color-mix(in srgb, var(--line) 88%, var(--brand));
+}
+
+.appointment-time {
+  background: rgba(0, 224, 255, 0.075);
+  border-color: rgba(0, 224, 255, 0.2);
+}
+
+.appointment-card>div:nth-child(2) span {
+  color: var(--text-muted);
+}
+
+.appointment-contact-meta,
+.appointment-channel-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.appointment-contact-meta svg {
+  color: #ab8cff;
+}
+
+.appointment-channel-meta.channel-whatsapp {
+  color: #48d88d;
+}
+
+.appointment-channel-meta.channel-telegram {
+  color: #49b9ff;
+}
+
+.appointment-channel-meta.channel-instagram {
+  color: #d884c9;
+}
+
+/* Refinamento estrutural e de densidade da tela de agendamentos */
+@media (min-width: 1101px) {
+  .appointments-page {
+    align-items: stretch;
+  }
+
+  .appointments-page .appointment-form-panel,
+  .appointments-page .appointment-list-panel {
+    height: min(600px, calc(100vh - 176px));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .appointments-page .appointment-form-panel .form-grid,
+  .appointments-page .appointment-list-panel .appointment-groups {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+
+  .appointments-page .appointment-form-panel .form-grid::-webkit-scrollbar,
+  .appointments-page .appointment-list-panel .appointment-groups::-webkit-scrollbar {
+    display: none;
+  }
+
+  .appointments-page .appointment-list-panel .appointment-groups {
+    flex: 1;
+    max-height: none;
+  }
+}
+
+.appointment-form-panel .form-grid {
+  gap: 10px;
+}
+
+.appointment-panel-title {
+  margin-bottom: 12px;
+}
+
+.appointment-field-label {
+  gap: 6px;
+}
+
+.appointment-card {
+  display: block;
+  padding: 12px;
+}
+
+.appointment-card .appointment-time {
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+
+.appointment-card-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.appointment-card-heading,
+.appointment-card-title-row,
+.appointment-card-meta-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.appointment-card-heading {
+  justify-content: space-between;
+}
+
+.appointment-card-title-row {
+  flex: 1;
+}
+
+.appointment-card-title-row > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appointment-card-heading .badge {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+.appointment-contact-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.appointment-contact-row > svg {
+  color: #ab8cff;
+  flex-shrink: 0;
+}
+
+.appointment-contact-row > span:not(.appointment-channel-meta) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.appointment-channel-meta {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  max-width: 24px;
+  max-height: 24px;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+  box-sizing: border-box;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+  line-height: 1;
+  font-size: 0;
+  overflow: hidden;
+}
+
+.appointment-channel-meta svg {
+  display: block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.appointment-channel-meta.channel-whatsapp {
+  color: #25d366;
+  background: rgba(37, 211, 102, 0.1);
+  border-color: rgba(37, 211, 102, 0.28);
+}
+
+.appointment-location-meta {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.appointment-location-meta svg {
+  flex-shrink: 0;
+  color: #38bdf8;
+}
+
+.appointment-card-notes,
+.appointment-card p {
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  font-style: italic;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  opacity: 0.72;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.appointment-card .appointment-time strong::after {
+  content: "–";
+  margin-left: 5px;
+}
+
+.noria-select-channel-icon {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.noria-select-channel-icon svg {
+  display: block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.noria-select-channel-icon.channel-whatsapp {
+  color: #25d366;
+}
+
+.noria-select-channel-icon.channel-telegram {
+  color: #49b9ff;
+}
+
+.noria-select-channel-icon.channel-instagram {
+  color: #e1306c;
+}
+
+.noria-select-channel-icon.channel-webchat {
+  color: var(--brand);
+}
+
+.noria-select-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.noria-select-group + .noria-select-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.noria-select-group-label {
+  padding: 6px 12px 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.noria-select-content.appointment-conversation-select-content,
+.noria-select-content.appointment-service-select-content {
+  max-height: none;
+  overflow: visible;
+  padding: 4px;
+  min-width: var(--radix-select-trigger-width, 240px);
+  max-width: max(var(--radix-select-trigger-width, 320px), 360px);
+}
+
+.noria-select-content.appointment-conversation-select-content .noria-select-viewport,
+.noria-select-content.appointment-service-select-content .noria-select-viewport {
+  max-height: min(340px, calc(100vh - 120px));
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.noria-select-content.appointment-conversation-select-content .noria-select-viewport::-webkit-scrollbar,
+.noria-select-content.appointment-service-select-content .noria-select-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.noria-select-content.appointment-conversation-select-content .noria-select-item {
+  min-height: 40px;
+  height: auto;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  justify-content: flex-start;
+  border-radius: 6px;
+  cursor: pointer;
+  box-sizing: border-box;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.noria-select-content.appointment-conversation-select-content .noria-select-item:hover,
+.noria-select-content.appointment-conversation-select-content .noria-select-item[data-highlighted] {
+  background: var(--surface-hover);
+  color: var(--text);
+  outline: none;
+}
+
+.noria-select-content.appointment-conversation-select-content .noria-select-item .noria-select-item-text {
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.noria-select-content.appointment-conversation-select-content .noria-select-item .noria-select-item-indicator-end {
+  margin-left: auto;
+}
+
+@media (max-width: 1100px) {
+  .appointments-page {
+    grid-template-columns: 1fr;
+  }
+
+  .appointments-page .appointment-groups {
+    max-height: 520px;
+  }
+}
+
+@media (max-width: 768px) {
+  .appointments-page {
+    gap: 12px;
+  }
+
+  .appointments-page .form-row-two {
+    grid-template-columns: 1fr;
+  }
+
+  .appointment-groups {
+    max-height: 480px;
+  }
+
+  .appointment-card {
+    display: block;
+  }
+
+  .appointment-save-row {
+    align-items: flex-start;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .appointment-save-row .primary-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .appointment-card-heading,
+  .appointment-card-meta-row {
+    gap: 6px;
+  }
+}

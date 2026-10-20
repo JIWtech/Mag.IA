@@ -1,0 +1,29 @@
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const root=path.resolve(__dirname,'..'),source=fs.readFileSync(root+'/n8n/sources/noria_core.js','utf8'),ts=require(root+'/app/node_modules/typescript');
+const ast=ts.createSourceFile('core.js',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+const functions=ast.statements.filter(ts.isFunctionDeclaration).map(n=>n.getText(ast)).join('\n');
+function harness(tenantSlug='wesley_automoveis'){const c={tenantSlug,console,Date,URL,Map,Set,JSON,Intl,turn:{messages:[]}};vm.createContext(c);vm.runInContext(functions,c);c.salesClassifyImages=async()=>[];return c;}
+const person={name:'Maria de Souza',cpf:'52998224725',cnh:'12345678901',birth_date:'1990-05-16'};
+async function media(text,lead=null){const c=harness();c.turn.messages=[{event_id:'m1',text}];return c.salesReadMedia({},[],lead);}
+test('data de revisão não se torna nascimento',async()=>assert.equal((await media('A revisão foi feita em 2020-01-20')).length,0));
+test('data de visita não se torna nascimento',async()=>assert.equal((await media('Vou visitar em 20/01/2026')).length,0));
+test('data isolada sem pedido de nascimento não satisfaz cadastro',async()=>assert.equal((await media('1990-05-16')).length,0));
+test('resposta isolada a pedido contextual de nascimento é aceita',async()=>{const rows=await media('1990-05-16',{state:{payment_mode:'financing',dialogue_context:{financing_next_field:'birth_date'}}});assert.equal(rows[0].extracted.birth_date,'1990-05-16');});
+test('mesmo com nascimento pendente data de revisão é ignorada',async()=>assert.equal((await media('Revisão em 2020-01-20',{state:{dialogue_context:{financing_next_field:'birth_date'}}})).length,0));
+test('nascimento identificado explicitamente é aceito',async()=>assert.equal((await media('Nasci em 16/05/1990'))[0].extracted.birth_date,'1990-05-16'));
+test('nascimento inválido requer revisão',async()=>assert.rejects(media('Nascimento: 31/02/1990'),/DOCUMENT_REQUIRES_REVIEW/));
+test('documento único completo satisfaz requisitos de uma pessoa',()=>{const r=harness().salesDocumentStatus([{extracted:person}]);for(const field of ['cpf_received','cnh_received','birth_date_received','full_name_received'])assert.equal(r[field],true);});
+test('CPF e CNH de nomes diferentes não completam cadastro',()=>{const r=harness().salesDocumentStatus([{extracted:{name:'Maria Souza',cpf:person.cpf}},{extracted:{name:'Pedro Silva',cnh:person.cnh,birth_date:person.birth_date}}]);assert.equal(r.identity_conflict,true);assert.equal(r.cnh_received,false);});
+test('CPFs conflitantes não são somados mesmo com nome idêntico',()=>{const r=harness().salesDocumentStatus([{extracted:person},{extracted:{...person,cpf:'11144477735'}}]);assert.equal(r.identity_conflict,true);});
+test('fragmentos OCR sem vínculo de identidade não completam cadastro',()=>{const r=harness().salesDocumentStatus([{extracted:{name:person.name,cpf:person.cpf}},{extracted:{cnh:person.cnh,birth_date:person.birth_date}}]);assert.equal(r.identity_unbound,true);assert.equal(r.cnh_received,false);});
+test('fragmentos que compartilham CPF podem completar cadastro',()=>{const r=harness().salesDocumentStatus([{extracted:{name:person.name,cpf:person.cpf}},{extracted:{cpf:person.cpf,cnh:person.cnh,birth_date:person.birth_date}}]);assert.equal(r.cnh_received,true);assert.equal(r.birth_date_received,true);});
+test('nascimento textual contextual completa documento sem nascimento',()=>{const r=harness().salesDocumentStatus([{extracted:{name:person.name,cpf:person.cpf,cnh:person.cnh}},{extracted:{birth_date:person.birth_date,source:'customer_text',identity_scope:'current_applicant'}}]);assert.equal(r.birth_date_received,true);});
+test('nome completo do lead incompatível com documento exige revisão',()=>assert.equal(harness().salesDocumentStatus([{extracted:person}],{customer_name:'Pedro Silva'}).identity_conflict,true));
+test('documento ilegível não contribui dados',()=>assert.equal(harness().salesDocumentStatus([{readable:false,extracted:person}]).cpf_received,false));
+test('Gênesis não troca cartão por financiamento via palavras-chave',()=>{const c=harness(),s={payment_mode:'credit_card'};assert.equal(c.salesApplyDeterministicPaymentState(s,[{text:'Quero pagar no cartão de crédito'}]).payment_mode,'credit_card');});
+test('Gênesis não presume financiamento quando semântica falta',()=>assert.equal(harness().salesApplyDeterministicPaymentState({payment_mode:'unknown'},[{text:'Vocês financiam?'}]).payment_mode,'unknown'));
+test('recusa parcial não encerra conversa por regex',()=>assert.equal(harness().salesCustomerDisposition('Não tenho interesse em financiar, quero pagar à vista'),''));
+test('desistência sem evidência da mensagem atual não é executada',()=>{const c=harness();assert.equal(c.salesCustomerDisposition('desisti',{valid:true,customer_disposition:{value:'declined',evidence_ids:['old']}},[{event_id:'now'}]),'');});
+test('desistência semântica com evidência atual é executada',()=>{const c=harness();assert.equal(c.salesCustomerDisposition('Não vou continuar',{valid:true,customer_disposition:{value:'declined',evidence_ids:['now']}},[{event_id:'now'}]),'declined');});
+test('outros tenants mantêm o comportamento legado',()=>assert.equal(harness('royal_4x4').salesCustomerDisposition('Não tenho interesse'),'declined'));
+test('schema primário define disposição semântica e instrução de recusa parcial',()=>{const schema=harness().salesSemanticIntentSchema();assert.ok(schema.required.includes('customer_disposition'));assert.match(schema.properties.customer_disposition.description,/alternativa continua active/);});

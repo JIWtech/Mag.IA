@@ -55,6 +55,71 @@ async function hasFutureAppointment(job) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+async function protectedEligibility(job, settings) {
+  if (settings.conversation_capability === 'sales_v1') {
+    const result = await rpc('magia_validate_sales_followup', { p_job: job.id, p_lease: job.lease_token });
+    return result?.allowed === true;
+  }
+  if (settings.contact_exclusion_enabled === true || settings.contact_exclusion_enabled === 'true') {
+    const result = await rpc('magia_contact_exclusion_status', { p_tenant: job.tenant_id, p_chat: job.external_conversation_id });
+    return result?.blocked === false;
+  }
+  return true;
+}
+
+function salesFollowUp(job, settings) {
+  // Neutral tenant-approved messages avoid interpreting documents or inventing stock/credit facts.
+  const text = settings.sales_follow_up?.messages?.[job.step_key];
+  if (typeof text !== 'string' || !text.trim() || text.length > 900) throw new Error('Sales follow-up message missing');
+  return { reply: text.trim(), model: null, usage: {} };
+}
+
+// Same durable reservation contract as the CORE (magia_gemini_reserve): the
+// tenant's daily Gemini budget and, when configured, the shared RPM/TPM/RPD/
+// concurrency controller. No Gemini HTTP call happens without a reservation.
+function geminiFollowUpRateConfig() {
+  const scope = env('GEMINI_RATE_SCOPE');
+  const maxRpm = Number(env('GEMINI_MAX_RPM', '0')), maxTpm = Number(env('GEMINI_MAX_TPM', '0')), maxRpd = Number(env('GEMINI_MAX_RPD', '0'));
+  const required = env('GEMINI_RATE_CONTROL_REQUIRED', 'false').toLowerCase() === 'true';
+  const distributed = /^[a-zA-Z0-9._:-]{1,120}$/.test(scope) && [maxRpm, maxTpm, maxRpd].every(value => Number.isFinite(value) && value > 0);
+  return { scope, maxRpm, maxTpm, maxRpd, required, distributed };
+}
+async function reserveGeminiFollowUp(job, settings, model, payload) {
+  const config = geminiFollowUpRateConfig();
+  // Every pre-send quota/controller refusal carries the same marker so deferred jobs are queryable
+  // (follow_up_jobs.error like 'GEMINI_QUOTA_DEFERRED:%'). The job is NOT retried or resent automatically.
+  if (config.required && !config.distributed) throw new Error('GEMINI_QUOTA_DEFERRED:controller_not_configured');
+  const configuredLimit = Number(settings.gemini_daily_limit ?? 500);
+  const dailyLimit = Number.isFinite(configuredLimit) ? Math.trunc(configuredLimit) : 500;
+  const leaseId = 'followup:' + String(job.id) + ':' + Date.now() + ':' + Math.random().toString(36).slice(2, 10);
+  const leaseTtlMs = Math.max(20000, Math.min(Number(env('GEMINI_LEASE_TTL_MS', '30000')) || 30000, 120000));
+  const cooldownMs = Math.max(1000, Math.min(Number(env('GEMINI_CIRCUIT_COOLDOWN_MS', '30000')) || 30000, 300000));
+  let estimated = 1000;
+  try {
+    estimated = Math.max(1, Math.ceil(JSON.stringify(payload || {}).length / 3.5)
+      + Math.min(Math.max(Number(payload?.generationConfig?.maxOutputTokens || 512), 1), 8192));
+  } catch (_) { }
+  let result;
+  try {
+    result = await rpc('magia_gemini_reserve', {
+    p_tenant_id: job.tenant_id, p_daily_limit: dailyLimit, p_model: model, p_lease_id: leaseId, p_estimated_tokens: estimated,
+    ...(config.distributed ? {
+      p_scope: config.scope, p_max_concurrent: Math.max(1, Math.min(Number(env('GEMINI_MAX_CONCURRENT_CALLS', '2')) || 2, 20)),
+      p_max_rpm: config.maxRpm, p_max_tpm: config.maxTpm, p_max_rpd: config.maxRpd,
+      p_lease_ttl_ms: leaseTtlMs, p_probe_cooldown_ms: cooldownMs,
+    } : {}),
+    });
+  } catch (_) { throw new Error('GEMINI_QUOTA_DEFERRED:controller_unavailable'); }
+  if (!result || result.allowed !== true) throw new Error('GEMINI_QUOTA_DEFERRED:' + String(result?.reason || 'unavailable').slice(0, 60));
+  return config.distributed ? { scope: config.scope, model, lease_id: leaseId } : null;
+}
+async function releaseGeminiFollowUp(lease, outcome) {
+  if (!lease) return;
+  try {
+    await rpc('magia_gemini_release', { p_scope: lease.scope, p_model: lease.model, p_lease_id: lease.lease_id, p_outcome: outcome, p_cooldown_ms: 30000 });
+  } catch (_) { }
+}
+
 async function generate(job, settings, history) {
   const model = String(settings.ai_model || env('GEMINI_MODEL', 'gemini-2.5-flash')).trim();
   const apiKey = env('GEMINI_API_KEY');
@@ -72,13 +137,22 @@ async function generate(job, settings, history) {
       'Retorne JSON com apenas a chave reply.'
     ],
   };
-  const body = await request.call(this, 'POST', 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent',
-    { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, {
+  const geminiPayload = {
       system_instruction: { parts: [{ text: prompt }] },
       contents: [{ role: 'user', parts: [{ text: JSON.stringify(input) }] }],
       generationConfig: { temperature: 0.35, maxOutputTokens: 500, responseMimeType: 'application/json',
         responseSchema: { type: 'OBJECT', properties: { reply: { type: 'STRING' } }, required: ['reply'] } },
-    });
+  };
+  const geminiLease = await reserveGeminiFollowUp(job, settings, model, geminiPayload);
+  let body;
+  try {
+    body = await request.call(this, 'POST', 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent',
+      { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }, geminiPayload);
+  } catch (error) {
+    await releaseGeminiFollowUp(geminiLease, 'released');
+    throw error;
+  }
+  await releaseGeminiFollowUp(geminiLease, 'success');
   const candidate = body?.candidates?.[0];
   if (!candidate || candidate.finishReason !== 'STOP') throw new Error('Gemini nao concluiu o follow-up');
   const text = candidate.content?.parts?.filter(part => !part.thought).map(part => part.text || '').join('') || '';
@@ -90,44 +164,58 @@ async function generate(job, settings, history) {
 const jobs = await rpc('magia_claim_followup_jobs', { p_limit: 20 });
 const outcome = [];
 for (const job of Array.isArray(jobs) ? jobs : []) {
+  let sendAttempted = false;
   try {
+    const settingsRows = await get('tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(job.tenant_id) + '&limit=1');
+    const settings = settingsRows?.[0]?.settings || {};
+    const sales = settings.conversation_capability === 'sales_v1';
+    if (!await protectedEligibility(job, settings)) {
+      await finish(job, 'cancelled', null, 'contact_or_sales_blocked');
+      outcome.push({ id: job.id, status: 'cancelled', reason: 'contact_or_sales_blocked' });
+      continue;
+    }
     if (await conversationChanged(job)) {
       await finish(job, 'cancelled', null, 'conversation_control_changed');
       outcome.push({ id: job.id, status: 'cancelled' });
       continue;
     }
-    if (await hasFutureAppointment(job)) {
+    if (!sales && await hasFutureAppointment(job)) {
       await finish(job, 'cancelled', null, 'appointment_exists');
       outcome.push({ id: job.id, status: 'cancelled', reason: 'appointment_exists' });
       continue;
     }
-    const [settingsRows, history, channelRows] = await Promise.all([
-      get('tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(job.tenant_id) + '&limit=1'),
-      get('channel_events?select=direction,message_text,created_at&tenant_id=eq.' + encodeURIComponent(job.tenant_id)
+    const [history, channelRows] = await Promise.all([
+      sales ? [] : get('channel_events?select=direction,message_text,created_at&tenant_id=eq.' + encodeURIComponent(job.tenant_id)
         + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeURIComponent(job.external_conversation_id)
         + '&order=created_at.desc&limit=16'),
       get('channels?select=external_id,config&tenant_id=eq.' + encodeURIComponent(job.tenant_id)
         + '&type=eq.whatsapp&status=eq.active&limit=1'),
     ]);
-    const settings = settingsRows?.[0]?.settings || {};
     const channel = channelRows?.[0];
     if (!channel?.external_id) throw new Error('Canal WhatsApp ativo nao encontrado');
-    const generated = await generate.call(this, job, settings, Array.isArray(history) ? history.reverse() : []);
+    const generated = sales ? salesFollowUp(job, settings)
+      : await generate.call(this, job, settings, Array.isArray(history) ? history.reverse() : []);
     if (await conversationChanged(job)) {
       await finish(job, 'cancelled', null, 'conversation_control_changed_before_send');
       outcome.push({ id: job.id, status: 'cancelled' });
       continue;
     }
-    if (await hasFutureAppointment(job)) {
+    if (!sales && await hasFutureAppointment(job)) {
       await finish(job, 'cancelled', null, 'appointment_exists_before_send');
       outcome.push({ id: job.id, status: 'cancelled', reason: 'appointment_exists' });
       continue;
     }
     const tenantSuffix = suffix(job.tenant_slug);
-    const base = env('EVOLUTION_API_URL_' + tenantSuffix).replace(/\/$/, '');
-    const key = env('EVOLUTION_API_KEY_' + tenantSuffix);
-    const instance = env('EVOLUTION_INSTANCE_' + tenantSuffix);
-    if (!base || !key || instance !== channel.external_id) throw new Error('Credenciais Evolution do tenant nao configuradas');
+    const base = (env('EVOLUTION_API_URL_' + tenantSuffix) || env('EVOLUTION_API_URL') || '').replace(/\/$/, '');
+    const key = env('EVOLUTION_API_KEY_' + tenantSuffix) || env('EVOLUTION_API_KEY');
+    const instance = env('EVOLUTION_INSTANCE_' + tenantSuffix) || channel.external_id;
+    if (!base || !key || !instance || (channel?.external_id && instance !== channel.external_id)) throw new Error('Credenciais Evolution do tenant nao configuradas');
+    if (!await protectedEligibility(job, settings)) {
+      await finish(job, 'cancelled', null, 'contact_or_sales_blocked_before_send');
+      outcome.push({ id: job.id, status: 'cancelled', reason: 'contact_or_sales_blocked_before_send' });
+      continue;
+    }
+    sendAttempted = true;
     const sent = await request.call(this, 'POST', base + '/message/sendText/' + encodeURIComponent(instance),
       { apikey: key, 'Content-Type': 'application/json' }, { number: String(job.external_conversation_id).replace(/@s\.whatsapp\.net$/, ''), text: generated.reply });
     const messageId = sent?.key?.id || sent?.message?.key?.id || sent?.id;
@@ -136,7 +224,7 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
       tenant_id: job.tenant_id, tenant_slug: job.tenant_slug, channel_type: 'whatsapp', external_conversation_id: job.external_conversation_id,
       external_message_id: String(messageId), direction: 'outbound', sender_type: 'assistant', contact_name: job.contact_name || 'Contato',
       message_text: generated.reply, service: 'follow_up', stage: 'Follow-up ' + job.step_key, handoff: false,
-      ai_provider: 'gemini_follow_up', ai_model: generated.model, ai_usage: generated.usage, delivery_status: 'sent',
+      ai_provider: sales ? 'configured_follow_up' : 'gemini_follow_up', ai_model: generated.model, ai_usage: generated.usage, delivery_status: 'sent',
       raw_payload: { follow_up: { job_id: job.id, step_key: job.step_key, objective: job.objective, anchor_event_id: job.anchor_event_id } },
     });
     const event = Array.isArray(saved) ? saved[0] : saved;
@@ -145,7 +233,7 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
   } catch (error) {
     const message = String(error?.message || error).slice(0, 500);
     // Sending can have unknown delivery after a transport failure; do not retry it blindly.
-    const status = /Evolution|retornou o id/i.test(message) ? 'uncertain' : 'failed';
+    const status = sendAttempted ? 'uncertain' : 'failed';
     await finish(job, status, null, message).catch(() => {});
     outcome.push({ id: job.id, status, error: message });
   }
