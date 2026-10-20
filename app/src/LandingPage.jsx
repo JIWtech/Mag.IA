@@ -47,6 +47,8 @@ const PROOF_POINTS = [
   { value: 'Handoff', label: 'Humanizado para a equipe na hora de fechar' },
 ];
 
+const WHATSAPP_CONTACT_URL = 'https://wa.me/5521993614704?text=Ol%C3%A1!%20Quero%20conhecer%20mais%20sobre%20a%20Noria.';
+
 const PIPELINE_METRICS = [
   { value: 1253, format: (v) => Math.round(v).toLocaleString('pt-BR'), label: 'Oportunidades', delta: '+18% de conversão mensal' },
   { value: 312, format: (v) => Math.round(v).toLocaleString('pt-BR'), label: 'Reuniões & visitas', delta: '+24% de comparecimento' },
@@ -351,6 +353,12 @@ export function HomePage() {
     }
   };
 
+  const startWhatsAppConversation = () => {
+    if (typeof window !== 'undefined') {
+      window.location.assign(WHATSAPP_CONTACT_URL);
+    }
+  };
+
   const handleSignOut = async () => {
     clearSessionBootstrapped();
     setHasSession(false);
@@ -428,7 +436,7 @@ export function HomePage() {
                 atende, sua equipe acompanha e nenhuma oportunidade fica esquecida.
               </p>
               <div className="lp-hero-ctas lp-rise" style={{ '--d': 5 }}>
-                <button className="lp-btn lp-btn--primary lp-btn--lg" type="button" onClick={() => goTo('?app=1')}>
+                <button className="lp-btn lp-btn--primary lp-btn--lg" type="button" onClick={startWhatsAppConversation}>
                   Ver a plataforma em ação <ArrowRight size={18} />
                 </button>
                 <a className="lp-btn lp-btn--quiet lp-btn--lg" href="#calculadora">
@@ -516,7 +524,7 @@ export function HomePage() {
             </div>
 
             <div data-reveal>
-              <SavingsSimulator onStart={() => goTo('?app=1')} />
+              <SavingsSimulator onStart={startWhatsAppConversation} />
             </div>
           </div>
         </section>
@@ -671,7 +679,7 @@ export function HomePage() {
           </nav>
         </div>
         <div className="lp-container lp-footer-bottom">
-          <span>© {new Date().getFullYear()} NORIA / Mag.IA. Todos os direitos reservados.</span>
+          <span>© {new Date().getFullYear()} NORIA. Todos os direitos reservados.</span>
           <span className="lp-mono">Inteligência em movimento</span>
         </div>
       </footer>
