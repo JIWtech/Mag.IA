@@ -1,3 +1,344 @@
+# Ação comercial de fotos e naturalidade — 401337/401365 — 20/10/2026
+
+**Evidência real, somente leitura:** ambas executaram CORE
+`93560efe75b10756802ca898237a2ae0d770336685e3658a893640bedfce2097`.
+401337 recebeu pedido explícito de foto da Honda CB 600RR: texto confirmado por
+`3EB00A175FCCB180D036C4` e evento sales_product_photo vinculado à mesma resposta,
+com inventory_product_id da Honda. 401365 recebeu apenas `Sim`: o próprio Gemini
+já interpretou photos/specific_product e vinculou a Crosser 2023 à evidência inbound
+atual. Texto `3EB0DD5842BA56F7021E67` confirmado, sem evento de foto relacionado.
+A falha está depois da interpretação: salesVehiclePhotoRequested(turnText) rejeita
+a confirmação curta por não conter suas palavras de disparo. O prompt ordenava
+responder sobre habilitação/contagens, explicando a linguagem técnica. Não foi
+demonstrada falha de Storage, seleção semântica, transporte ou perda de autorização.
+
+**Correção arquitetural:** remover do CORE salesVehiclePhotoRequested e
+salesCatalogPhotoCandidate, incluindo o seletor textual do envio. Gemini interpreta
+pedido e aceite contextual; prompt preserva a última pergunta da sessão para essa
+interpretação e orienta resposta curta, natural, sem retomar coleta alheia ao pedido.
+As instruções anteriores que mandavam narrar status/quantidade foram removidas.
+Nenhuma frase de atendimento é criada ou substituída por código novo.
+
+EXT Gênesis revalida o estoque/imagens e resolve a seleção com a semântica validada.
+Produz operations.product_photo, contrato noria_product_photo_action_v1, com status
+not_requested/requires_clarification/not_authorized/authorized, tenant_id,
+session_id, turn_token, request_id, product_id, urls, evidence_ids e request_ids.
+Exige pedido photos e tópicos correspondentes, evidência inbound do turno atual,
+produto único resolvido e coincidente com a autorização atual, elegibilidade e
+settings verificados. Ambiguidade, trava humana, encaminhamento, configuração
+desabilitada ou prova de imagem ausente não autorizam envio. Não infere intenção
+por palavras, não autoriza uma oferta da própria IA sem pedido/aceite e não usa
+imagens fornecidas pelo CORE como substituto do snapshot lido pela EXT.
+
+CORE valida a ação, identidade da decisão, IDs de evidência/requisição, produto e
+URLs contra a prova de mídia; não reinterpreta a mensagem nem escolhe veículo.
+Registra a ação no evento e reutiliza o transporte existente (resposta breve seguida
+da imagem, sem legenda técnica gerada pelo CORE). Gate humano, token, lease,
+reserva durável por imagem e tratamento de uncertain permanecem em sendChannelMessage,
+inalterado neste ajuste. Não se promete entrega antes da confirmação do provedor.
+
+O auditor semântico recebe, nos pedidos com fotos, a classificação adicional
+technical_media_disclosure para exposição de flags, status de canal ou contagens
+internas. O validador rejeita esse segmento e a reconciliação não pode apagá-lo para
+aprovar o texto. Reconhecer o pedido, identificar o veículo com prova ou explicar
+ausência de foto continua permitido. Não há regex/lista de palavras para julgar a
+naturalidade; a aderência dessa classificação depende de homologação real do Gemini.
+
+**Verificações pontuais offline:** outputs reais de 401337/401365 alimentam o fluxo
+EXT commercial.decide completo com o snapshot do banco substituído em memória,
+sem chamada externa; ambas geram ação da imagem correta e o CORE aceita o contrato.
+Recusa/ausência de pedido, ambiguidade, semântica inválida, flag desabilitada e trava
+humana impedem autorização. Sessão divergente, produto errado, prova de outro tenant
+e URLs duplicadas são rejeitados pelo CORE. Segmento technical_media_disclosure é
+rejeitado; legenda não factual permanece válida. Sintaxe, paridade e hashes,
+anti-hardcode e diff --check conferidos. Comparação AST confirmou que transporte,
+fila e funções fora do escopo permaneceram iguais. Evidência privada em
+scratch/photo-action-401365, ignorada pelo Git. Não adicionar esses dados ao pacote.
+
+CORE local `b6859bdfc484bebccbc42a2c7e9731c94607918711fcd8e0194c0213dca969a8`;
+EXT local `c251e7d5d264baf0e65866752d8464db9e80f9302bde13e09e2ac8ee5c830336`.
+**Implantação pendente, sem publicação nesta tarefa:** publicar EXT e depois CORE
+de forma coordenada. O novo CORE exige o contrato da ação; não publicar CORE novo
+com EXT antiga. Conferir hashes e homologar pedido explícito, aceite contextual e
+negação/ambiguidade com confirmação real de entrega e recibo. Não recuperar nem
+reenviar automaticamente os turnos antigos. Rollback coordenado para o par anterior
+93560efe/c792e439, sem alterar fila ou dados comerciais. O P0 depende dessa validação
+ponta a ponta; simulação local não é prova de naturalidade ou entrega em produção.
+
+# Cobertura do contrato de fotos — execução 401157 — 20/10/2026
+
+Consulta somente leitura e output do prepare/commercial.decide da execução real
+`401157`, às 03:38 BRT, evento `a94470fb-42ed-47b8-971b-7aea4aa573c4`.
+CORE executado `c16b07a6c9b9fccd5b5eb38e48f65b35cb954bb33e0b1c00da105ec90cff5902`;
+produto autorizado `honda|cb 600rr|2007|`, com uma imagem JPEG autorizada preservada
+pela EXT. Não houve nova evidência de perda da autorização ou falha no Storage.
+
+**Causa comprovada:** primary_reply é `Sim, o envio de fotos está habilitado.`.
+response_contract.facts associa esse mesmo excerpt a dois fatos: habilitação do
+canal (`enabled`) e contagem de fotos do produto (`1`). Ambos os valores existem no
+ledger, mas a frase só afirma o primeiro. O auditor independente retorna um único
+segmento supported_fact com evidência do canal e assertion eq/enabled; não fornece
+evidência semântica para a contagem. salesValidateSemanticEvidence corretamente
+retorna UNSUPPORTED_SEMANTIC_CLAIM. A falha não é uma rejeição indevida desse
+validador: a geração declarou um fato que o texto não afirma. O reconciliador
+salesScopeMediaAnswer mantinha todos os fatos cujo excerpt ocorria no texto e
+retornava null se o texto não mudasse, impedindo corrigir apenas o contrato.
+
+**Correção:** esclarecer no prompt que habilitação não afirma existência/quantidade.
+Na reconciliação de resposta exclusivamente de mídia, reter somente fatos ligados
+pelo auditor ao segmento correspondente, com ID, produto e valor idênticos. Permitir
+texto inalterado quando apenas declarações de mídia excedentes forem removidas.
+Não remover declaração comercial arbitrária para aceitar o mesmo texto. Manter
+segmentos auditados inteiros, sem cortar qualificadores/negações ou fabricar
+pontuação. Antes de registrar qualquer proof, revalidar a cobertura semântica do
+texto/contrato reconciliado e depois executar o mesmo validador determinístico.
+Registrar removed_claims e reconciled_facts junto dos motivos originais. O
+validador semântico permanece estrito e inalterado; confirmação de envio e
+autorização de mídia continuam independentes do estado enabled do canal.
+
+**Verificação pontual offline:** reproduzido o erro original e o retorno null do
+reconciliador anterior com os outputs reais; reconstruído o ledger com o produto
+autorizado da EXT. Mock do único relatório de auditoria registrado aceita o
+contrato reconciliado e preserva exatamente o texto. A flag complete=true do
+relatório é inferida da validação original (que já passou pela checagem de formato),
+pois o resumo persistido não guarda esse campo. Contradição operacional, fonte de
+outro produto e texto unsupported permanecem bloqueados; uma afirmação real de
+contagem continua exigindo sua própria assertion. Nenhuma chamada externa ou
+mensagem real. Sintaxe, anti-hardcode, paridade, funções fora do escopo e diff
+conferidos. Dados privados da reprodução ficam somente em scratch/photo-401157,
+ignorada pelo Git. Não adicionar esses arquivos ao pacote público.
+
+CORE local `93560efe75b10756802ca898237a2ae0d770336685e3658a893640bedfce2097`;
+EXT permanece `c792e4392f95cc88745710c918bb33f443c147ad557814a6e13b4000f4ab076a`.
+Nada publicado ou alterado em produção. Pendente publicação autorizada do CORE e
+homologação real Gemini → auditor → Evolution; não declarar o P0 encerrado antes
+da entrega confirmada. Rollback: artefato CORE c16b07a6 anterior, sem mudar EXT,
+fila ou dados de conversa.
+
+# Fotos após troca de veículo — execução 401000 — 20/10/2026
+
+Consulta somente leitura: último erro outbound da Gênesis às 03:26:44 BRT,
+evento `05485a2c-a886-4f92-bfb5-2d84160d54a2`; execução n8n `401000`, versão
+`32300b1a-d0d9-4cba-b5f1-c6eb5fcf4fa0`, CORE executado
+`12759552ad8572ef8d41c03eff0d63591bc0e509207151a2ff717c8ef833f33f`.
+Export atual da EXT, sem rascunho pendente (Published), versão
+`34a8ac9c-d369-4ea1-b49b-17d2bfdec386`: política
+`c792e4392f95cc88745710c918bb33f443c147ad557814a6e13b4000f4ab076a`,
+identidade `ac2ff0da0006b0a5b01eccddfc526e75bc35472c315e88253a8acee69040c1fa`.
+Esse export comprova a versão publicada atual da EXT; o output comercial da
+execução comprova a preservação da autorização, sem inferir hash histórico da EXT
+apenas do hash esperado embutido no CORE.
+
+**Primeiro ponto comprovadamente inválido:** prepare. Pedido atual de foto da CB;
+semantic_intent e produto validado identificam a CB, mas o primary_facts.product.id
+ainda aponta à PCX do foco anterior da conversa. O modelo só recebeu usable_photo_count no
+namespace desse foco anterior: não havia contagem por item no ledger do estoque.
+Gerou primary_reply afirmando canal desabilitado apesar do fato enabled, com
+excerpts de facts vazios e source_product_id da CB aplicado a official.product.*
+da PCX. Não se atribui causalidade exclusiva a um comportamento interno do Gemini:
+estão comprovados o contrato inválido e os insumos incompletos/contraditórios.
+O prompt também simultaneamente mandava anunciar envio futuro e proibia fazê-lo.
+
+**Trajeto:** prepare e EXT commercial.decide preservam image_authorization da CB
+(JPEG, hash e tenant/produto vinculados); authorized_product mantém a prova e URL.
+O auditor rejeita identidade de produto e excerpts, sem executar auditor semântico
+quando o preflight já é inválido. Rejeição zera catalogPhotoToSend antes de
+sendChannelMessage. O envio confirmado no ledger
+(`a74f59f0-8860-41bd-89b8-55bc51d7f7ef`, provider `3EB083EC2C05A5A6011F0C`)
+corresponde à resposta técnica de erro, não à foto. Não é falha demonstrada de
+Storage ou Evolution, nem CORE anterior ainda publicado.
+
+**Correção pontual:** expor contagem autorizada por produto também em
+official.inventory.N.usable_photo_count e na projeção para o Gemini; manter a
+ordem da projeção/ledger; expor explicitamente o produto candidato no contexto e
+orientar o uso do índice/ID do novo produto, sem reatribuir facts do foco antigo.
+Remover instruções incompatíveis de promessa de entrega: capacidade atual vem do
+ledger; confirmação de entrega exige provedor. A contagem final usa o produto
+autorizado atual, sem priorizar uma cópia antiga do estoque. A seleção da EXT
+preserva a prova antes da projeção pública que a omite. Contagens indexadas passam
+pela mesma exigência de assertion operacional e vínculo de produto do auditor.
+Não preencher excerpts, corrigir texto do modelo ou forjar aceitação do contrato.
+
+**Validação local:** captura offline do payload de geração com dados da execução,
+sem chamar Gemini: CB possui contagem 1 e ID no mesmo índice do ledger; contrato
+original continua rejeitado; referência indexada válida continua exigindo auditor
+semântico; produto divergente, assertion ausente e contagem contraditória continuam
+bloqueados. Snapshot antigo não remove a prova final. Artefatos regenerados,
+sintaxe, paridade e anti-hardcode conferidos; diff --check limpo. Evidência privada
+em scratch/photo-401000 (ignorada pelo Git); não publicar esses dados de conversa.
+
+CORE local: `c16b07a6c9b9fccd5b5eb38e48f65b35cb954bb33e0b1c00da105ec90cff5902`.
+EXT, envio, fila, gates, sessões e controle humano não alterados por este ajuste.
+**Pendente:** homologar uma geração real e envio autorizado após publicação do
+CORE; os checks offline não comprovam aderência do Gemini nem entrega da foto.
+Nada publicado, migrado, recuperado ou enviado nesta investigação. Rollback:
+restaurar o artefato CORE anterior preservado na cópia de revisão; EXT não exige
+mudança. Não declarar o P0 encerrado antes da confirmação ponta a ponta.
+
+# Saudação após encerramento — execução 400724 — 20/10/2026
+
+**Causa:** não houve falha de reset/fila. O turno atual contém somente a saudação
+informada pelo cliente; Gemini classificou primary_intent=other/topics=[greeting],
+confidence=high, sem produto, catálogo, referência, coleta ou ação humana. Sua
+resposta natural foi `Olá! Boa noite. Como posso ajudar você hoje?`. Porém, gerou
+dialogue_plan.requests=[{id:req_1,topic:other,subject:unspecified}] e answers=[].
+validatePlan normaliza IDs para request_1; a auditoria corretamente exige cobertura
+desse pedido declarado. O falso pedido nasce da representação do ato social como
+other, não da troca de sessão nem de perda da resposta pela EXT.
+
+**Correção:** prompt/schema do contrato primário distinguem atos sociais de pedidos;
+uma saudação exclusivamente social não precisa criar um pedido de preenchimento.
+O planejador também reconcilia o caso já observado usando somente a interpretação
+semântica validada: high/other/topics exclusivamente greeting, sem qualquer sinal
+estruturado de pedido comercial, referência, filtro, próximo requisito ou handoff.
+Só omite requests other/unspecified quando a resposta não declara fatos, coleta,
+ação ou produto, nem já possui answers; registra request_reconciliation com os IDs
+omitidos e preserva o plano bruto do Gemini. Não analisa palavras/frases do cliente,
+não gera saudação fixa e não pula a validação de replies/fatos/execução.
+Qualquer pedido price/financing/catalog/human, turno misto, other não social ou
+interpretação insuficiente conserva os pedidos e a auditoria de cobertura original.
+O novo helper é genérico; o prompt se aplica ao contrato primário já existente.
+
+**Encerramento/frontend:** execução 400714, às 03:06:56 BRT, nó Responder Interface1
+retornou ok=true, command=close_conversation e saved com o evento
+`e8e48d8b-a31c-4347-9001-6a11aa8ab302`, service=conversation_closed,
+delivery_status=closed. A linha foi relida no Supabase. O novo turno usa esse ID
+como boundary. O corpo é compatível com sendN8nCommand/requirePersistedClosure;
+essa função real do frontend aceitou o retorno registrado e rejeitou ok=false e
+ok=true sem evento. Nenhum defeito demonstrado no retorno; frontend inalterado.
+
+**Verificações pontuais:** replay local do contrato real reproduziu antes somente
+UNANSWERED_REQUEST:request_1; após reconciliação retorna accepted, sem mudar o
+texto nem o plano bruto. Price, financing, other genérico, catálogo e handoff
+continuam exigindo answers; excerpt inexistente continua rejeitado. Sem chamada
+Gemini/Evolution, novo encerramento, alteração Supabase, publicação ou recuperação.
+Sintaxe/paridade/hashes, anti-hardcode e git diff --check conferidos. Comparação
+das funções confirma que reset/sessão/fila/envio e salesValidatePrimaryDialogue
+permanecem iguais. Evidências filtradas em `scratch/greeting-400724/`.
+
+Arquivos: n8n/sources/noria_core.js; JSON CORE e projeções CORE/sales, manifesto e
+esta documentação regenerados/atualizados. Nenhuma mudança na EXT ou políticas.
+CORE normalizado: `12759552ad8572ef8d41c03eff0d63591bc0e509207151a2ff717c8ef833f33f`.
+EXT política inalterada: `c792e4392f95cc88745710c918bb33f443c147ad557814a6e13b4000f4ab076a`.
+Pendente publicar somente o CORE corrigido e homologar uma saudação real após
+encerramento sob autorização; nenhum sucesso de produção foi inventado. Rollback:
+restaurar o CORE anterior e regenerar/importar, preservando eventos e toda a fila.
+
+# Fotos e auditoria — execuções 400424 / 400396 — 20/10/2026
+
+Esta seção substitui o diagnóstico de publicação pendente da allowlist abaixo:
+EXT exportada nesta conferência, versão `f4a29234-9222-422d-a37b-c99bf7f1b1ec`,
+já contém vehicle_photos_enabled. Identidade SHA-256
+`ac2ff0da0006b0a5b01eccddfc526e75bc35472c315e88253a8acee69040c1fa`.
+Execução 400424 identifica CORE `a7421b73-0400-4b1c-a7fe-d52880e2cc38`.
+Não reaplicar a correção de allowlist nem alterar flags do Supabase.
+
+### Causas comprovadas e correções pontuais
+
+1. **Validação de URL no CORE:** nas duas execuções, o inventário do prepare já
+   contém a foto CB 600RR com tenant/produto/prova/URL/hash válidos e offerable=true.
+   O contador primário, porém, é zero. salesUsableCatalogPhotos dependia de
+   `new URL()` em um try/catch que convertia ReferenceError em lista vazia.
+   Sondagem manual de Code no próprio n8n confirmou `typeof URL === 'undefined'`
+   e `ReferenceError: URL is not defined`. Substituído somente esse uso por parser
+   técnico restrito de HTTPS/autoridade, sem módulos extras ou ampliação de acesso.
+   Preservados binding de tenant/produto/URL/hash, origem Supabase, allowlist de
+   hosts WhatsApp e rejeição de credenciais/IPs/autoridades ambíguas/hosts internos.
+   Prova adicional de contexto: [sandbox oficial](https://github.com/n8n-io/n8n/blob/master/packages/nodes-base/nodes/Code/JavaScriptSandbox.ts)
+   e [incidente do construtor URL](https://github.com/n8n-io/n8n/issues/19434).
+2. **Projeção comercial da EXT:** sua consulta final reautoriza o veículo e a
+   imagem, mas authorized_product descartava image_url/image_urls/image_source/
+   image_authorization. Em 400396 esse produto realmente chega sem tais campos.
+   CORE o usa corretamente como autoridade final; não pode ressuscitar a prova
+   antiga do prepare. A projeção agora conserva os quatro campos exclusivamente
+   do snapshot recém-consultado pela EXT. Sem mudança de política comercial.
+3. **Evidência semântica insuficiente:** em 400396 o auditor marcou como supported_fact
+   o texto que negava habilitação usando source_value=enabled. O validador conferia
+   apenas cópia da fonte e cobertura, sem predicado operacional da afirmação.
+   Acrescentada assertion={operator,value}, extraída pelo auditor independente do
+   trecho real, para official.media.* e usable_photo_count. CORE compara estados
+   ou desigualdades numéricas com a fonte final. Ausência/contradição bloqueia;
+   não há lista de frases, limpeza de palavras, texto comercial fixo ou segunda
+   chamada Gemini. Para demais fatos permanece a auditoria semântica existente.
+   O relatório gravado de 400396 agora é rejeitado por ausência dessa prova.
+   Em produção, o resultado final desse caso já estava bloqueado por
+   UNSUPPORTED_SEMANTIC_CLAIM: não afirmar que o auditor aprovou o atendimento inteiro.
+
+400424 possui excerpts vazios nas duas claims. UNSUPPORTED_FACT é legítimo e
+foi preservado; SEMANTIC_FACT_AUDIT_REQUIRED é marcador de auditoria pendente,
+não aprovação semântica. Não preencher excerpts nem trocar claim 0 por 1 no
+backend para forçar aprovação. Com as correções, prepare e finalize fornecem 1
+como evidência atual para geração/auditoria; rascunhos divergentes continuam retidos.
+
+### Verificação limitada e implantação ainda pendente
+
+- Checks locais sobre funções canônicas, sem provider: falha antiga sem global URL
+  reproduzida; projeção nova conserva autorização; merge/ledger final retornam uma
+  foto; tenant incorreto e URLs malformadas rejeitados. Relatório sem predicado e
+  predicado disabled contra enabled rejeitados; afirmação natural positiva com
+  predicado coerente aceita. Excerpts vazios continuam rejeitados.
+- Envio Evolution **simulado**: confirmação do texto e recibo antes da mídia;
+  uma tentativa; recibo duplicado impede mídia; timeout preserva texto e uncertain;
+  controle humano bloqueia envio. Nenhuma mensagem real ou tentativa incerta refeita.
+- Sondagem real isolada n8n: workflow manual `IlDOVZWUVTNdN6fm`, somente trigger
+  manual e Code, sem credenciais/HTTP. Helpers copiados do fonte corrigido retornam
+  usable_photo_count=1 mesmo com URL undefined e rejeitam a contradição operacional.
+  Nunca publicado; arquivado ao concluir. Não foi editado/publicado nenhum workflow
+  de atendimento. Evidências em `scratch/photo-audit-400424/`: verification.json,
+  delivery-verification.json, recorded-audit.json, n8n-sandbox-proof.json e imagens.
+- Extrair corretamente a proposição do português ainda é responsabilidade do
+  verificador Gemini; o novo contrato não constitui prova matemática da linguagem.
+  Não houve nova chamada Gemini real. Falha/omissão do novo predicado fecha a
+  aprovação; aderência do modelo exige homologação autorizada após a atualização.
+- Sintaxe, anti-hardcode, paridade e diff conferidos; JSONs nos caminhos originais.
+  Fontes alterados nesta etapa: noria_core.js, genesis_extension.js; projeções,
+  workflows, manifesto e esta documentação atualizados pelo gerador existente.
+  Identidade, RPCs, fila, sessões, gates, recibos e controles humanos preservados.
+
+Hashes finais:
+
+- CORE normalizado: `ead95813e2baebefeeaf1f6ba301b64dcd15f26e916570ebe851efd9d19085fa`.
+- EXT política: `c792e4392f95cc88745710c918bb33f443c147ad557814a6e13b4000f4ab076a`.
+- EXT bundle (identidade + política): `37497e015b71bbd2b0a2b19d86fdcaebe84d681e2d63dacd523da03b879593ef`.
+
+Pendente autorização/publicação coordenada da EXT e do CORE corrigidos (EXT antes
+do CORE, sem misturar fases em andamento), homologação Gemini do predicado e
+entrega real com confirmação/recibo. Não declarar P0 encerrado em produção.
+Rollback do par deve preservar filas, recibos e estado incerto; exports/versões de
+referência salvos em scratch. Nenhuma alteração Supabase ou ativação de fotos feita.
+
+# Fotos — execução 399678 — 20/10/2026, 02h40 BRT
+
+Conferência específica em leitura, sem publicação, envio Evolution/Gemini, SQL de escrita ou recuperação de fila.
+CORE publicado `a7421b73-0400-4b1c-a7fe-d52880e2cc38`: hash normalizado
+`3ade56b77a99fb1eebcdd2869163fda0cb4b4987f9429c1ede137d1f4e02a0b2`, igual ao local.
+EXT publicada `f130cbee-90c9-4bfc-8b3f-eb3c10ee1f39` ainda omite vehicle_photos_enabled
+na allowlist de identidade. Exports em `scratch/photo-399678/{CORE,EXT}.published.json`.
+Na execução real, EXT por turno/comercial devolvem verified settings sem essa flag;
+inventário chega ao prepare com image_authorization=null e URLs vazias. Prepare
+conhece a flag original true, mas o ledger de fotos fica zero. Pedido corretamente
+identificado photos/specific_product e CB 600RR; zero recibos de tentativa de foto
+para o token `06afab79-715d-43fd-8e09-bca4d231aeee`: bloqueio anterior à Evolution.
+
+A correção local da allowlist feita por Claude foi preservada, sem reimplementação.
+O gerador agora acrescenta ext_identity_sha256 e ext_bundle_sha256 ao manifesto:
+ext_sha256 já existente cobre apenas a política comercial e não distinguia essa
+correção. Bundle = SHA-256 de JSON.stringify({identity,policy}), textos exatos.
+Identidade local: `ac2ff0da0006b0a5b01eccddfc526e75bc35472c315e88253a8acee69040c1fa`;
+bundle local: `ee758a95f35cafdd73589cbeae662138d9db2da65c4eaad31d95238cbc00af89`.
+Política EXT inalterada: `36904449f32a890a387961d0036a5e22d7b24d59e3ec6cc316aeca516a68031e`.
+
+Verificação pontual com linhas reais lidas do Supabase e HTTP de domínio simulado:
+identidade publicada reproduz zero consultas de imagem; local preserva a flag,
+carrega uma autorização e CORE retorna a URL exata/ledger com usable_photo_count=1.
+Flag false não consulta imagens; autorização de outro tenant é rejeitada. GET real
+da foto: 200, 483404 bytes, SHA-256 igual ao registro
+`8a4ab41ea12415d3a7499157cb107cd76fa9cf60becabab7c631f611bb04293d`.
+Evidência filtrada: `scratch/photo-399678/verification.json`; zero chamadas de envio.
+JSONs regenerados nos caminhos originais. Nenhuma regra comercial, fila ou guarda
+de idempotência alterada. Pendente publicar a EXT corrigida no workflow existente e
+homologar entrega real mediante autorização; não declarar foto entregue/P0 encerrado.
+
 # Revisão P0 — identidade de produto, contaminação de contexto e disponibilidade (CORE `0b39a9c6…` → `d548f4ae…`)
 
 Observado com CORE `0b39a9c6…0f0e` + EXT `36904449…031e`: 16 respostas, 9 aceitas, 7 rejeitadas. Gemini e auditor semântico funcionam; as rejeições vinham de contratos/estado inconsistentes entre fases.

@@ -1,4 +1,4 @@
-import { getCurrentSession } from './auth/authService.js';
+import { getValidatedSession } from './auth/authService.js';
 import { isEligibleForExternalOutbound } from './timeline/eventClassification.js';
 
 const env = {
@@ -29,7 +29,7 @@ async function sendCommand(command, payload, activeTenantSlug, { external = true
 
   const url = `${env.n8nBaseUrl.replace(/\/$/, '')}/webhook/magia-command`;
   const isKanbanFlowCommand = command === 'suggest_kanban_flow_order' || command === 'apply_kanban_flow_order';
-  const session = await getCurrentSession();
+  let session = await getValidatedSession();
   if (!session?.access_token) {
     throw new Error('Sessao expirada. Entre novamente para enviar mensagens.');
   }
@@ -38,20 +38,29 @@ async function sendCommand(command, payload, activeTenantSlug, { external = true
     console.info('[Kanban flow] command request', { command, endpoint: url, tenantSlug: activeTenantSlug, payload });
   }
 
+  const post = (accessToken) => fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      tenant_slug: activeTenantSlug,
+      command,
+      payload,
+    }),
+  });
+
   let response;
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        tenant_slug: activeTenantSlug,
-        command,
-        payload,
-      }),
-    });
+    response = await post(session.access_token);
+    // A 401/403 can mean the token went stale between validation and delivery.
+    // Renew once through Auth; a genuine authorization denial stays denied.
+    if (response.status === 401 || response.status === 403) {
+      const renewed = await getValidatedSession({ forceRefresh: true });
+      if (!renewed?.access_token) throw new Error('Sessao expirada. Entre novamente para enviar mensagens.');
+      if (renewed.access_token !== session.access_token) response = await post(renewed.access_token);
+    }
   } catch (error) {
     if (isKanbanFlowCommand) console.error('[Kanban flow] endpoint request failed', { command, endpoint: url, error });
     throw error;

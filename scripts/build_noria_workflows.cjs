@@ -253,6 +253,12 @@ const manifest = {
   raw_disk_sha256: rawDiskSha256,
   hash_explanation: 'core_sha256 is the deterministic normalized hash embedded into the runtime code block; raw_disk_sha256 is the direct sha256 of the generated source file on disk after metadata embedding.',
   ext_sha256: extSha256,
+  // The EXT identity node filters runtime flags before the policy executes.
+  // Its changes must be distinguishable from an unchanged commercial policy.
+  ext_identity_sha256: crypto.createHash('sha256').update(genesisIdentityCode).digest('hex'),
+  ext_bundle_sha256: crypto.createHash('sha256').update(JSON.stringify({
+    identity: genesisIdentityCode, policy: extCode,
+  })).digest('hex'),
   recovery_sha256: crypto.createHash('sha256').update(recoveryCode).digest('hex'),
   control_origin_adapter_sha256: crypto.createHash('sha256').update(routerInsertCode).digest('hex'),
   operations_bridge_sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'scripts/turn_queue_operational_bridge.cjs'))).digest('hex'),

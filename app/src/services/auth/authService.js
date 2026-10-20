@@ -39,6 +39,31 @@ export async function getCurrentSession() {
   return data.session || null;
 }
 
+// getSession() trusts the locally cached token. When the server-side session was
+// revoked or removed (Auth reports session_not_found), that token still looks
+// valid locally but is rejected by every protected endpoint. Validate against
+// Auth, try one refresh, and only then report the session as gone.
+export async function getValidatedSession({ forceRefresh = false } = {}) {
+  const supabase = getAuthClient();
+  if (!supabase) return null;
+  const { data } = await supabase.auth.getSession();
+  let session = data.session || null;
+  if (!session) return null;
+  if (!forceRefresh) {
+    const { error } = await supabase.auth.getUser(session.access_token);
+    if (!error) return session;
+  }
+  const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+  if (!refreshError && refreshed?.session?.access_token) {
+    const { error } = await supabase.auth.getUser(refreshed.session.access_token);
+    if (!error) return refreshed.session;
+  }
+  // The server no longer knows this session: clear local state so the UI
+  // returns to sign-in instead of repeating a rejected request.
+  await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+  return null;
+}
+
 export function subscribeToAuthState(callback) {
   const supabase = getAuthClient();
   if (!supabase) return () => {};

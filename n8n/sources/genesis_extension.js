@@ -1323,6 +1323,11 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
           status: product.status, offerable: product.offerable === true,
           availability_verified: product.availability_verified === true,
           source_observed_at: product.source_observed_at || null, synced_at: product.synced_at || null,
+          // Preserve only this freshly re-authorised EXT snapshot, never CORE media.
+          image_url: product.image_url || null,
+          image_urls: Array.isArray(product.image_urls) ? [...product.image_urls] : [],
+          image_source: product.image_source || null,
+          image_authorization: product.image_authorization || null,
         } : null,
         inventory_focus: inventoryFocus,
         stage_key: resolvedStage.stage_key,
@@ -1330,6 +1335,7 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
         handoff: { required: handoffRequired, reason: handoffReason, destination_queue: handoffQueue },
         pending_requirements: collectionMissing,
         operations: {
+          product_photo: decideProductPhotoAction(payload, inventory, settings, handoffRequired),
           trade_in: tradeInData,
           auction: auctionOp,
           financing: {
@@ -1507,6 +1513,40 @@ const policy = {
 // returned INSIDE that envelope: identity, session, semantic intent and all CORE
 // context survive, and success/failure is explicit. The EXT never answers with an
 // isolated result and never lets the finalisation node proceed on a failure.
+function decideProductPhotoAction(payload, inventory, settings, controlBlocked = false) {
+  const semantic = payload.semantic_intent;
+  const requests = (payload.dialogue_plan?.requests || []).filter(request => request.topic === 'photos');
+  const action = { contract: 'noria_product_photo_action_v1', status: 'not_requested',
+    tenant_id: payload.tenant_id, session_id: payload.session_id, turn_token: payload.turn?.token,
+    request_id: payload.request_id, product_id: null, urls: [], evidence_ids: [], request_ids: [] };
+  if (semantic?.valid !== true || !requests.length || !(semantic.topics || []).includes('photos')) return action;
+  action.status = 'requires_clarification';
+  const currentIds = new Set((payload.turn?.messages || payload.messages || []).flatMap(message => [message.event_id, message.id]).filter(Boolean));
+  action.evidence_ids = [...new Set([...(semantic.references?.evidence_ids || []), ...(semantic.customer_disposition?.evidence_ids || [])])].filter(id => currentIds.has(id));
+  action.request_ids = requests.map(request => request.id);
+  if (!action.evidence_ids.length || semantic.conversation?.requires_clarification === true
+    || (semantic.ambiguities || []).length || requests.some(request => request.subject === 'unspecified')) return action;
+  if (new Set(semantic.references?.mentioned_product_ids || []).size > 1) return action;
+  const resolved = resolveSelection(semantic, inventory, payload.catalog_context);
+  if (resolved.invalid || resolved.ambiguous) return action;
+  const selected = resolved.product || (semantic.conversation?.continues_previous_topic === true
+    ? inventory.find(item => item.id === payload.product?.id) : null);
+  if (!selected || selected.id !== payload.product?.id || !commercialEligibility(selected).eligible) return action;
+  action.product_id = selected.id;
+  action.status = 'not_authorized';
+  if (controlBlocked || payload.lead?.ai_locked === true || payload.dialogue_plan?.human_requested === true) return action;
+  if (![settings.sales?.whatsapp_catalog_photo_enabled, settings.sales?.vehicle_photos_enabled].some(value => value === true || value === 'true')) return action;
+  const proof = selected.image_authorization;
+  if (proof?.contract !== 'noria_product_images_v1' || proof.tenant_id !== payload.tenant_id
+    || proof.product_id !== selected.id || !Array.isArray(proof.images)) return action;
+  const registered = new Set([selected.image_url, ...(selected.image_urls || [])].filter(Boolean));
+  action.urls = [...new Set(proof.images.filter(image => registered.has(image.url)
+    && image.mime_type === 'image/jpeg' && /^[a-f0-9]{64}$/.test(image.sha256 || '')
+    && typeof image.url === 'string' && image.url.startsWith(base + '/storage/v1/object/public/')).map(image => image.url))].slice(0, 3);
+  if (action.urls.length) action.status = 'authorized';
+  return action;
+}
+
 function commercialDecisionNeedsInventory(input = {}) {
   const semantic = input.semantic_intent && typeof input.semantic_intent === 'object'
     ? input.semantic_intent : (input.generated?.semantic_intent || {});
@@ -1517,6 +1557,7 @@ function commercialDecisionNeedsInventory(input = {}) {
   // eligibility even when this turn's message does not mention the vehicle.
   const focusedProductId = String(input.generated?.product?.id || input.product?.id || input.state?.product_id || '').trim();
   return Boolean(focusedProductId)
+    || (input.dialogue_plan?.requests || []).some(request => request.topic === 'photos')
     || semantic.catalog?.requested === true
     || ['catalog', 'price_question', 'product_details', 'availability', 'inventory_search'].includes(primary)
     || (Array.isArray(references.mentioned_product_ids) && references.mentioned_product_ids.length > 0)
