@@ -55,7 +55,7 @@ new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', extCode);
 new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', genesisIdentityCode);
 new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', nubiaExtCode);
 new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', routerSourceCode);
-new AsyncFunction('$env', recoveryCode);
+new AsyncFunction('$env', '$getWorkflowStaticData', recoveryCode);
 new AsyncFunction('$json', '$env', '$vars', routerCode);
 
 // 4. Update workflow JSON files
@@ -232,6 +232,55 @@ function removeNubiaV2CoreNodes(workflow) {
   if (workflow.nodes.some(node => nubiaV2NodeNames.has(node.name))) throw new Error('NUBIA_V2_CORE_NODES_REMAIN');
 }
 
+// Successful executions are not stored (the recovery and follow-up ticks alone would write thousands of rows a day); failures keep full data.
+function applyLeanExecutionSettings(workflow) {
+  workflow.settings = { ...(workflow.settings || {}), saveDataSuccessExecution: 'none', saveDataErrorExecution: 'all', saveExecutionProgress: false, saveManualExecutions: false };
+}
+
+// Royal 4x4 is not in use. Default: its events are acknowledged without running its EXT, and the EXT node is not in the CORE at all.
+// To enable it later: build with NORIA_ROYAL_ENABLED=1 (the EXT node and its route come back), publish the Royal EXT workflow and activate it.
+const ROYAL_ENABLED = process.env.NORIA_ROYAL_ENABLED === '1';
+function configureRoyalRoute(workflow, enabled = ROYAL_ENABLED) {
+  const route = 'CORE | Rota Royal 4x4?';
+  const execute = 'CORE | Executar EXT Royal 4x4 (CONFIGURAR ID)';
+  const acknowledge = 'CORE | Responder ACK Royal';
+  const routeNode = workflow.nodes.find(node => node.name === route);
+  const acknowledgeNode = workflow.nodes.find(node => node.name === acknowledge);
+  if (!routeNode || !acknowledgeNode) throw new Error('MISSING_ROYAL_ROUTE_OR_ACK');
+  if (enabled) {
+    if (!workflow.nodes.some(node => node.name === execute)) {
+      workflow.nodes.push({ parameters: { workflowId: { __rl: true, value: 'QlKuGOCnI5eKwlSF', mode: 'id', cachedResultUrl: '/workflow/QlKuGOCnI5eKwlSF' }, mode: 'each', options: { waitForSubWorkflow: true } },
+        id: '53671593-fb62-41f2-8e4b-1dcd02100163', name: execute, type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, position: [154304, -10960] });
+    }
+    workflow.connections[execute] = { main: [[{ node: acknowledge, type: 'main', index: 0 }]] };
+    workflow.connections[route] = { main: [[{ node: execute, type: 'main', index: 0 }], [{ node: 'Mensagem valida?', type: 'main', index: 0 }]] };
+    return;
+  }
+  workflow.nodes = workflow.nodes.filter(node => node.name !== execute);
+  delete workflow.connections[execute];
+  workflow.connections[route] = { main: [[{ node: acknowledge, type: 'main', index: 0 }], [{ node: 'Mensagem valida?', type: 'main', index: 0 }]] };
+  if (workflow.nodes.some(node => node.name === execute)) throw new Error('ROYAL_EXT_REFERENCE_REMAINS');
+}
+
+function removeNubiaExtReference(workflow) {
+  const gate = 'CORE - É Núbia?';
+  const execute = 'Executar EXT Nubia (PREENCHER ID)';
+  const ignored = 'Responder Evento Ignorado';
+  const gateNode = workflow.nodes.find(node => node.name === gate);
+  const ignoredNode = workflow.nodes.find(node => node.name === ignored);
+  if (!gateNode || !ignoredNode) throw new Error('MISSING_NUBIA_GATE_OR_IGNORE_RESPONSE');
+
+  // Núbia remains unavailable until its own EXT is explicitly published. Its
+  // messages are acknowledged as ignored rather than crossing into Gênesis.
+  workflow.nodes = workflow.nodes.filter(node => node.name !== execute);
+  delete workflow.connections[execute];
+  workflow.connections[gate] = { main: [
+    [{ node: ignored, type: 'main', index: 0 }],
+    [{ node: 'CORE - É Gênesis?', type: 'main', index: 0 }],
+  ] };
+  if (workflow.nodes.some(node => node.name === execute)) throw new Error('NUBIA_EXT_REFERENCE_REMAINS');
+}
+
 function deterministicNubiaExtId(name) {
   const h = crypto.createHash('sha1').update('noria-services-pipeline:' + name).digest('hex');
   return [h.slice(0, 8), h.slice(8, 12), '4' + h.slice(13, 16), '8' + h.slice(17, 20), h.slice(20, 32)].join('-');
@@ -251,6 +300,7 @@ function writeNubiaV2ExtWorkflow() {
     connections: { [trigger]: { main: [[{ node: policy, type: 'main', index: 0 }]] } },
     settings: { executionOrder: 'v1', timezone: 'America/Sao_Paulo', callerPolicy: 'workflowsFromSameOwner' },
   };
+  applyLeanExecutionSettings(workflow);
   fs.writeFileSync(target, JSON.stringify(workflow, null, 2) + '\n');
 }
 
@@ -294,9 +344,12 @@ for (const [source, file, prefix, code] of targets) {
     if (prefix === 'CORE | Finalizar resposta') {
       ensureGenesisTerminalBypass(workflow);
       removeNubiaV2CoreNodes(workflow);
+      configureRoyalRoute(workflow);
+      removeNubiaExtReference(workflow);
     }
   }
 
+  applyLeanExecutionSettings(workflow);
   fs.writeFileSync(target, JSON.stringify(workflow, null, 2) + '\n');
   if (source === 'noria_core.js' && prefix === 'CORE | Motor conversacional único') {
     fs.writeFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), code);

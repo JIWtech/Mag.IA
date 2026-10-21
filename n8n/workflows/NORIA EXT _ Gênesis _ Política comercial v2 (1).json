@@ -75,7 +75,11 @@
     "availableInMCP": true,
     "timeSavedMode": "fixed",
     "timezone": "America/Sao_Paulo",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": false,
+    "saveManualExecutions": false
   },
   "versionId": "2dfe280e-3041-461d-ab07-6b4375cd91ce",
   "meta": {
