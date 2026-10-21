@@ -207,25 +207,22 @@ test('preparação não reserva nem altera pagamento; só responde (após commit
   assert.equal((coreCode.match(/queueRpc\('claim'\)/g) || []).length, 1, 'o CORE mantém um único ponto de claim');
 });
 
-test('build: nós de serviços desabilitados e sem conexão com o grafo ao vivo; EXTs publicadas intactas', () => {
+test('build: a cadeia da Núbia v2 está fora do CORE; roteador simples; rotas legadas e EXTs publicadas intactas', () => {
   const core = JSON.parse(read('n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json'));
-  const services = core.nodes.filter(n => n.name.startsWith('CORE | Serviços | '));
-  const gate = services.find(n => n.name === 'CORE | Serviços | Núbia v2?');
-  const chain = services.filter(n => n !== gate);
-  assert.equal(chain.length, 9);
-  assert.ok(chain.every(n => n.disabled === true));
-  assert.ok(gate && gate.disabled !== true, 'o seletor de versão precisa estar habilitado (um If desabilitado encaminharia tudo ao ramo verdadeiro)');
-  const names = new Set(services.map(n => n.name));
+  assert.deepEqual(core.nodes.filter(n => n.name.startsWith('CORE | Serviços | ')).map(n => n.name), [], 'nenhum nó da cadeia de serviços no CORE');
+  assert.ok(!JSON.stringify(core).includes('PREENCHER_ID_EXT_NUBIA_V2'));
+  const names = new Set(core.nodes.map(n => n.name));
   for (const [from, entry] of Object.entries(core.connections)) {
-    if (names.has(from)) continue;
-    const into = (entry.main || []).flat().filter(c => names.has(c.node));
-    assert.ok(from === 'CORE - Resolver extensão do tenant' ? into.length === 1 && into[0].node === gate.name : !into.length, from + ' só o roteador entra, e apenas pelo seletor');
+    assert.ok(names.has(from), 'conexão de nó inexistente: ' + from);
+    for (const c of (entry.main || []).flat()) assert.ok(names.has(c.node), from + ' -> nó inexistente ' + c.node);
   }
   const branches = name => core.connections[name].main.map(b => b.map(c => c.node));
-  assert.deepEqual(branches('CORE | Serviços | Núbia v2?'), [['CORE | Serviços | Executar EXT bootstrap'], ['CORE - É Núbia?']], 'ramo falso = fluxo atual');
-  assert.deepEqual(branches('CORE - Resolver extensão do tenant'), [['CORE | Serviços | Núbia v2?']]);
-  assert.equal(core.nodes.find(n => n.name === 'CORE - Resolver extensão do tenant').parameters.jsCode, read('n8n/sources/noria_router.js'), 'o roteador do workflow é a fonte canônica');
-  assert.ok(chain.filter(n => n.type.endsWith('executeWorkflow')).every(n => n.parameters.workflowId.value === 'PREENCHER_ID_EXT_NUBIA_V2'), 'o ID real só é resolvido na publicação');
+  assert.deepEqual(branches('CORE - Resolver extensão do tenant'), [['CORE - É Núbia?']]);
+  const router = core.nodes.find(n => n.name === 'CORE - Resolver extensão do tenant').parameters.jsCode;
+  assert.equal(router, read('n8n/sources/noria_router_core.js').replace(/\r\n/g, '\n'), 'o roteador do workflow é a fonte canônica');
+  assert.ok(!router.includes('noria_turn_pipeline'), 'o roteador ao vivo não lê a declaração do pipeline de serviços');
+  const recovery = core.nodes.find(n => n.name === 'Recuperar Fila WhatsApp').parameters.rule.interval[0];
+  assert.deepEqual(recovery, { field: 'seconds', secondsInterval: 30 });
   const has = (from, to, branch) => (core.connections[from]?.main?.[branch] || []).some(c => c.node === to);
   assert.ok(has('CORE | Preparar dispatch Genesis', 'CORE | Turno terminal Genesis?', 0));
   assert.ok(has('CORE | Turno terminal Genesis?', 'CORE | Executar EXT Genesis por turno', 1));
@@ -237,11 +234,9 @@ test('build: nós de serviços desabilitados e sem conexão com o grafo ao vivo;
   const diff = execFileSync('git', ['diff', '--stat', '--', 'n8n/workflows/NORIA EXT _ NB Bronze _ Política de negócio v2.json', 'n8n/sources/genesis_tenant_identity.js'], { cwd: root }).toString().trim();
   assert.equal(diff, '', 'EXT Núbia v1 e a identidade do tenant Gênesis não foram alteradas');
   const manifest = JSON.parse(read('n8n/build_manifest.json'));
-  const sha = file => require('node:crypto').createHash('sha256').update(read(file)).digest('hex');
-  assert.equal(manifest.services_pipeline.nubia_ext_sha256, sha('n8n/sources/nubia_extension.js'));
-  assert.equal(manifest.services_pipeline.turn_dispatch_sha256, sha('n8n/sources/noria_turn_dispatch.js'));
-  assert.equal(manifest.services_pipeline.router_sha256, sha('n8n/sources/noria_router.js'));
-  assert.equal(manifest.services_pipeline.status, 'wired_default_v1_chain_disabled_until_publication');
+  const sha = text => require('node:crypto').createHash('sha256').update(text).digest('hex');
+  assert.equal(manifest.services_pipeline, undefined);
+  assert.equal(manifest.router_sha256, sha(read('n8n/sources/noria_router_core.js').replace(/\r\n/g, '\n')));
   const ext = JSON.parse(read('n8n/workflows/NORIA EXT _ NB Bronze _ Serviços v2.json'));
   assert.equal(ext.active, false);
   assert.equal(ext.nodes.find(n => n.name === 'EXT | Serviços Núbia v2').parameters.jsCode, read('n8n/sources/nubia_extension.js'));
@@ -351,70 +346,11 @@ test('guardas do CORE: o legado recusa lote fixado no pipeline; turno despachado
 });
 
 // ------------------------------------------------------------------ publicação
-test('publicação: preflight contra a estrutura do n8n (simulado), ID da EXT v2 por nome, backups verificáveis, divergência recusada', async () => {
-  const http = require('node:http');
-  const { execFile, execFileSync } = require('node:child_process');
-  const os = require('node:os');
-  const crypto = require('node:crypto');
-  const wf = file => JSON.parse(read('n8n/workflows/' + file));
-  const ext = wf('NORIA EXT _ NB Bronze _ Serviços v2.json');
-  const repoCore = wf('NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json');
-  // "live" = the published CORE before this work (git HEAD), the EXTs as exported
-  const liveCore = { ...JSON.parse(execFileSync('git', ['show', 'HEAD:n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json'], { cwd: root, maxBuffer: 1 << 28 }).toString()), id: 'CORE-LIVE-ID' };
-  const liveGenesis = { ...wf('NORIA EXT _ Gênesis _ Política comercial v2 (1).json'), id: 'GEN-LIVE-ID' };
-  const liveNubia = { ...wf('NORIA EXT _ NB Bronze _ Política de negócio v2.json'), id: 'NB-LIVE-ID' };
-  const state = { workflows: [liveCore, liveGenesis, liveNubia, { ...ext, id: 'EXT-V2-REAL-ID' }], writes: [] };
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://x');
-    if (req.method !== 'GET') state.writes.push(req.method + ' ' + url.pathname);
-    res.setHeader('Content-Type', 'application/json');
-    const single = /\/workflows\/([^/]+)$/.exec(url.pathname);
-    if (single) return res.end(JSON.stringify(state.workflows.find(w => w.id === single[1]) || {}));
-    const name = url.searchParams.get('name');
-    res.end(JSON.stringify({ data: state.workflows.filter(w => w.name === name).map(w => ({ id: w.id, name: w.name })) }));
-  });
-  await new Promise(resolve => server.listen(0, resolve));
-  const env = { ...process.env, N8N_API_URL: 'http://127.0.0.1:' + server.address().port + '/api/v1', N8N_API_KEY: 'test' };
-  // async on purpose: the mock n8n lives in this process, a blocking spawn would deadlock it
-  const run = (extra = [], over = {}) => new Promise(resolve => execFile(process.execPath, [path.join(root, 'scripts/publish_nubia_v2.cjs'), ...extra], { env: { ...env, ...over }, encoding: 'utf8' }, (error, stdout, stderr) => resolve({ status: error ? (error.code ?? 1) : 0, stdout, stderr })));
-  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'nubia-v2-'));
-  try {
-    const out = tmp();
-    const ok = await run(['--out=' + out]);
-    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
-    const artifact = JSON.parse(fs.readFileSync(path.join(out, 'NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json'), 'utf8'));
-    const extNodes = artifact.nodes.filter(n => /Executar EXT (bootstrap|decisão|reavaliação)/.test(n.name) && n.name.startsWith('CORE | Serviços'));
-    assert.equal(extNodes.length, 3);
-    assert.ok(extNodes.every(n => n.parameters.workflowId.value === 'EXT-V2-REAL-ID' && !n.disabled));
-    assert.ok(artifact.nodes.filter(n => n.name.startsWith('CORE | Serviços | ')).every(n => !n.disabled), 'a cadeia sai habilitada só no artefato');
-    assert.ok(!JSON.stringify(artifact).includes('PREENCHER_ID_EXT_NUBIA_V2'));
-    assert.deepEqual(state.writes, [], 'a simulação não escreve no n8n');
-    assert.ok(!read('n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json').includes('EXT-V2-REAL-ID'), 'o repositório nunca guarda o ID real');
-    // verifiable backups of the current CORE, router and live EXTs
-    const manifest = JSON.parse(fs.readFileSync(path.join(out, 'backups/MANIFEST.json'), 'utf8'));
-    assert.deepEqual(Object.keys(manifest).sort(), ['CORE_CORE-LIVE-ID.json', 'EXT_GEN-LIVE-ID.json', 'EXT_NB-LIVE-ID.json', 'ROUTER_NODE.json']);
-    for (const [name, entry] of Object.entries(manifest)) assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(out, 'backups', name))).digest('hex'), entry.sha256, name);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'backups/CORE_CORE-LIVE-ID.json'), 'utf8')).nodes.length, liveCore.nodes.length);
-    // the Gênesis, Núbia v1 and recovery routes are unchanged in the artifact
-    const live = name => JSON.stringify(artifact.connections[name]) === JSON.stringify(liveCore.connections[name]);
-    assert.ok(['CORE - É Núbia?', 'Executar EXT Nubia (PREENCHER ID)', 'CORE | Preparar dispatch Genesis', 'CORE | Executar EXT Genesis comercial', 'Recuperar Fila WhatsApp'].every(live));
-    // drift: an instance node the repository does not know would be overwritten, so the run stops (exit 3)
-    state.workflows[0] = { ...liveCore, nodes: [...liveCore.nodes, { name: 'Nó criado à mão na instância', type: 'n8n-nodes-base.code', parameters: {}, position: [0, 0], id: 'x' }] };
-    const drift = await run(['--out=' + tmp()]);
-    assert.equal(drift.status, 3);
-    assert.match(drift.stdout, /node_only_in_instance:Nó criado à mão/);
-    assert.equal((await run(['--apply', '--out=' + tmp()], { NORIA_PUBLISH_AUTHORIZED: '1' })).status, 3, '--apply recusado com divergência');
-    state.workflows[0] = liveCore;
-    // missing EXT: no artifact, no write, non-zero exit; --apply without authorisation is refused; ambiguous name refused
-    state.workflows = state.workflows.filter(w => w.id !== 'EXT-V2-REAL-ID');
-    const empty = tmp();
-    assert.equal((await run(['--out=' + empty])).status, 2);
-    assert.ok(!fs.existsSync(path.join(empty, 'NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json')));
-    assert.notEqual((await run(['--apply', '--out=' + empty], { NORIA_PUBLISH_AUTHORIZED: '' })).status, 0);
-    assert.deepEqual(state.writes, []);
-    state.workflows.push({ ...ext, id: 'A' }, { ...ext, id: 'B' });
-    assert.notEqual((await run(['--out=' + tmp()])).status, 0, 'nome ambíguo recusado');
-  } finally { server.close(); }
+test('publicação: o CORE atual não carrega a cadeia da Núbia v2, então o publicador recusa gerar o artefato', () => {
+  // A cadeia saiu do CORE (bcbabe3). Publicar a v2 exige reconstruir a cadeia no build; até lá o publicador falha fechado.
+  const { buildArtifact } = require(path.join(root, 'scripts/publish_nubia_v2.cjs'));
+  const core = JSON.parse(read('n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json'));
+  assert.throws(() => buildArtifact(core, 'EXT-V2-REAL-ID'), /CHAIN_INCOMPLETE: 0/);
 });
 
 test('piloto: só um JID de telefone do ingresso autenticado casa; LID, grupo e configuração com número inválido não', async () => {

@@ -14,7 +14,13 @@ const extCode = fs.readFileSync(extSourcePath, 'utf8');
 const genesisIdentityCode = fs.readFileSync(genesisIdentitySourcePath, 'utf8');
 // The Núbia v2 EXT remains an isolated, inactive workflow for future work; it is no longer embedded in the CORE.
 const nubiaExtCode = fs.readFileSync(path.join(root, 'n8n/sources/nubia_extension.js'), 'utf8');
-const routerSourceCode = fs.readFileSync(path.join(root, 'n8n/sources/noria_router.js'), 'utf8');
+// Router of the live CORE: legacy tenants route without any database read. The services-pipeline router
+// (n8n/sources/noria_router.js) returns to the CORE only together with the Núbia v2 chain.
+const coreRouterSourcePath = path.join(root, 'n8n/sources/noria_router_core.js');
+const routerSourceCode = fs.readFileSync(coreRouterSourcePath, 'utf8').replace(/\r\n/g, '\n');
+// Fallback recovery of the WhatsApp queue. The webhook path processes messages on arrival; this trigger only picks up
+// leftovers (expired leases, retries), so a longer interval cuts idle executions without changing the happy path.
+const RECOVERY_TRIGGER_SECONDS = 30;
 const recoveryCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_recover_core.js'), 'utf8');
 const routerCode = fs.readFileSync(path.join(root, 'n8n/code/command_router.js'), 'utf8').replace(/\r\n/g, '\n');
 const routerInsertStart = routerCode.indexOf('  async function insertEvent(event) {');
@@ -219,8 +225,9 @@ function removeNubiaV2CoreNodes(workflow) {
       }
     }
   }
-  // Restore the original Núbia v1 route; no tenant can reach v2 from the shared CORE.
+  // Restore the original Núbia v1 route and router; no tenant can reach v2 from the shared CORE.
   workflow.connections[resolver] = { main: [[{ node: legacyNext, type: 'main', index: 0 }]] };
+  resolverNode.parameters.jsCode = routerSourceCode;
   if (!workflow.nodes.some(node => node.name === legacyNext)) throw new Error('MISSING_LEGACY_NUBIA_ROUTE');
   if (workflow.nodes.some(node => nubiaV2NodeNames.has(node.name))) throw new Error('NUBIA_V2_CORE_NODES_REMAIN');
 }
@@ -274,6 +281,9 @@ for (const [source, file, prefix, code] of targets) {
     const recoveryNode = workflow.nodes.find(n => n.name === 'Ler Fila WhatsApp');
     if (!recoveryNode || recoveryNode.type !== 'n8n-nodes-base.code') throw new Error('MISSING_TURN_RECOVERY_NODE');
     recoveryNode.parameters.jsCode = recoveryCode;
+    const recoveryTrigger = workflow.nodes.find(n => n.name === 'Recuperar Fila WhatsApp');
+    if (!recoveryTrigger || recoveryTrigger.type !== 'n8n-nodes-base.scheduleTrigger') throw new Error('MISSING_TURN_RECOVERY_TRIGGER');
+    recoveryTrigger.parameters.rule = { interval: [{ field: 'seconds', secondsInterval: RECOVERY_TRIGGER_SECONDS }] };
     const enqueueNode = workflow.nodes.find(n => n.name === 'Registrar Mensagem na Fila');
     if (enqueueNode && enqueueNode.parameters?.jsCode) {
       enqueueNode.parameters.jsCode = enqueueNode.parameters.jsCode.replace(
@@ -326,7 +336,9 @@ const manifest = {
   ext_bundle_sha256: crypto.createHash('sha256').update(JSON.stringify({
     identity: genesisIdentityCode, policy: extCode,
   })).digest('hex'),
+  router_sha256: crypto.createHash('sha256').update(routerSourceCode).digest('hex'),
   recovery_sha256: crypto.createHash('sha256').update(recoveryCode).digest('hex'),
+  recovery_trigger_seconds: RECOVERY_TRIGGER_SECONDS,
   control_origin_adapter_sha256: crypto.createHash('sha256').update(routerInsertCode).digest('hex'),
   operations_bridge_sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'scripts/turn_queue_operational_bridge.cjs'))).digest('hex'),
   artifacts: [
@@ -334,6 +346,7 @@ const manifest = {
     'n8n/sources/genesis_extension.js',
     'n8n/sources/genesis_tenant_identity.js',
     'n8n/sources/nubia_extension.js',
+    'n8n/sources/noria_router_core.js',
     'n8n/workflows/' + NUBIA_EXT_WORKFLOW_FILE,
     'n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json',
     'n8n/workflows/NORIA EXT _ Gênesis _ Política comercial v2 (1).json',
