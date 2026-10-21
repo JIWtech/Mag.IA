@@ -194,22 +194,24 @@ function parseCondition(text) {
   const [column, ...rest] = text.split('.');
   const op = rest.shift();
   const value = rest.join('.');
+  // PostgREST JSON path (metadata->>key): resolved on the simulated row so receipt lookups can be exercised.
+  const col = row => (column.includes("->>") ? column.split("->>").reduce((value, key, index) => (index === 0 ? row[key] : value?.[key]), undefined) : row[column]);
   const cast = raw => (raw === 'null' ? null : raw === 'true' ? true : raw === 'false' ? false : (/^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw));
   if (op === 'not') { const inner = parseCondition(column + '.' + value); return row => !inner(row); }
-  if (op === 'is') return row => (row[column] ?? null) === cast(value);
+  if (op === 'is') return row => (col(row) ?? null) === cast(value);
   if (op === 'in') {
     const set = value.replace(/^\(|\)$/g, '').split(',').map(v => String(cast(v)));
-    return row => set.includes(String(row[column]));
+    return row => set.includes(String(col(row)));
   }
   const expected = cast(value);
   const compare = (a, b) => (typeof a === 'number' || typeof b === 'number') ? Number(a) - Number(b) : String(a).localeCompare(String(b));
   switch (op) {
-    case 'eq': return row => String(row[column] ?? '') === String(expected ?? '');
-    case 'neq': return row => String(row[column] ?? '') !== String(expected ?? '');
-    case 'gt': return row => row[column] != null && compare(row[column], expected) > 0;
-    case 'gte': return row => row[column] != null && compare(row[column], expected) >= 0;
-    case 'lt': return row => row[column] != null && compare(row[column], expected) < 0;
-    case 'lte': return row => row[column] != null && compare(row[column], expected) <= 0;
+    case 'eq': return row => String(col(row) ?? '') === String(expected ?? '');
+    case 'neq': return row => String(col(row) ?? '') !== String(expected ?? '');
+    case 'gt': return row => col(row) != null && compare(col(row), expected) > 0;
+    case 'gte': return row => col(row) != null && compare(col(row), expected) >= 0;
+    case 'lt': return row => col(row) != null && compare(col(row), expected) < 0;
+    case 'lte': return row => col(row) != null && compare(col(row), expected) <= 0;
     default: throw new Error('HOMOLOG_MISSING_DEPENDENCY: unsupported PostgREST operator ' + op);
   }
 }
@@ -395,6 +397,10 @@ function sideEffectGuard(world, method, pathname) {
 function supabaseRequest(world, method, url, body) {
   const pathname = url.pathname, search = url.searchParams;
   if (process.env.HOMOLOG_TRACE) console.error('TRACE', method, pathname, decodeURIComponent(url.search).slice(0, 220));
+  // Optional extension points used only by other homologation drivers (services): per-world RPC adapters and injected faults.
+  const rpcName = pathname.startsWith('/rest/v1/rpc/') ? pathname.slice('/rest/v1/rpc/'.length) : null;
+  if (world.faultFor) { const fault = world.faultFor(method, pathname, body); if (fault) throw fault; }
+  if (rpcName && world.rpcOverrides?.[rpcName]) { world.log.writes.push({ method, rpc: rpcName }); return world.rpcOverrides[rpcName](world, body || {}); }
   sideEffectGuard(world, method, pathname);
   if (pathname.startsWith('/rest/v1/rpc/')) {
     const name = pathname.slice('/rest/v1/rpc/'.length);
@@ -408,6 +414,7 @@ function supabaseRequest(world, method, url, body) {
 }
 
 function providerRequest(world, method, url, body) {
+  if (world.providerFaultFor) { const fault = world.providerFaultFor(method, url, body); if (fault) throw fault; }
   if (method === 'POST' && /^\/message\/sendMedia\//.test(url.pathname)) {
     // The media URL is recorded, never fetched. The provider acceptance is simulated.
     const mediaId = 'SIM-MEDIA-' + (++world.seq);
@@ -426,6 +433,8 @@ async function geminiRequest(world, url, body) {
   const model = url.pathname.split('/models/')[1].split(':')[0];
   const schema = body?.generationConfig?.responseSchema || {};
   world.log.gemini.push({ model, schema_properties: Object.keys(schema.properties || {}).slice(0, 40), body });
+  // Optional per-world override (services homologation): a driver may answer chosen requests itself, e.g. to feed a real auditor a canned reply.
+  if (world.geminiOverride) { const overridden = world.geminiOverride(body, schema); if (overridden !== undefined) return overridden; }
   if (world.mode === 'dry') throw new Error('HOMOLOG_DRY_RUN: Gemini request recorded, not sent');
   if (world.mode === 'real') {
     const response = await fetch(url.href, {

@@ -1,0 +1,14 @@
+{
+  "_comment": "Exemplo NÃO aplicado. Mesclar em tenant_settings.settings (clinica_nubia_oficial) como a chave noria_turn_pipeline. Começar com enabled=false. allowed_contacts: apenas números internos autorizados, em dígitos.",
+  "noria_turn_pipeline": {
+    "enabled": false,
+    "contract": "noria_turn_pipeline_v1",
+    "capability": "services_v1",
+    "contract_version": "2.0",
+    "semantic_contract": "noria_services_semantic_intent_v1",
+    "decision_contract": "noria_services_decision_v2",
+    "decision_provenance": "nubia_extension_commercial_decide_v1",
+    "rollout": "pilot",
+    "pilot": { "allowed_contacts": ["<NUMERO_INTERNO_AUTORIZADO_EM_DIGITOS>"] }
+  }
+}

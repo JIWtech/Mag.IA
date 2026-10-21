@@ -1157,7 +1157,9 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
         ? fin.required_information.identity_document_photo.one_of : [];
       const receivedIdentityTypes = Array.isArray(documentStatus.identity_document_types) ? documentStatus.identity_document_types : [];
       const documentSatisfied = (field) => {
-        if (field === 'full_name') return Boolean(state.customer_name && state.customer_name.trim().split(/\s+/).length >= 2) || documentStatus.full_name_received === true;
+        // A full name counts only when the CORE verified its proof (name_verified): a customer message that comprises it, or a confirmation of a name the assistant presented.
+        // A name without evidence (contact/profile name, unverified carry-over) must be confirmed before the collection is complete.
+        if (field === 'full_name') return Boolean(state.customer_name && state.customer_name.trim().split(/\s+/).length >= 2 && state.name_verified === true) || documentStatus.full_name_received === true;
         if (field === 'birth_date') return documentStatus.birth_date_received === true;
         if (field === 'identity_document_photo') {
           const received = documentStatus.identity_document_photo_received === true;
@@ -1178,6 +1180,10 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
           ...(depositMissing ? ['deposit'] : []),
         ] : [];
       const collectionReady = collectionActive && productEligible && collectionMissing.length === 0 && documentsComplete;
+      // Informative question, never a requirement: asked only while the policy accepts a CNH as identity proof, the customer has not said yet
+      // and no identity document has arrived. It stays out of missing_fields, so it can never block the collection.
+      const cnhStatus = ['yes', 'no'].includes(state.cnh_status) ? state.cnh_status : 'unknown';
+      const optionalFields = collectionActive && identityOneOf.includes('cnh') && cnhStatus === 'unknown' && documentStatus.identity_document_photo_received !== true ? ['cnh_status'] : [];
       const financingStage = !financingOffered ? 'not_offered'
         : collectionReady ? 'documents_complete'
           : collectionActive ? 'collecting_documents'
@@ -1387,7 +1393,7 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
             required_documents: requiredDocuments, missing_documents: missingDocuments,
             collection: {
               active: collectionActive, ready: collectionReady, missing_fields: collectionMissing,
-              next_field: collectionMissing[0] || null,
+              next_field: collectionMissing[0] || null, optional_fields: optionalFields, cnh_status: cnhStatus,
               next_requirement: !collectionMissing.length ? 'none'
                 : ['purchase_product', 'customer_name', 'deposit'].includes(collectionMissing[0]) ? collectionMissing[0] : 'documents',
             },
