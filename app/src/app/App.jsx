@@ -58,6 +58,7 @@ import {
 } from '../dataService';
 import { clearTenantSlug } from '../services/tenants/tenantStorage.js';
 import { isTenantAuthorized } from '../services/tenants/tenantAccess.js';
+import { mergeMediaDescriptors } from '../services/media/mediaNormalization.js';
 import {
   createRefreshCoordinator,
   VISIBILITY_REFRESH_STALE_AFTER_MS,
@@ -113,6 +114,33 @@ function withLocalMediaLoadState(event, loadState = '') {
 
 function hasResolvedMediaUrl(event) {
   return Boolean(event?.raw_payload?.media?.url);
+}
+
+function preserveLocalMediaStates(previousData, nextData) {
+  if (!previousData?.conversations?.length || !nextData?.conversations?.length) return nextData;
+  const previousMediaByEventId = new Map();
+  for (const conversation of previousData.conversations) {
+    for (const message of conversation.messages || []) {
+      if (message.eventId && message.media?.loadState === 'retryable_error') {
+        previousMediaByEventId.set(message.eventId, message.media);
+      }
+    }
+  }
+  if (!previousMediaByEventId.size) return nextData;
+
+  let changed = false;
+  const conversations = nextData.conversations.map((conversation) => {
+    const messages = (conversation.messages || []).map((message) => {
+      const previousMedia = previousMediaByEventId.get(message.eventId);
+      if (!previousMedia) return message;
+      const media = mergeMediaDescriptors(previousMedia, message.media);
+      if (media === message.media) return message;
+      changed = true;
+      return { ...message, media };
+    });
+    return messages === conversation.messages ? conversation : { ...conversation, messages };
+  });
+  return changed ? { ...nextData, conversations } : nextData;
 }
 
 function formatCurrency(value) {
@@ -785,10 +813,13 @@ function App() {
         }, activeTenantSlug, session?.user?.id || null);
         if (currentScope.current !== requestedScope) return false;
         setLoadError('');
-        const reconciled = reconcilePendingKanbanMoves(
-          data,
-          kanbanMoveInFlightRef.current.pendingMoves,
-          kanbanMoveInFlightRef.current.confirmedMoves
+        const reconciled = preserveLocalMediaStates(
+          appDataRef.current,
+          reconcilePendingKanbanMoves(
+            data,
+            kanbanMoveInFlightRef.current.pendingMoves,
+            kanbanMoveInFlightRef.current.confirmedMoves
+          ),
         );
         cacheAppData(activeTenantSlug, reconciled, session?.user?.id || null);
         setAppData((previous) => (

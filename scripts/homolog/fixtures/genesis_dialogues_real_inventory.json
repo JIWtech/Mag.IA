@@ -1,0 +1,76 @@
+{
+  "description": "Six complete customer dialogues for the Gênesis homologation against the REAL stock and image registry (authorised snapshots kept outside the repository). The customer messages are synthetic and carry no personal data. The vehicles are the ones in the stock snapshot; the facts listed under reference_facts come from that snapshot and are there for the reader, not for the code. The synthetic-stock dialogues in genesis_dialogues.json stay as they were. No automatic expectations: the reading is done on the interpretation, the EXT decision, the reply and the auditor verdict.",
+  "snapshots": {
+    "settings": "HOMOLOG_SETTINGS_SNAPSHOT",
+    "inventory": "HOMOLOG_INVENTORY_SNAPSHOT",
+    "images": "HOMOLOG_IMAGES_SNAPSHOT"
+  },
+  "reference_facts": {
+    "honda|pcx|2023|branca": "announced, R$ 17.499,00, availability to be confirmed, authorised image registered",
+    "honda|pcx|2018|prata": "unverified, price kept but must be confirmed before offering, NO image registered",
+    "yamaha|crosser|2021|preto": "sold (expressly marked as sold), authorised image row exists",
+    "yamaha|crosser|2023|": "announced, R$ 17.980,00, availability to be confirmed, authorised image registered",
+    "honda|tornado 300l|2025|vermelho": "announced, R$ 28.980,00, availability to be confirmed, authorised image registered",
+    "chevrolet|montana|2013|branca": "announced, R$ 27.980,00, availability to be confirmed, authorised image registered",
+    "nissan|versa sl|2013|prata": "announced, R$ 27.980,00, auction history noted in the listing, authorised image registered",
+    "not in stock": "Honda CG 160 (no such vehicle in the snapshot)"
+  },
+  "dialogues": [
+    {
+      "name": "1 consulta sobre veículos (inclui veículo inexistente)",
+      "objective": "Informational inquiry. The last turn asks for a vehicle that is not in stock: the model and the EXT must not invent it.",
+      "turns": [
+        { "text": "Oi, vocês têm carros até 30 mil?" },
+        { "text": "E a Montana, ainda está disponível?" },
+        { "text": "E a CG 160, vocês têm?" }
+      ]
+    },
+    {
+      "name": "2 pedidos naturais de fotos",
+      "objective": "Photos: a request with no vehicle identified; an identified eligible vehicle; an unverified vehicle with no image; a sold vehicle. A photo request is not interest or selection.",
+      "turns": [
+        { "text": "Tem foto das motos aí?" },
+        { "text": "Tenho interesse na PCX branca 2023." },
+        { "text": "Queria dar uma olhada nela." },
+        { "text": "E a PCX prata, tem foto?" },
+        { "text": "Mostra a Crosser preta aí." }
+      ]
+    },
+    {
+      "name": "3 menção, interesse e seleção",
+      "objective": "Mention, then interest, then selection, kept apart.",
+      "turns": [
+        { "text": "Quanto custa a Tornado?" },
+        { "text": "Gostei dela, mas ainda não decidi." },
+        { "text": "Quero a Tornado então." }
+      ]
+    },
+    {
+      "name": "4 compra e venda de veículos distintos",
+      "objective": "Sell one vehicle and buy another, with the two sides kept separate.",
+      "turns": [
+        { "text": "Tenho um Corsa 2009 e quero vender." },
+        { "text": "Quero comprar a Montana." }
+      ]
+    },
+    {
+      "name": "5 mudança de assunto e retomada contextual",
+      "objective": "Change the subject and come back to the earlier vehicle without losing the context.",
+      "turns": [
+        { "text": "Quanto custa a Versa?" },
+        { "text": "Deixa pra lá, me fala da Montana." },
+        { "text": "Voltando, a Versa ainda tá disponível?" }
+      ]
+    },
+    {
+      "name": "6 ambiguidade, correção de intenção e pedido de atendente",
+      "objective": "Two Crosser listings (one sold, one announced) make the first request ambiguous; then an intent correction; then an explicit request for a person.",
+      "turns": [
+        { "text": "Quero a Crosser." },
+        { "text": "Na verdade quero vender a minha, não comprar." },
+        { "text": "Qual delas é melhor?" },
+        { "text": "Quero falar com um atendente." }
+      ]
+    }
+  ]
+}

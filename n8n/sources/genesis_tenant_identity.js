@@ -4,7 +4,9 @@
 // tenant-scoped commercial contract.
 const input = $json || {};
 const expectedSlug = 'wesley_automoveis';
-if (String(input.tenant_slug || '') !== expectedSlug || String(input.noria_extension || '') !== 'genesis' || String(input.noria_contract_version || '') !== '1.0') throw new Error('NORIA_EXTENSAO_TENANT_INCORRETO');
+if (String(input.tenant_slug || '') !== expectedSlug || String(input.noria_extension || '') !== 'genesis') throw new Error('NORIA_EXTENSAO_TENANT_INCORRETO');
+// A CORE published at another contract version is refused here, before any commercial effect, with its own code.
+if (String(input.noria_contract_version || '') !== '2.0') throw new Error('NORIA_EXTENSAO_CONTRACT_VERSION_MISMATCH');
 const uuid = String(input.tenant_id || ''), instance = String(input.instance || ''), chatId = String(input.remoteJid || '');
 if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(uuid) || !instance || !chatId) throw new Error('NORIA_IDENTIDADE_INCOMPLETA');
 const base = String($env.SUPABASE_URL || '').replace(/\/$/, ''), key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');
@@ -25,5 +27,8 @@ const sourceRules = s.sdr_rules && typeof s.sdr_rules==='object' ? s.sdr_rules :
 for (const field of ['hot_lead_percent','minimum_purchase_year','rejected_purchase_brands','preferred_purchase_models','warranty_response','document_processing']) if (Object.prototype.hasOwnProperty.call(sourceRules,field)) sdr_rules[field]=sourceRules[field];
 const sourceFacts = s.business_facts && typeof s.business_facts==='object' ? s.business_facts : {}, business_facts = {};
 for (const field of ['name','payment_methods','vehicle_appraisal','financing','trade_in_policy','opening_hours','locations','vehicle_types']) if (Object.prototype.hasOwnProperty.call(sourceFacts,field)) business_facts[field]=sourceFacts[field];
-const verified = {tenant_id:uuid,whatsapp_processing_mode:s.whatsapp_processing_mode,conversation_capability:s.conversation_capability,whatsapp_audio_enabled:s.whatsapp_audio_enabled===true,appointment_scheduling:{enabled:s.appointment_scheduling?.enabled===true},approved_messages:{enabled:s.approved_messages?.enabled===true},vehicle_sheet_id:typeof s.vehicle_sheet_id==='string'?s.vehicle_sheet_id:'',sales,sdr_rules,business_facts};
+// Only the disposition actions of the follow-up policy are exposed to the EXT (P1-03); nothing else of sales_follow_up.
+const sourceFollowUp = s.sales_follow_up && typeof s.sales_follow_up==='object' ? s.sales_follow_up : {};
+const sales_follow_up = sourceFollowUp.disposition_actions && typeof sourceFollowUp.disposition_actions==='object' ? {disposition_actions:sourceFollowUp.disposition_actions} : {};
+const verified = {tenant_id:uuid,whatsapp_processing_mode:s.whatsapp_processing_mode,conversation_capability:s.conversation_capability,whatsapp_audio_enabled:s.whatsapp_audio_enabled===true,appointment_scheduling:{enabled:s.appointment_scheduling?.enabled===true},approved_messages:{enabled:s.approved_messages?.enabled===true},vehicle_sheet_id:typeof s.vehicle_sheet_id==='string'?s.vehicle_sheet_id:'',sales,sdr_rules,business_facts,sales_follow_up};
 return {json:{...input,noria_verified_settings:verified}};

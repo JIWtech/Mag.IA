@@ -1,0 +1,53 @@
+{
+  "_note": "SYNTHETIC tenant settings for the homologation fixtures only. Not the tenant's configuration. Real mode requires HOMOLOG_SETTINGS_SNAPSHOT (a read-only export).",
+  "whatsapp_processing_mode": "conversation_core_v1",
+  "conversation_capability": "sales_v1",
+  "grounding_mode": "canonical_v2",
+  "ai_model": "gemini-2.5-flash-lite",
+  "system_prompt": "SYNTHETIC PLACEHOLDER: the tenant prompt is not part of the fixtures.",
+  "ai_enabled": true,
+  "follow_up_enabled": true,
+  "whatsapp_audio_enabled": false,
+  "appointment_scheduling": { "enabled": false },
+  "approved_messages": { "enabled": false },
+  "sales_follow_up": { "enabled": true },
+  "sales": {
+    "stage_keys": {
+      "initial": "sales_new",
+      "qualifying": "sales_qualifying",
+      "hot": "sales_hot",
+      "human": "sales_human",
+      "appraisal": "sales_appraisal",
+      "after_sales": "sales_after_sales"
+    },
+    "stages": {
+      "sales_new": { "label": "Novo", "role": "initial", "requires_human": false },
+      "sales_qualifying": { "label": "Qualificando", "role": "qualifying", "requires_human": false },
+      "sales_hot": { "label": "Quente", "role": "hot", "requires_human": true },
+      "sales_human": { "label": "Atendimento humano", "role": "human", "requires_human": true },
+      "sales_appraisal": { "label": "Avaliação", "role": "appraisal", "requires_human": false },
+      "sales_after_sales": { "label": "Pós-venda", "role": "after_sales", "requires_human": false }
+    },
+    "whatsapp_catalog_photo_enabled": false,
+    "vehicle_photos_enabled": false,
+    "whatsapp_catalog_sync_enabled": false
+  },
+  "sdr_rules": {
+    "hot_lead_percent": 80,
+    "minimum_purchase_year": null,
+    "rejected_purchase_brands": [],
+    "preferred_purchase_models": [],
+    "warranty_response": "",
+    "document_processing": {}
+  },
+  "business_facts": {
+    "name": "Gênesis (homologação)",
+    "payment_methods": [],
+    "vehicle_appraisal": { "enabled": false },
+    "financing": { "offered_by_business": false },
+    "trade_in_policy": { "accepted_subject_to_appraisal": false },
+    "opening_hours": {},
+    "locations": [],
+    "vehicle_types": ["car", "motorcycle"]
+  }
+}

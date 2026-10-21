@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isStorageNotFoundError } from '../../src/services/media/storageErrors.js';
-import { normalizeMedia } from '../../src/services/media/mediaNormalization.js';
+import { mergeMediaDescriptors, normalizeMedia } from '../../src/services/media/mediaNormalization.js';
 import {
   clearMediaUrlCache,
   getMediaUrlFromCache,
@@ -197,4 +197,28 @@ test('VERIFICATION 5: applyIncomingEvent preserves resolved media.url and thumbn
     'https://supabase.co/signed/photo-thumb.jpg?token=secret123',
     'Preserved signed thumbnailUrl must NOT be overwritten'
   );
+});
+
+test('VERIFICATION 6: refresh sem loadState não ressuscita erro local como spinner', () => {
+  const failed = {
+    kind: 'image',
+    status: 'stored',
+    bucket: 'channel-media',
+    storagePath: 'tenant/chat/photo.jpg',
+    loadState: 'retryable_error',
+  };
+  const staleSnapshot = {
+    kind: 'image',
+    status: 'stored',
+    bucket: 'channel-media',
+    storagePath: 'tenant/chat/photo.jpg',
+    loadState: '',
+  };
+
+  const merged = mergeMediaDescriptors(failed, staleSnapshot);
+  assert.equal(merged.loadState, 'retryable_error');
+
+  const resolved = mergeMediaDescriptors(failed, { ...staleSnapshot, url: 'https://example.com/photo.jpg' });
+  assert.equal(resolved.url, 'https://example.com/photo.jpg');
+  assert.equal(resolved.loadState, '');
 });

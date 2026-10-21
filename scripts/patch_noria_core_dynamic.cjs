@@ -17,9 +17,10 @@ required(v.instance, 'instance');
 required(v.remoteJid, 'remoteJid');
 
 const byTenant = { clinica_nubia_oficial: 'nubia', wesley_automoveis: 'genesis' };
+const contractVersionByTenant = { wesley_automoveis: '2.0' };
 const legacyExtension = byTenant[tenant_slug];
 if (legacyExtension) {
-  return { json: { ...v, noria_extension: legacyExtension, noria_contract_version: '1.0', noria_router: 'core_3wf_v1', noria_dispatch_phase: 'bootstrap' } };
+  return { json: { ...v, noria_extension: legacyExtension, noria_contract_version: contractVersionByTenant[tenant_slug] || '1.0', noria_router: 'core_3wf_v1', noria_dispatch_phase: 'bootstrap' } };
 }
 
 // Para novos tenants SaaS autônomos, busca noria_client_policy diretamente em tenant_settings

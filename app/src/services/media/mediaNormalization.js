@@ -3,6 +3,31 @@ import { REAL_MEDIA_KINDS, isMediaPlaceholderForKind } from '../../utils/audioUt
 import { isExplicitOutboundMedia } from './mediaDirection.js';
 import { productSnapshotMedia } from './productSnapshot.js';
 
+// `loadState` is local UI state. A refresh can return the same event without
+// that field and must not resurrect a media item that already failed locally.
+export function mergeMediaDescriptors(previous, incoming) {
+  if (!previous) return incoming || null;
+  if (!incoming) return previous;
+
+  const merged = {
+    ...previous,
+    ...incoming,
+    url: incoming.url || previous.url || '',
+    thumbnailUrl: incoming.thumbnailUrl || previous.thumbnailUrl || '',
+  };
+
+  // A successful URL is authoritative and clears the transient UI state.
+  if (incoming.url) {
+    merged.loadState = '';
+  } else if (previous.loadState === 'retryable_error' && incoming.loadState !== 'resolving') {
+    // Do not let a stale database/realtime snapshot turn a visible error back
+    // into an infinite spinner. A deliberate retry explicitly uses resolving.
+    merged.loadState = 'retryable_error';
+  }
+
+  return merged;
+}
+
 export function isUsableBrowserUrl(url) {
   if (!url || typeof url !== 'string') return false;
   const trimmed = url.trim();

@@ -14,6 +14,25 @@ export function resolveVisualMediaCaption(media, messageText) {
   return '';
 }
 
+// A terminal ingestion failure without a persisted object has no preview to
+// render. Keep it available to operator alerts/backoffice recovery, but do not
+// leave a misleading "image unavailable" bubble in the customer timeline.
+export function suppressUnrecoverableVisualMedia(media) {
+  const kind = String(media?.kind || media?.category || '').toLowerCase();
+  if (!['image', 'video', 'sticker'].includes(kind)) return false;
+  if (media?.url || media?.thumbnailUrl || (media?.bucket && media?.storagePath)) return false;
+  return [
+    'store_failed',
+    'storage_error',
+    'persistence_error',
+    'download_failed',
+    'missing_binary',
+    'too_large',
+    'skipped_too_large',
+    'unavailable',
+  ].includes(media?.status);
+}
+
 export function consecutiveImageGallery(messages = [], index = -1) {
   const isVisualMedia = (msg) => {
     const k = String(msg?.media?.kind || msg?.media?.category || '').toLowerCase();

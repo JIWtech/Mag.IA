@@ -44,6 +44,12 @@ const SUPABASE_URL = (env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY || '';
 const DEFAULT_TENANT = process.env.TENANT_SLUG || 'wesley_automoveis';
 const SINCE_DATE = process.env.SINCE_DATE || '2026-10-03T15:38:00.000Z';
+const TARGET_EVENT_IDS = new Set(
+  String(process.env.TARGET_EVENT_IDS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
 
 function tenantEnvSuffix(slug) {
   return String(slug || '').toUpperCase().replace(/[^A-Z0-9]/g, '_');
@@ -179,10 +185,14 @@ async function main() {
   const allEvents = [];
 
   while (true) {
+    const eventScope = TARGET_EVENT_IDS.size > 0
+      ? `&id=in.(${encodeURIComponent([...TARGET_EVENT_IDS].join(','))})`
+      : '';
     const query = `/rest/v1/channel_events?tenant_slug=eq.${encodeURIComponent(DEFAULT_TENANT)}`
       + `&channel_type=eq.whatsapp`
       + `&direction=eq.inbound`
       + `&created_at=gte.${encodeURIComponent(SINCE_DATE)}`
+      + eventScope
       + `&order=created_at.asc,id.asc`
       + `&limit=${PAGE_SIZE}`
       + `&offset=${offset}`;
@@ -209,12 +219,15 @@ async function main() {
     }
   }
 
-  console.log(`Media candidates detected   : ${candidates.length}`);
+  const scopedCandidates = TARGET_EVENT_IDS.size > 0
+    ? candidates.filter(({ event }) => TARGET_EVENT_IDS.has(String(event.id)))
+    : candidates;
+  console.log(`Media candidates detected   : ${scopedCandidates.length}${TARGET_EVENT_IDS.size > 0 ? ' (targeted scope)' : ''}`);
   console.log('----------------------------------------------------');
 
   const summary = {
     total_scanned: allEvents.length,
-    total_candidates: candidates.length,
+    total_candidates: scopedCandidates.length,
     already_stored: 0,
     recoverable: 0,
     unavailable: 0,
@@ -228,7 +241,7 @@ async function main() {
   let connectivityTested = false;
   let globalConnectivityFailed = false;
 
-  for (const c of candidates) {
+  for (const c of scopedCandidates) {
     summary.byKind[c.kind] = (summary.byKind[c.kind] || 0) + 1;
     const ev = c.event;
     const existingMedia = ev.raw_payload?.media;

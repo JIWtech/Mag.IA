@@ -1,0 +1,60 @@
+{
+  "description": "Short complete customer dialogues for the Gênesis homologation. Synthetic customer messages and synthetic inventory. The executor observes what the real model interprets; it does not assert a predefined answer.",
+  "inventory": [
+    { "id": "chevrolet|corsa|2009|", "brand": "CHEVROLET", "model": "CORSA", "year": 2009, "status": "listed", "offerable": true, "availability_verified": true, "price_cents": 1000000, "color": "PRATA", "fuel": "FLEX", "km": 120000 },
+    { "id": "chevrolet|montana|2018|", "brand": "CHEVROLET", "model": "MONTANA", "year": 2018, "status": "listed", "offerable": true, "availability_verified": true, "price_cents": 9900000, "color": "BRANCA", "fuel": "FLEX", "km": 60000 },
+    { "id": "honda|cg160|2018|", "brand": "HONDA", "model": "CG 160", "year": 2018, "status": "listed", "offerable": true, "availability_verified": true, "price_cents": 800000, "color": "VERMELHA", "fuel": "GASOLINA", "km": 15000 },
+    { "id": "yamaha|crosser|2023|", "brand": "YAMAHA", "model": "CROSSER", "year": 2023, "status": "announced", "offerable": false, "availability_verified": false, "price_cents": 1798000, "color": null, "fuel": null, "km": 64000 },
+    { "id": "yamaha|crosser|2021|preto", "brand": "YAMAHA", "model": "CROSSER", "year": 2021, "status": "sold", "offerable": false, "availability_verified": false, "price_cents": 1349900, "color": "PRETO", "fuel": "FLEX", "km": 70000 }
+  ],
+  "dialogues": [
+    {
+      "name": "1 consulta sobre veículos",
+      "turns": [
+        { "text": "Oi, vocês têm carros até 60 mil?" },
+        { "text": "E a Montana, ainda está disponível?" }
+      ]
+    },
+    {
+      "name": "2 pedidos naturais de fotos",
+      "turns": [
+        { "text": "Tenho interesse na Montana." },
+        { "text": "Tem foto dessa Montana?" },
+        { "text": "Queria dar uma olhada nela." },
+        { "text": "Mostra ela aí." }
+      ]
+    },
+    {
+      "name": "3 menção, interesse e seleção",
+      "turns": [
+        { "text": "Quanto custa a CG 160?" },
+        { "text": "Gostei dela, mas ainda não decidi." },
+        { "text": "Quero a CG 160 então." }
+      ]
+    },
+    {
+      "name": "4 compra e venda de veículos distintos",
+      "turns": [
+        { "text": "Tenho um Corsa 2009 e quero vender." },
+        { "text": "Quero comprar uma Montana." }
+      ]
+    },
+    {
+      "name": "5 mudança de assunto e retomada contextual",
+      "turns": [
+        { "text": "Quanto custa a CG 160?" },
+        { "text": "Deixa pra lá, me fala da Montana." },
+        { "text": "Voltando, a CG ainda tá disponível?" }
+      ]
+    },
+    {
+      "name": "6 ambiguidade, correção de intenção e pedido de atendente",
+      "turns": [
+        { "text": "Quero o Corsa." },
+        { "text": "Na verdade quero vender o Corsa, não comprar." },
+        { "text": "Qual deles é melhor?" },
+        { "text": "Quero falar com um atendente." }
+      ]
+    }
+  ]
+}

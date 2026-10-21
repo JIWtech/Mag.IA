@@ -33,7 +33,7 @@ async function identity(input = {}) {
   };
   return new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', identityCode).call(
     { helpers: { httpRequest: request } },
-    { tenant_id: tenantId, tenant_slug: 'wesley_automoveis', noria_extension: 'genesis', noria_contract_version: '1.0', instance: 'genesis-instance', remoteJid: '5511999999999@s.whatsapp.net', ...input },
+    { tenant_id: tenantId, tenant_slug: 'wesley_automoveis', noria_extension: 'genesis', noria_contract_version: '2.0', instance: 'genesis-instance', remoteJid: '5511999999999@s.whatsapp.net', ...input },
     { SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'test' }, {}, () => ({})
   );
 }

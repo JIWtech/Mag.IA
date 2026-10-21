@@ -21,6 +21,7 @@ import {
 import {
   consecutiveImageGallery,
   resolveVisualMediaCaption,
+  suppressUnrecoverableVisualMedia,
 } from '../utils/mediaPresentation.js';
 import { AudioRecoveryNotice } from './AudioRecoveryNotice.jsx';
 import { LocationAttachment } from './LocationAttachment.jsx';
@@ -113,9 +114,14 @@ function ConversationTimelineComponent({
 
           const mediaKind = String(message.media?.kind || message.media?.category || '').toLowerCase();
           const isVisualMedia = ['image', 'video', 'sticker'].includes(mediaKind);
+          const shouldSuppressMediaBubble = suppressUnrecoverableVisualMedia(message.media);
           const isSticker = mediaKind === 'sticker';
           const visualCaption = isVisualMedia ? resolveVisualMediaCaption(message.media, message.text) : '';
-          const mediaMeta = isVisualMedia ? { time: message.formattedTime, showChecks: message.isAi || message.isAgent } : null;
+          const mediaMeta = isVisualMedia ? {
+            time: message.formattedTime,
+            showChecks: message.isAi || message.isAgent,
+            createdAt: message.createdAt || null,
+          } : null;
           const imageGallery = isVisualMedia ? consecutiveImageGallery(visibleMessages, index) : null;
           const senderClass = message.isAi ? 'ai' : message.isAgent ? 'agent' : 'contact';
 
@@ -143,7 +149,7 @@ function ConversationTimelineComponent({
                   <span className="date-separator-pill">{message.dateSeparatorLabel}</span>
                 </div>
               )}
-              <div className={bubbleClasses}>
+              {!shouldSuppressMediaBubble && <div className={bubbleClasses}>
                 {message.isGroupStart && (
                   <div className="bubble-sender">
                     {message.isAi && <Bot size={13} aria-hidden="true" />}
@@ -203,7 +209,7 @@ function ConversationTimelineComponent({
                 {!isVisualMedia && !isLocationMedia && (
                   <MediaMeta meta={{ time: message.formattedTime, showChecks: message.isAi || message.isAgent }} />
                 )}
-              </div>
+              </div>}
             </React.Fragment>
           );
         })}

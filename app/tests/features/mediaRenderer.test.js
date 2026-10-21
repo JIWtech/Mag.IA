@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   formatProductPrice,
   resolveVisualMediaCaption,
+  suppressUnrecoverableVisualMedia,
   consecutiveImageGallery,
 } from '../../src/features/conversations/utils/mediaPresentation.js';
 
@@ -165,6 +166,13 @@ test('comportamento: resolveVisualMediaCaption prioriza legenda e descarta place
   // Entradas nulas ou vazias
   assert.strictEqual(resolveVisualMediaCaption(null, null), '');
   assert.strictEqual(resolveVisualMediaCaption({}, ''), '');
+});
+
+test('mídia visual sem objeto persistido não cria um card enganoso no histórico', () => {
+  assert.equal(suppressUnrecoverableVisualMedia({ kind: 'image', status: 'storage_error' }), true);
+  assert.equal(suppressUnrecoverableVisualMedia({ kind: 'image', status: 'storage_error', storagePath: 'tenant/chat/file.jpg', bucket: 'channel-media' }), false);
+  assert.equal(suppressUnrecoverableVisualMedia({ kind: 'image', status: 'stored', url: 'https://signed.example/image.jpg' }), false);
+  assert.equal(suppressUnrecoverableVisualMedia({ kind: 'audio', status: 'storage_error' }), false);
 });
 
 test('comportamento: consecutiveImageGallery agrupa apenas imagens consecutivas do mesmo remetente', () => {

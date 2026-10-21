@@ -43,6 +43,7 @@ import {
   matchesConversationTab,
 } from '../../../dataService.js';
 import { loadConversationFullHistory } from '../../../services/conversations/conversationHistoryReads.js';
+import { mergeMediaDescriptors } from '../../../services/media/mediaNormalization.js';
 import {
   ContactAvatar,
   ContactAvatarBadge,
@@ -463,12 +464,7 @@ export function Conversations({
       const key = m.eventId || `${m.createdAt || m.at}-${m.from}-${m.text}`;
       const fresh = selectedByKey.get(key);
       if (!fresh) return m;
-      const mergedMedia = fresh.media ? {
-        ...(m.media || {}),
-        ...fresh.media,
-        url: fresh.media.url || m.media?.url || '',
-        thumbnailUrl: fresh.media.thumbnailUrl || m.media?.thumbnailUrl || '',
-      } : m.media;
+      const mergedMedia = mergeMediaDescriptors(m.media, fresh.media);
       return {
         ...m,
         ...fresh,

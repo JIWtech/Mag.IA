@@ -53,9 +53,9 @@ function validateTenantPolicyContract() {
 }
 const coreBuildMetadata = {
   revision: 'conversation_core_v2_1_34_core_ext_decision_identity_2026_10_20',
-  built_at: '2026-10-20T08:43:59.086Z',
-  core_sha256: 'd3def924daa1e4016f4fd7fef24a7c5d5faff27b02618cd64f85214a2d5606c2',
-  ext_sha256: 'c251e7d5d264baf0e65866752d8464db9e80f9302bde13e09e2ac8ee5c830336',
+  built_at: '2026-10-20T23:27:22.391Z',
+  core_sha256: '587f6746fee517ec9b178eb07069c57128a5374ea6dbf4b1a7cbea648787f116',
+  ext_sha256: '36f2a6fa26e88866c54ef1e1b1eff12ee8411915380a2436c47d04632ca3356f',
 };
 const coreRevision = coreBuildMetadata.revision;
 let salesInventoryMemo = null;
@@ -1692,6 +1692,17 @@ function encodeFilter(value) {
   return encodeURIComponent(String(value));
 }
 
+// Text of a failed Supabase REST call, including the PostgREST body when the HTTP
+// client exposes it. Used only to recognise database contract errors by token.
+function supabaseErrorText(error) {
+  return [error?.message, error?.description, error?.response?.data, error?.response?.body,
+    error?.cause?.response?.data, error?.cause?.response?.body, error?.context?.data]
+    .map(part => {
+      if (typeof part === 'string') return part;
+      try { return part === undefined || part === null ? '' : JSON.stringify(part); } catch (_) { return ''; }
+    }).join(' ');
+}
+
 async function loadTenantContext() {
   const tenants = await supabaseGet('/rest/v1/tenants?select=*&slug=eq.' + encodeFilter(tenantSlug) + '&limit=1');
   const tenant = tenants?.[0];
@@ -3140,7 +3151,10 @@ async function scheduleFollowUps(context, sentEvent, event) {
   if (salesEnabled(context)) {
     const disposition = event.raw_payload?.follow_up_disposition;
     if (['closed_by_customer', 'declined', 'resolved', 'deferred_by_customer'].includes(disposition)) {
-      await cancelPendingFollowUps(context, disposition);
+      // Gênesis: a customer disposition cancels only when the EXT policy authorised it for this turn. Handoff ('resolved') keeps its cancellation.
+      if (tenantSlug !== 'wesley_automoveis' || disposition === 'resolved' || event.raw_payload?.follow_up_policy_action === 'cancel') {
+        await cancelPendingFollowUps(context, disposition);
+      }
       return 0;
     }
     if (settings.follow_up_enabled !== true || !settings.sales_follow_up?.enabled
@@ -3195,9 +3209,18 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
     await recordContactExclusion(context, exclusion);
     return { cancelled: true, reason: exclusion.reason };
   }
-  const deliveryAttempt = await supabasePost('/rest/v1/rpc/magia_begin_turn_delivery', {
-    p_tenant: context.tenant.id, p_chat: chatId, p_token: turn.token,
-  });
+  let deliveryAttempt;
+  try {
+    deliveryAttempt = await supabasePost('/rest/v1/rpc/magia_begin_turn_delivery', {
+      p_tenant: context.tenant.id, p_chat: chatId, p_token: turn.token,
+    });
+  } catch (error) {
+    // PostgREST answers a RAISE EXCEPTION with HTTP 400. The database rejected the
+    // attempt before any row or provider call, so nothing was sent: this turn is
+    // stale and is cancelled, never retried as a delivery failure.
+    if (supabaseErrorText(error).includes('STALE_DELIVERY_ATTEMPT')) return { cancelled: true, reason: 'stale_delivery_attempt' };
+    throw error;
+  }
   if (!deliveryAttempt?.id || deliveryAttempt.dispatch_allowed !== true
     || deliveryAttempt.contract !== 'noria_turn_lifecycle_v1') throw new Error('DELIVERY_DISPATCH_NOT_AUTHORIZED');
   deliveryAttemptId = String(deliveryAttempt.id);
@@ -4629,10 +4652,6 @@ function salesFinancingInterest(text = '') {
 
 // Answer a financing QUESTION before asking for a financing INPUT. The
 // SDR hot-lead percentage is a ranking rule, never a bank's minimum deposit.
-function salesDemonstrativeVehicleReference(value = '') {
-  const text = normalizeText(value).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return /^(?:isso|isto|aquilo|esse|essa|este|esta|esse carro|essa moto|esse ai|essa ai|aquele|aquela)$/.test(text);
-}
 
 function salesRedactPersonalData(value = '') {
   return String(value || '')
@@ -4988,17 +5007,11 @@ function salesCatalogSnapshotFresh(snapshot = {}, hours = 24) {
   return Date.now() - observed <= bounded * 60 * 60 * 1000;
 }
 
-async function salesLoadWhatsappCatalogEventSnapshots(context, hours = 24) {
-  try {
-    const rows = await supabasePost('/rest/v1/rpc/magia_whatsapp_catalog_event_snapshots', {
-      p_tenant: context.tenant.id,
-      p_hours: Math.max(1, Math.min(168, Math.floor(Number(hours) || 24))),
-      p_event_limit: 2000,
-    });
-    return Array.isArray(rows) ? rows.filter(row => salesText(row?.product_id, 220)) : [];
-  } catch {
-    return [];
-  }
+// No event-snapshot RPC is deployed in production or defined in the repository. Catalog freshness comes from
+// whatsapp_catalog_products and whatsapp_catalog_sync_state, which are read directly. Without snapshots, enrichment is
+// simply not applied (the same outcome the previous fail-soft call produced, without a request that always fails).
+async function salesLoadWhatsappCatalogEventSnapshots() {
+  return [];
 }
 
 function salesCatalogEnrichWithSnapshot(raw = {}, snapshot = null, hours = 24) {
@@ -6033,6 +6046,44 @@ function salesCandidateBuyEvidence(state = {}, history = [], messages = []) {
   return match ? { mode: 'buy', id: match.id } : { mode: 'unknown', id: '' };
 }
 
+// Clarification used when the Gênesis contract is unavailable or the intent is ambiguous.
+const SALES_INTENT_CLARIFICATION = 'Quero confirmar para não seguir pelo caminho errado: você pretende comprar, vender, trocar ou apenas consultar um veículo?';
+
+// When the semantic contract is unavailable, ask about the vehicle the conversation already holds (only what
+// was validated and stored), instead of repeating the generic intent question.
+function salesContextualClarification(state = {}) {
+  const interest = salesText(state?.buy_interest?.model);
+  if (interest) return 'Quero ter certeza de que entendi antes de seguir. Você quer continuar falando sobre ' + interest + ' ou prefere outra coisa?';
+  const own = salesText(state?.sell_vehicle?.model);
+  if (own) return 'Quero ter certeza de que entendi antes de seguir. Você quer vender o seu ' + own + ' ou procura outro veículo?';
+  return SALES_INTENT_CLARIFICATION;
+}
+
+// Gênesis with an invalid contract: only the state persisted by an earlier validated turn stays in force.
+// The model's unvalidated state (intent, transaction mode, product, requirements) is never merged in: it has no
+// authority until the semantic contract validates. Nothing is rebuilt from old messages with patterns.
+function salesPersistedIntentDecision(previous = {}) {
+  const state = salesMergeState(previous, {});
+  return { state, evidence: { mode: salesModeFor(previous), id: '' }, source: 'persisted_state' };
+}
+
+// Version contract between the CORE and the Gênesis EXT. Both sides must agree before any commercial decision is applied:
+// the EXT echoes this version in its decision and the CORE verifies it. A mismatch blocks the commercial action.
+const NORIA_GENESIS_CONTRACT_VERSION = '2.0';
+const NORIA_GENESIS_DECISION_PROVENANCE = 'genesis_extension_commercial_decide_v4';
+// Refusals caused by a CORE and an EXT published at different contract versions. The EXT identity of a previous publication
+// still reports NORIA_EXTENSAO_TENANT_INCORRETO for a version it does not accept.
+const CONTRACT_CUTOVER_PATTERN = /COMMERCIAL_CONTRACT_VERSION_MISMATCH|COMMERCIAL_DECISION_PROVENANCE_INVALID|NORIA_EXTENSAO_CONTRACT_VERSION_MISMATCH|NORIA_EXTENSAO_TENANT_INCORRETO|NORIA_EXT_DISPATCH_UNAVAILABLE:CONTRACT_VERSION/;
+
+// Evidence of the message being processed now. Historical evidence may identify a product presented before,
+// but only evidence from this message can authorise a new commercial action (selection, interest, intent change,
+// offer acceptance, disposition).
+function salesCurrentTurnEvidenceIds() {
+  // Fail closed: without a bound turn there is no current evidence, so no new commercial action is authorised.
+  const messages = typeof turn === 'undefined' || !turn || !Array.isArray(turn.messages) ? [] : turn.messages;
+  return messages.flatMap(m => [m?.event_id, m?.id].filter(Boolean).map(String));
+}
+
 function salesApplyIntentEvidence(previous = {}, candidate = {}, history = [], messages = []) {
   const state = salesMergeState(previous, candidate, messages.map(message => message?.event_id || message?.id).filter(Boolean));
   const previousMode = salesModeFor(previous);
@@ -6376,7 +6427,7 @@ function salesVehicleYearClarification(text = '') {
   return { raw: match[1], reply: 'Só confirmando: qual é o ano correto do veículo? Recebi “' + match[1] + '”.' };
 }
 
-function salesSanitizeSemanticState(state, messages, selectionProofs = new Map()) {
+function salesSanitizeSemanticState(state, messages, selectionProofs = new Map(), inventory = []) {
   const byId = new Map();
   for (const message of messages) if (!byId.has(message.id)) byId.set(message.id, message);
   const s = salesMergeState({}, state);
@@ -6445,13 +6496,26 @@ function salesSanitizeSemanticState(state, messages, selectionProofs = new Map()
     return byId.has(id) && row && row.id === (s.product_id || s.buy_interest.product_id)
       && normalizeText(row.model) === normalizeText(s.buy_interest.model);
   });
-  const buyNestedEvidence = verifiedSelection || supportedNested(s.buy_interest.model, s.buy_interest.evidence_ids);
+  // The declared interest keeps only the evidence the model cites: a literal found anywhere in the customer's
+  // messages does not support a model the model did not tie to them.
+  const citedNested = (value, ids) => {
+    const expected = normalizeText(value);
+    return expected ? (customerEvidence(ids).find(id => normalizeText(byId.get(id)?.text).includes(expected)) || '') : '';
+  };
+  const buyNestedEvidence = verifiedSelection || citedNested(s.buy_interest.model, s.buy_interest.evidence_ids);
   if (s.buy_interest.model && !buyNestedEvidence) {
     s.buy_interest.model = ''; s.buy_interest.year = null; s.buy_interest.product_id = ''; s.buy_interest.raw_mention = '';
   } else if (buyNestedEvidence && !s.buy_interest.evidence_ids.includes(buyNestedEvidence)) s.buy_interest.evidence_ids.push(buyNestedEvidence);
-  if (salesDemonstrativeVehicleReference(s.buy_interest.model) || salesDemonstrativeVehicleReference(s.buy_interest.raw_mention)) {
-    s.buy_interest = { ...salesEmptyState().buy_interest };
-    s.product_id = ''; s.product_evidence = ''; s.product_variant_evidence = '';
+  // Gênesis: official store identity comes only from an inventory product named by a verified product id.
+  // Without one, the model, brand and year the customer declared stay as declared interest (their evidence was
+  // checked above). They never become official identity, and the customer's own vehicle is not a store product.
+  if (tenantSlug === 'wesley_automoveis') {
+    const storeProduct = (inventory || []).find(row => row.id === s.buy_interest.product_id) || null;
+    if (storeProduct) {
+      s.buy_interest.model = storeProduct.model || ''; s.buy_interest.brand = storeProduct.brand || ''; s.buy_interest.year = storeProduct.year || null;
+    } else {
+      s.buy_interest.product_id = '';
+    }
   }
   if (s.buy_interest.year !== null) {
     const year = String(s.buy_interest.year);
@@ -6517,7 +6581,7 @@ function salesValidate(result, messages, inventory, context = {}, selectionProof
   if (!result || !['reply', 'catalog', 'location', 'register_interest', 'handoff'].includes(result.action)
     || !['none', 'after_sales', 'human', 'missing_product', 'appraisal', 'documents', 'unknown'].includes(result.reason)
     || typeof result.reply !== 'string' || result.reply.length > 1800 || !result.state) throw new Error('INVALID_SALES_RESPONSE');
-  const s = salesSanitizeSemanticState(result.state, messages, selectionProofs), byId = new Map(messages.map(m => [m.id, m]));
+  const s = salesSanitizeSemanticState(result.state, messages, selectionProofs, inventory), byId = new Map(messages.map(m => [m.id, m]));
   if (result.action === 'reply' && !result.reply.trim()) throw new Error('EMPTY_SALES_REPLY');
   if (!['buy', 'sell', 'after_sales', 'unknown'].includes(s.intent) || !['buy', 'sell', 'buy_and_sell', 'after_sales', 'unknown'].includes(s.transaction_mode)) throw new Error('INVALID_SALES_INTENT');
   for (const key of ['customer_name', 'name_evidence', 'product_id', 'product_evidence', 'product_variant_evidence', 'deposit_evidence', 'sell_brand', 'sell_model', 'sell_brand_evidence', 'sell_model_evidence', 'sell_year_evidence']) {
@@ -6877,29 +6941,51 @@ function salesResolveShortCatalogReference(text, inventory, catalogContext = fal
   return { product: candidates.length === 1 ? candidates[0] : null, candidates, scores: candidates.map(row => ({ row, score: 8 })) };
 }
 
-function salesResolveInventoryReference(text = '', inventory = [], catalogContext = false) {
+// Resolves a customer's vehicle reference against the store inventory.
+// Evidence, in order of strength: the model name, a year that the store really
+// has for that model, and the vehicle already in focus in this conversation.
+// Years the customer gave for their own vehicle never filter store stock, so no
+// token distance is used to decide which vehicle a year belongs to.
+function salesResolveInventoryReference(text = '', inventory = [], catalogContext = false, context = {}) {
   const value = normalizeText(text).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!value || !inventory.length) return { product: null, candidates: [], scores: [] };
   const tokens = value.split(' ').filter(Boolean);
-  const years = tokens.filter(token => /^(?:19|20)\d{2}$/.test(token));
   const hasToken = target => tokens.some(token => salesTokenNear(token, target));
+  const customerYears = new Set((context.customer_years || []).filter(Boolean).map(String));
+  const fourDigitYears = [...new Set(tokens.filter(token => /^(?:19|20)\d{2}$/.test(token) && !customerYears.has(token)))];
+  const modelKey = row => normalizeText(row.model).replace(/\s+/g, ' ').trim();
+  const sameModel = row => inventory.filter(item => modelKey(item) === modelKey(row));
   const scored = inventory.map(row => {
     const modelTokens = normalizeText(row.model).split(/\s+/).filter(Boolean);
     const matched = modelTokens.filter(token => token.length >= 3 && hasToken(token));
-    // Security invariant: a matching year, make or color is NOT a vehicle model.
-    if (!matched.length || (years.length && !years.includes(String(row.year)))) return { row, score: 0 };
+    if (!matched.length) return { row, score: 0 };
+    // Only years this model has in stock can filter it; other years are not evidence against it.
+    const storeYears = sameModel(row).map(item => String(item.year));
+    const explicitYears = fourDigitYears.filter(year => storeYears.includes(year));
+    if (explicitYears.length && !explicitYears.includes(String(row.year))) return { row, score: 0 };
     const complete = matched.length === modelTokens.length;
-    // A shortened variant is accepted only when year is supplied for disambiguation.
-    if (!complete && !years.includes(String(row.year))) return { row, score: 0 };
+    // A shortened variant is accepted only when its year is named for disambiguation.
+    if (!complete && !explicitYears.includes(String(row.year))) return { row, score: 0 };
     let score = 8 + matched.length + (complete ? 3 : 0);
     const brandTokens = normalizeText(row.brand).split(/\s+/).filter(Boolean);
     if (brandTokens.length && brandTokens.every(hasToken)) score += 4;
-    if (years.includes(String(row.year))) score += 3;
+    if (explicitYears.includes(String(row.year))) score += 3;
     const color = normalizeText(row.color);
     if (color && hasToken(color)) score += 1;
     return { row, score };
   }).filter(item => item.score >= 8).sort((a, b) => b.score - a.score);
-  if (!scored.length) return tenantSlug === 'wesley_automoveis' ? salesResolveShortCatalogReference(text, inventory, catalogContext) : { product: null, candidates: [], scores: [] };
+  if (!scored.length) {
+    // No model named in this message: the vehicle in focus gives the model, and a
+    // year (four digits, or the last two digits) must match exactly one of its units.
+    const focus = context.reference_product;
+    if (focus?.model) {
+      const twoDigit = tokens.filter(token => /^\d{2}$/.test(token));
+      const units = sameModel(focus).filter(row => fourDigitYears.includes(String(row.year))
+        || twoDigit.includes(String(row.year).slice(-2)));
+      if (units.length === 1) return { product: units[0], candidates: units, scores: [], context: 'focus_year' };
+    }
+    return tenantSlug === 'wesley_automoveis' ? salesResolveShortCatalogReference(text, inventory, catalogContext) : { product: null, candidates: [], scores: [] };
+  }
   const top = scored[0].score;
   const topRows = scored.filter(item => item.score === top).map(item => item.row);
   return { product: topRows.length === 1 ? topRows[0] : null, candidates: topRows, scores: scored };
@@ -6907,7 +6993,10 @@ function salesResolveInventoryReference(text = '', inventory = [], catalogContex
 
 function salesRecentCatalogContext(history = [], inventory = []) {
   const rows = [...salesCurrentSessionHistory(history)].reverse();
-  const event = rows.find(row => row.direction === 'outbound' && Array.isArray(row?.raw_payload?.catalog_item_ids));
+  const confirmed = tenantSlug === 'wesley_automoveis' ? (typeof turn !== 'undefined' ? turn?.confirmed_outbound_ids : null) : null;
+  // Gênesis: a catalog counts only if its message was delivered and confirmed; without that record nothing is recalled.
+  const event = rows.find(row => row.direction === 'outbound' && Array.isArray(row?.raw_payload?.catalog_item_ids)
+    && (tenantSlug !== 'wesley_automoveis' || (confirmed instanceof Set && confirmed.has(String(row.id)))));
   if (!event) return { event: null, products: [] };
   // Preserve numbered slots even if a listed SKU has since disappeared.
   const products = event.raw_payload.catalog_item_ids.map(id => inventory.find(item => item.id === id) || null);
@@ -7018,17 +7107,6 @@ function salesCatalogSelectionProofs(history = [], messages = [], inventory = []
   return proofs;
 }
 
-// A brief affirmative answers the LAST invitation, never a fresh catalog/price request.
-function salesConversationContinuation(text = '', history = [], product = null) {
-  if (!product || ! /^(?:sim|s|ss|aham|uhum|quero|pode|pode ser|claro|manda|me fala)[!?.]*$/.test(normalizeText(text).trim())) return null;
-  const last = salesCurrentSessionHistory(history).filter(row => row.direction === 'outbound' && row.ai_provider === 'sales_core').at(-1);
-  const question = normalizeText(last?.message_text || '');
-  if (/(?:mais detalhes|saber mais|mais informacoes)/.test(question) && ! /(?:visita|agendar|pagamento|financiar)/.test(question))
-    return { reply: salesContextualProductReply(product, 'detalhes') + '\nO que você quer conferir nele?' };
-  if (/(?:visita|agendar).*(?:duvida|detalhe)|(?:duvida|detalhe).*(?:visita|agendar)/.test(question))
-    return { reply: 'Você quer combinar uma visita ou tirar uma dúvida por aqui?' };
-  return null;
-}
 
 function salesReferralForTurn(history = [], messages = [], context = {}) {
   const clean = raw => {
@@ -7227,7 +7305,8 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
   const currentTurnText = turn.messages.map(message => message?.text || '').join(' ');
   const referralMatch = referral ? salesReferralProduct(referral, inventory, currentTurnText) : null;
   const recentCatalog = salesRecentCatalogContext(history, inventory);
-  const contextualReference = salesCatalogChoice(history, turn.messages, inventory);
+  // Gênesis: the model resolves references from the displayed catalog list (data, not a parse).
+  const contextualReference = tenantSlug === 'wesley_automoveis' ? { product: null, invalid: false, ambiguous: false, candidates: [], contextual: false } : salesCatalogChoice(history, turn.messages, inventory);
   const referralFacts = referral ? {
     context: { source: referral.source, title: referral.title, body: referral.body, media_type: referral.media_type },
     inventory_match: referralMatch?.product ? {
@@ -7259,6 +7338,9 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
             "- dialogue_plan.requests lista pedidos que exigem resposta, não todos os atos de fala. Em saudação exclusivamente social, sem pedido, use semantic_intent.topics=[greeting], dialogue_plan.requests=[] e response_contract.answers=[]; escreva a resposta naturalmente. Não crie um pedido other apenas para representar a saudação. Se houver saudação junto com pergunta ou solicitação, preserve TODOS os pedidos reais e seus excerpts em answers. other continua sendo um pedido real não classificado, nunca dispensa resposta.",
             "- response_contract fornece a prova para validar sua resposta: answers contém request_id (request_1, request_2, na ordem de dialogue_plan.requests) e excerpt literal da resposta para cada pedido. requested_fields contém field e excerpt literal da pergunta de coleta; use somente campos habilitados em official_facts.financing_collection. facts contém fact_id, value e excerpt literal para cada afirmação factual, usando fact_ledger; cada fact_id deve ser copiado exatamente do ledger, sem abreviações, aliases ou nomes inventados. value é o valor do ledger para esse fact_id, copiado sem reescrever, traduzir, converter unidade ou juntar com outros campos; em texto livre (como observations) copie o valor integral do ledger, sem recortar qualificadores ou negações. Todo excerpt (de facts e de answers) é copiado caractere por caractere do texto final da resposta, com as mesmas palavras, acentos e pontuação; se a frase da resposta mudar, copie o excerpt de novo. Não liste um fato que a resposta não menciona e não afirme na resposta características que não estejam no fact_ledger. Não omita afirmações. availability_asserted só true ao afirmar disponibilidade do veículo. assignment_confirmed e photo_sent só true se a execução já foi confirmada nos fatos, nunca por intenção futura. A primeira resposta ainda não tem confirmação de execução. handoff_announced é true sempre que a resposta disser que a conversa foi ou será encaminhada/transferida a atendente ou equipe; esse encaminhamento só existe se o backend executar a decisão comercial posterior, então não o prometa: confirme o que foi recebido e indique o próximo passo, deixando o aviso de transferência ao backend. Perguntas condicionais sobre disponibilidade e disponibilidade de pagamento não são afirmação de estoque.",
             "- EVIDÊNCIA DE DETALHES: para requests de details/condition ou uso de observations, use response_contract.fact_evidence_mode=semantic. Responda naturalmente à pergunta, selecionando somente detalhes pertinentes; não precisa copiar observations integral na resposta, nem usar blocos literais. Preserve qualificadores, negações, atribuição à fonte e grau de certeza. O value interno do contrato copia o valor autorizado integral para vincular a fonte; excerpt copia literalmente o trecho que VOCÊ escreveu. Cada fato tem source_product_id do mesmo produto no ledger. Declare TODOS os fatos da resposta, inclusive pressupostos de perguntas; não acrescente características ou números não cadastrados. O auditor independente verifica o sentido de toda a resposta e rejeita evidência insuficiente. Nos demais turnos use standard.",
+            "- PAPEL DO PRODUTO: quando a mensagem traz vários veículos, references.product_references tem um item por veículo, com o papel dele e evidence_ids; references.product_role é o papel do veículo principal. Papéis: mentioned, asked_info, interest e selected. Pedido de foto ou de visita sobre um veículo é asked_info, nunca interest. Uma referência isolada a um veículo é mentioned ou asked_info, nunca selected. selected exige escolha clara entre os itens apresentados. Veículo que o cliente possui ou quer vender é sell_vehicle, não produto da loja.",
+            "- PEDIDO VISUAL, VISITA E COMPRA: pedido de imagens ou de ver o veículo (fotos, aparência, interior) é topic photos; pedido de conhecer ou visitar pessoalmente é topic visit. Nenhum deles é compra, seleção ou handoff. Um pedido de foto de veículo identificado não exige seleção: a EXT decide a mídia pela identidade do veículo, pela disponibilidade das fotos e pelas políticas. Peça esclarecimento só se o veículo ou a intenção (visual, visita ou compra) estiver realmente ambígua.",
+            "- CONTEXTO ESTRUTURADO DO CATÁLOGO: contextual_reference.displayed_catalog lista, em ordem, os itens apresentados por último ao cliente, com ordinal, id e descrição. Resolva referências ordinais, demonstrativas e a itens apresentados anteriormente pelo significado da mensagem atual. Registre selected_ordinal ou mentioned_product_ids com evidence_ids inbound. Se a referência não for clara, peça esclarecimento; não escolha um item por conta própria.",
             "- PRIORIDADE DO TURNO ATUAL: current_turn_messages contém exclusivamente as mensagens agrupadas neste turno. Determine requests, semantic_intent, response_contract e a resposta a partir delas. Histórico e pendências anteriores só contextualizam referências que a mensagem atual retoma explicitamente; não transforme saudação, agradecimento ou nova pergunta em confirmação implícita de assunto anterior.",
             "- Combustível e câmbio são atributos diferentes: fuel=flex descreve combustível, não comprova tipo de câmbio. Não escreva câmbio flex nem infira automático/manual a partir de combustível. Se transmission não foi fornecido, o câmbio é desconhecido.",
             "- A EXT fornece official_facts.genesis_context como referência autorizada do veículo da loja em foco. Interprete TODAS as perguntas atuais sobre quaisquer atributos desse veículo com base nesses dados e no histórico. Valor null ou vazio significa informação ausente, não zero ou confirmação. Responda primeiro ao atributo solicitado, sem trocar a resposta por preço ou repetir a oferta anterior. Se a referência estiver indefinida ou ambígua, esclareça qual veículo antes de atribuir características. Não confunda o carro do cliente com o da loja."
@@ -7291,9 +7373,10 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
               financing_collection: financingCollection, media: primaryFacts.official.media, product: primaryFacts.official.product, genesis_context: genesisFacts, business: primaryFacts.official.business, inventory: modelInventory, date: buildDateContext(context), rules: settings.sdr_rules,
               sales_policy: { required_financing_documents: salesFinancingPolicy(context).requiredDocuments, required_financing_information: salesFinancingPolicy(context).requiredInformation, deposit_required_for_progress: salesFinancingPolicy(context).deposit_required_for_progress === true, hot_lead_rule: settings.sales?.hot_lead_rule || '', conversation_contract: settings.sales?.conversation_contract || {}, hot_lead_percent: settings.sdr_rules?.hot_lead_percent ?? null }, referral: referralFacts,
               recent_catalog: recentCatalog.products.map((item, index) => item ? ({ number: index + 1, id: item.id, name: item.name, model: item.model, brand: item.brand, year: item.year, color: item.color, km: item.km, fuel: item.fuel, price_cents: item.price_cents, price_source: item.price_source || 'canonical_inventory', whatsapp_product_id: item.whatsapp_product_id || null, whatsapp_regular_price_cents: item.whatsapp_regular_price_cents || null, whatsapp_sale_price_cents: item.whatsapp_sale_price_cents || null }) : null).filter(Boolean),
-              contextual_reference: contextualReference.product ? { status: 'unique', vehicle: { id: contextualReference.product.id, name: contextualReference.product.name, model: contextualReference.product.model, brand: contextualReference.product.brand, year: contextualReference.product.year } } :
+              contextual_reference: tenantSlug === 'wesley_automoveis' ? { status: 'displayed_catalog', displayed_catalog: recentCatalog.products.map((item, index) => ({ ordinal: index + 1, id: item?.id || null, name: item?.name || null, model: item?.model || null, brand: item?.brand || null, year: item?.year || null })) } : contextualReference.product ? { status: 'unique', vehicle: { id: contextualReference.product.id, name: contextualReference.product.name, model: contextualReference.product.model, brand: contextualReference.product.brand, year: contextualReference.product.year } } :
                 (contextualReference.ambiguous ? { status: 'ambiguous', candidates: contextualReference.candidates.map(item => ({ id: item.id, name: item.name, model: item.model, brand: item.brand, year: item.year })) } : { status: 'none' })
             },
+            last_assistant_offer: await salesLastAssistantOffer(context, history),
             conversation_context: { last_assistant_message: salesCurrentSessionHistory(history).filter(m => m.direction === 'outbound' && m.ai_provider === 'sales_core').at(-1)?.message_text || '', pending_requirement: salesLastPendingRequirement(history) },
             current_lead_state: salesLeadStateForPrompt(lead?.state || salesEmptyState(), history),
             customer_messages: safeMessages, current_turn_messages: currentTurnMessages, current_message_ids: turn.messages.map(m => m.event_id),
@@ -7667,16 +7750,74 @@ function salesVerifiedPaymentMethodReply(context, text = '') {
   return '';
 }
 
-function salesLastOptionalHumanOffer(history = []) {
-  const last = salesCurrentSessionHistory(history).filter(row => row.direction === 'outbound').at(-1);
-  return last?.raw_payload?.optional_human_offer || null;
+// Outbound message ids of this session whose delivery the provider confirmed. Read once per turn
+// from the delivery attempts, the single source of delivery truth, and shared by every reader.
+async function salesLoadConfirmedOutboundIds(context) {
+  if (tenantSlug !== 'wesley_automoveis' || typeof turn === 'undefined' || !turn) return null;
+  if (turn.confirmed_outbound_ids instanceof Set) return turn.confirmed_outbound_ids;
+  const rows = await supabaseGet('/rest/v1/conversation_turn_delivery_attempts?select=outbound_event_id&tenant_id=eq.' + encodeFilter(context.tenant.id)
+    + '&channel_type=eq.whatsapp&chat_id=eq.' + encodeFilter(chatId) + '&session_id=eq.' + encodeFilter(turn.boundary_id)
+    + '&status=eq.confirmed&outbound_event_id=not.is.null&limit=500');
+  turn.confirmed_outbound_ids = new Set((Array.isArray(rows) ? rows : []).map(row => String(row.outbound_event_id)));
+  return turn.confirmed_outbound_ids;
 }
 
+// Media sends are not conversational turns: a photo must not supersede the offer of its text reply.
+const SALES_MEDIA_OUTBOUND_PROVIDERS = ['sales_catalog_photo', 'sales_catalog_photo_attempt'];
+
+// The actionable assistant offer of this session (Gênesis only). The delivery truth is the
+// turn delivery attempt that the provider confirmed for the latest text outbound message of
+// the session. No separate status is written, so no second source of truth exists.
+async function salesLastAssistantOffer(context, history = []) {
+  if (tenantSlug !== 'wesley_automoveis') return null;
+  const last = salesCurrentSessionHistory(history)
+    .filter(row => row.direction === 'outbound' && !SALES_MEDIA_OUTBOUND_PROVIDERS.includes(row.ai_provider)).at(-1);
+  const offer = last?.raw_payload?.assistant_offer;
+  if (!offer?.offer_id || !last?.id || offer.session_id !== (typeof turn !== 'undefined' ? turn?.boundary_id : null)) return null;
+  const confirmed = await salesLoadConfirmedOutboundIds(context);
+  return confirmed?.has(String(last.id)) ? offer : null;
+}
+
+// Legacy human-offer acceptance (tenants without the semantic contract, e.g. Núbia): restored
+// unchanged from the previous behaviour.
 function salesIsAffirmativeToHumanOffer(text = '') {
   const norm = normalizeText(text);
   if (!norm) return false;
   return /^(?:sim|s|quero|pode|por\s+favor|com\s+certeza|ok|beleza|topo)$/.test(norm)
     || /\b(?:pode\s+chamar|pode\s+passar|quero\s+falar(?:\s+com\s+algu[eé]m)?|me\s+passa\s+pro\s+atendente|chama\s+(?:o\s+atendente|a\s+equipe|ele|a[ií])|quero\s+sim|sim[,\s]+pode\s+chamar|sim[,\s]+por\s+favor|pode\s+ser)\b/.test(norm);
+}
+function salesLastOptionalHumanOffer(history = []) {
+  const last = salesCurrentSessionHistory(history).filter(row => row.direction === 'outbound').at(-1);
+  return last?.raw_payload?.optional_human_offer || null;
+}
+
+
+// The offer a reply makes, as declared by the model (dialogue_plan.offer) or by the CORE's
+// own handoff offer. It is recorded as awaiting delivery; the send step confirms it.
+function salesAssistantOfferForTurn(optionalHumanOffer, plan, product, turnState) {
+  const action = optionalHumanOffer ? 'human_handoff' : (plan?.offer?.action || 'none');
+  if (action === 'none') return null;
+  return { contract: 'noria_assistant_offer_v1', offer_id: String(turnState?.token || ''), action,
+    product_id: product?.id || null, session_id: turnState?.boundary_id || null };
+}
+
+// The model's offer response counts only with evidence from this turn's inbound messages.
+// A model signal counts only with evidence from this turn's inbound messages.
+function salesSignalInTurn(signal = null, messages = [], expected = '') {
+  if (!signal || signal.value !== expected) return false;
+  const ids = new Set((Array.isArray(messages) ? messages : []).map(m => String(m?.event_id || m?.id || '')));
+  return Array.isArray(signal.evidence_ids) && signal.evidence_ids.length > 0 && signal.evidence_ids.every(id => ids.has(String(id)));
+}
+
+// The model's response counts only when it cites the actionable assistant offer and
+// evidence from this turn's inbound messages. Anything else is no response.
+function salesOfferResponse(semantic = null, messages = [], offer = null) {
+  if (semantic?.valid !== true || !offer?.offer_id) return 'none';
+  const ids = new Set((Array.isArray(messages) ? messages : []).map(m => String(m?.event_id || m?.id || '')));
+  const response = semantic.offer_response;
+  return response && ['accepted', 'declined', 'unclear'].includes(response.value) && response.offer_ref === offer.offer_id
+    && Array.isArray(response.evidence_ids) && response.evidence_ids.length > 0 && response.evidence_ids.every(id => ids.has(String(id)))
+    ? response.value : 'none';
 }
 
 function salesHighConfidenceNonCustomerNoise(text = '') {
@@ -8188,7 +8329,9 @@ const salesNaturalDialogue = (() => {
         plan.handoff_reason = 'none';
       }
     }
-    return { ...plan, requests, memory };
+    const offerActions = ['none', 'product_details', 'visit', 'financing', 'photos', 'human_handoff', 'next_requirement'];
+    const locationKinds = ['none', 'address', 'reference', 'directions'];
+    return { ...plan, requests, memory, location_kind: locationKinds.includes(plan.location_kind) ? plan.location_kind : 'none', offer: { action: offerActions.includes(plan.offer?.action) ? plan.offer.action : 'none' } };
   }
   function validateDraft(draft, plan, facts = []) {
     const issues = [];
@@ -8398,18 +8541,19 @@ function salesSemanticIntentSchema() {
       secondary_intents: { type: 'ARRAY', items: { type: 'STRING', enum: ['inventory_search', 'purchase', 'sale', 'buy_and_sell', 'trade_in', 'financing', 'price_question', 'product_details', 'after_sales', 'human_handoff', 'other'] } },
       topics: list,
       customer_disposition: { type: 'OBJECT', description: 'Interprete a mensagem inteira: recusar modalidade, produto ou condição enquanto solicita alternativa continua active. declined só para desistência do atendimento/negócio inteiro; closed_by_customer só encerramento sem nova solicitação. Cite os IDs das mensagens atuais que comprovam a decisão.', properties: { value: { type: 'STRING', enum: ['active', 'declined', 'closed_by_customer', 'deferred_by_customer'] }, evidence_ids: list }, required: ['value', 'evidence_ids'] },
+      offer_response: { type: 'OBJECT', description: 'Interprete a mensagem atual em relação a last_assistant_offer: a oferta concreta que a IA apresentou na última resposta entregue, ou null. Se offer_ref não corresponder a last_assistant_offer.offer_id, a resposta não vale. accepted: o cliente aceita essa oferta; declined: recusa; unclear: não há como decidir sem esclarecimento; none: a mensagem não responde a essa oferta, ou não há oferta. Decida pelo sentido e pelo contexto da conversa, nunca por palavras-chave. Cite em evidence_ids os IDs inbound da mensagem atual que sustentam a decisão.', properties: { value: { type: 'STRING', enum: ['none', 'accepted', 'declined', 'unclear'] }, evidence_ids: { type: 'ARRAY', items: { type: 'STRING' } }, offer_ref: { type: 'STRING', description: 'offer_id de last_assistant_offer que está sendo aceita, recusada ou esclarecida; vazio se none.' } }, required: ['value', 'evidence_ids', 'offer_ref'] },
       catalog: { type: 'OBJECT', properties: { requested: { type: 'BOOLEAN', description: 'true somente quando o cliente pede para ver, listar ou comparar opções do estoque. Pedir foto, preço ou detalhes de um veículo, marca ou categoria não é pedir a lista do estoque.' }, category: { type: 'STRING', enum: ['all', 'cars', 'motorcycles', 'unspecified'] }, price_min_cents: { type: 'INTEGER', nullable: true }, price_max_cents: { type: 'INTEGER', nullable: true }, preferences: list, exclusions: list, evidence_ids: list }, required: ['requested', 'category', 'price_min_cents', 'price_max_cents', 'preferences', 'exclusions', 'evidence_ids'] },
       customer_vehicle: { type: 'OBJECT', description: 'Classifique semanticamente a relação do veículo do cliente com a negociação atual. Mera posse é ambiguous_possession; pergunta de política é entry_inquiry; oferta concreta é entry; venda separada é independent_sale; correção explícita para comprar sem usar o veículo é buy_only_correction.', properties: { purpose: { type: 'STRING', enum: ['none', 'entry_inquiry', 'entry', 'independent_sale', 'ambiguous_possession', 'buy_only_correction'] }, evidence_ids: list }, required: ['purpose', 'evidence_ids'] },
-      references: { type: 'OBJECT', properties: { previous_catalog: { type: 'BOOLEAN' }, selected_ordinal: { type: 'INTEGER', nullable: true }, mentioned_product_ids: list, evidence_ids: list }, required: ['previous_catalog', 'selected_ordinal', 'mentioned_product_ids', 'evidence_ids'] },
-      conversation: { type: 'OBJECT', properties: { continues_previous_topic: { type: 'BOOLEAN' }, changes_preference: { type: 'BOOLEAN' }, requires_clarification: { type: 'BOOLEAN' } }, required: ['continues_previous_topic', 'changes_preference', 'requires_clarification'] },
+      references: { type: 'OBJECT', properties: { previous_catalog: { type: 'BOOLEAN' }, selected_ordinal: { type: 'INTEGER', nullable: true }, mentioned_product_ids: list, evidence_ids: list, product_references: { type: 'ARRAY', description: 'Um item por produto da loja referido nesta mensagem, com o papel dele e as evidence_ids inbound que o sustentam. Quando a mensagem traz vários veículos com funções diferentes, cada um tem o próprio papel. Não inclua veículos do cliente.', items: { type: 'OBJECT', properties: { product_id: { type: 'STRING' }, role: { type: 'STRING', enum: ['mentioned', 'asked_info', 'interest', 'selected'] }, evidence_ids: { type: 'ARRAY', items: { type: 'STRING' } } }, required: ['product_id', 'role', 'evidence_ids'] } }, product_role: { type: 'STRING', enum: ['none', 'mentioned', 'asked_info', 'interest', 'selected'], description: 'Papel do produto da loja que esta mensagem refere, decidido pelo significado: mentioned: só citado, sem pedido; asked_info: o cliente pergunta sobre ele; interest: o cliente demonstra intenção de comprar esse produto; selected: o cliente escolhe esse produto entre os apresentados. none: nenhum produto da loja é referido. Uma referência isolada nunca é selected.' } }, required: ['previous_catalog', 'selected_ordinal', 'mentioned_product_ids', 'evidence_ids', 'product_references', 'product_role'] },
+      conversation: { type: 'OBJECT', properties: { continues_previous_topic: { type: 'BOOLEAN' }, changes_preference: { type: 'BOOLEAN' }, requires_clarification: { type: 'BOOLEAN' }, frustration: { type: 'OBJECT', description: 'frustrated: o cliente demonstra frustração ou irritação com a conversa ou com o atendimento nesta mensagem; none caso contrário. Decida pelo sentido. Cite em evidence_ids os IDs inbound da mensagem atual que sustentam a decisão.', properties: { value: { type: 'STRING', enum: ['none', 'frustrated'] }, evidence_ids: { type: 'ARRAY', items: { type: 'STRING' } } }, required: ['value', 'evidence_ids'] } }, required: ['continues_previous_topic', 'changes_preference', 'requires_clarification', 'frustration'] },
       auction: { type: 'OBJECT', description: 'Classifique semanticamente a relação da mensagem atual com leilão ou sinistro. none: sem relação. policy_inquiry: pergunta geral sobre a loja comprar veículos de leilão. customer_vehicle_offer: o cliente oferece ao negócio um veículo SEU com histórico de leilão. inventory_interest: o cliente quer avançar em um veículo ANUNCIADO que tem histórico de leilão. inventory_history: pergunta se um veículo anunciado passou por leilão. rejection: o cliente recusa veículos de leilão. sinistro_inquiry: pergunta sobre sinistro sem leilão. unclear: relação ambígua. Cite os IDs das mensagens atuais e o ID do produto anunciado quando houver.', properties: { intent: { type: 'STRING', enum: ['none', 'policy_inquiry', 'customer_vehicle_offer', 'inventory_interest', 'inventory_history', 'rejection', 'sinistro_inquiry', 'unclear'] }, product_id: { type: 'STRING', nullable: true }, evidence_ids: list }, required: ['intent', 'product_id', 'evidence_ids'] },
       ambiguities: list, confidence: { type: 'STRING', enum: ['low', 'medium', 'high'] }
     },
-    required: ['primary_intent', 'secondary_intents', 'topics', 'catalog', 'customer_vehicle', 'references', 'conversation', 'ambiguities', 'confidence', 'customer_disposition', 'auction']
+    required: ['primary_intent', 'secondary_intents', 'topics', 'catalog', 'customer_vehicle', 'references', 'conversation', 'ambiguities', 'confidence', 'customer_disposition', 'offer_response', 'auction']
   };
 }
-function salesSemanticFallback(errors = ['SEMANTIC_INTENT_UNAVAILABLE']) { return { valid: false, validation_errors: [...new Set(errors)], primary_intent: 'other', secondary_intents: [], topics: [], catalog: { requested: false, category: 'unspecified', price_min_cents: null, price_max_cents: null, preferences: [], exclusions: [], evidence_ids: [] }, customer_vehicle: { purpose: 'none', evidence_ids: [] }, references: { previous_catalog: false, selected_ordinal: null, mentioned_product_ids: [], evidence_ids: [] }, conversation: { continues_previous_topic: false, changes_preference: false, requires_clarification: true }, auction: { intent: 'none', product_id: null, evidence_ids: [] }, ambiguities: ['semantic_intent_unavailable'], confidence: 'low' }; }
-function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds = []) {
+function salesSemanticFallback(errors = ['SEMANTIC_INTENT_UNAVAILABLE']) { return { valid: false, validation_errors: [...new Set(errors)], primary_intent: 'other', secondary_intents: [], topics: [], catalog: { requested: false, category: 'unspecified', price_min_cents: null, price_max_cents: null, preferences: [], exclusions: [], evidence_ids: [] }, customer_vehicle: { purpose: 'none', evidence_ids: [] }, references: { previous_catalog: false, selected_ordinal: null, mentioned_product_ids: [], evidence_ids: [], product_references: [], product_role: 'none' }, conversation: { continues_previous_topic: false, changes_preference: false, requires_clarification: true, frustration: { value: 'none', evidence_ids: [] } }, auction: { intent: 'none', product_id: null, evidence_ids: [] }, offer_response: { value: 'none', evidence_ids: [], offer_ref: '' }, ambiguities: ['semantic_intent_unavailable'], confidence: 'low' }; }
+function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds = [], currentEvidenceIds = salesCurrentTurnEvidenceIds()) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return salesSemanticFallback(['INVALID_SEMANTIC_INTENT_OBJECT']);
   const allowed = new Set(['inventory_search', 'purchase', 'sale', 'buy_and_sell', 'trade_in', 'financing', 'price_question', 'product_details', 'after_sales', 'human_handoff', 'other', 'ambiguous']);
   const category = new Set(['all', 'cars', 'motorcycles', 'unspecified']);
@@ -8451,15 +8595,37 @@ function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds =
     return [...new Set(input.filter(item => typeof item === 'string' && item.trim() && item.length <= 160).map(item => item.trim()))].slice(0, 20);
   };
   const allowedEvidence = new Set((sessionEvidenceIds || []).map(String));
+  // Evidence of the message being processed now. Session evidence may identify what was presented before; only
+  // current evidence authorises a new commercial action (selection, interest, intent change, offer, disposition).
+  const currentIds = new Set((currentEvidenceIds || []).map(String));
   const customerDisposition = value.customer_disposition || { value: 'active', evidence_ids: [] };
   let dispositionEvidence = strings(customerDisposition.evidence_ids, 'DISPOSITION_EVIDENCE_IDS');
   if (!['active', 'declined', 'closed_by_customer', 'deferred_by_customer'].includes(customerDisposition.value)) errors.push('INVALID_CUSTOMER_DISPOSITION');
-  if (customerDisposition.value !== 'active') {
-    if (dispositionEvidence.some(id => !allowedEvidence.has(id))) errors.push('UNSCOPED_DISPOSITION_EVIDENCE');
-    if (!dispositionEvidence.length) errors.push('MISSING_DISPOSITION_EVIDENCE');
-  } else {
-    dispositionEvidence = dispositionEvidence.filter(id => allowedEvidence.has(id));
-  }
+  // A declined, closed or deferred disposition is a new decision: it counts only with evidence from the current message.
+  // Without it the customer is active, so an earlier deferral never repeats itself.
+  const dispositionCurrent = dispositionEvidence.filter(id => currentIds.has(id));
+  const dispositionValue = customerDisposition.value !== 'active' && dispositionCurrent.length ? customerDisposition.value : 'active';
+  dispositionEvidence = dispositionValue === 'active' ? [] : dispositionCurrent;
+  // An offer response without current evidence is downgraded to none: it never invalidates the contract.
+  const offerResponse = value.offer_response && typeof value.offer_response === 'object' ? value.offer_response : { value: 'none', evidence_ids: [] };
+  const offerValue = ['accepted', 'declined', 'unclear'].includes(offerResponse.value) && strings(offerResponse.evidence_ids, 'OFFER_RESPONSE_EVIDENCE_IDS').length && strings(offerResponse.evidence_ids, 'OFFER_RESPONSE_EVIDENCE_IDS').every(id => currentIds.has(id))
+    ? offerResponse.value : 'none';
+  const offerEvidence = offerValue === 'none' ? [] : strings(offerResponse.evidence_ids, 'OFFER_RESPONSE_EVIDENCE_IDS');
+  const offerRef = offerValue === 'none' || typeof offerResponse.offer_ref !== 'string' ? '' : offerResponse.offer_ref;
+  // Frustration is a model decision that can hand the customer to a human; it counts only with current evidence.
+  const frustrationSignal = conversation.frustration && typeof conversation.frustration === 'object' ? conversation.frustration : { value: 'none', evidence_ids: [] };
+  const frustrationEvidence = strings(frustrationSignal.evidence_ids, 'FRUSTRATION_EVIDENCE_IDS').filter(id => currentIds.has(id));
+  const frustrationValue = frustrationSignal.value === 'frustrated' && frustrationEvidence.length ? 'frustrated' : 'none';
+  const inventoryIds = new Set((Array.isArray(inventory) ? inventory : []).map(row => String(row?.id || '')));
+  const productReferences = (Array.isArray(refs.product_references) ? refs.product_references : []).slice(0, 4).flatMap(item => {
+    const productId = String(item?.product_id || '');
+    const evidence = strings(item?.evidence_ids, 'PRODUCT_REFERENCE_EVIDENCE_IDS').filter(id => allowedEvidence.has(id));
+    if (!inventoryIds.has(productId) || !evidence.length) return [];
+    // Selection and declared interest need this message's evidence; a historical reference stays information only.
+    const role = ['mentioned', 'asked_info', 'interest', 'selected'].includes(item?.role) ? item.role : 'mentioned';
+    const roleCurrent = evidence.some(id => currentIds.has(id));
+    return [{ product_id: productId, role: ['selected', 'interest'].includes(role) && !roleCurrent ? 'mentioned' : role, evidence_ids: evidence }];
+  });
   const hasCatalogMeaning = catalog.requested === true || catalog.category !== 'unspecified' || min !== null || max !== null
     || (Array.isArray(catalog.preferences) && catalog.preferences.length) || (Array.isArray(catalog.exclusions) && catalog.exclusions.length);
   let catalogEvidence = strings(catalog.evidence_ids, 'CATALOG_EVIDENCE_IDS');
@@ -8481,6 +8647,9 @@ function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds =
   const ids = new Set((inventory || []).map(item => String(item?.id || '')).filter(Boolean));
   const rawMentioned = strings(refs.mentioned_product_ids, 'MENTIONED_PRODUCT_IDS');
   const mentioned = rawMentioned.filter(id => ids.has(id));
+  // The role is the model's decision. Without a valid role, a referred product is only mentioned: never selected.
+  let productRole = ['none', 'mentioned', 'asked_info', 'interest', 'selected'].includes(refs.product_role)
+    ? refs.product_role : ((ordinal !== null || mentioned.length) ? 'mentioned' : 'none');
   if (mentioned.length !== rawMentioned.length) errors.push('UNKNOWN_PRODUCT_REFERENCE');
   const hasReference = (ordinal !== null || mentioned.length > 0 || refs.previous_catalog === true);
   let referenceEvidence = strings(refs.evidence_ids, 'REFERENCE_EVIDENCE_IDS');
@@ -8491,6 +8660,10 @@ function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds =
     referenceEvidence = referenceEvidence.filter(id => allowedEvidence.has(id));
   }
   if (typeof refs.previous_catalog !== 'boolean') errors.push('INVALID_PREVIOUS_CATALOG');
+  // Selection and declared interest, and a customer-vehicle purpose (a commercial change), need this message's evidence.
+  // Without it they stay information: a reference to a product presented before never selects it by itself.
+  if (['selected', 'interest'].includes(productRole) && !referenceEvidence.some(id => currentIds.has(id))) productRole = 'mentioned';
+  const customerVehiclePurposeAuthorised = customerVehicle.purpose !== 'none' && !customerVehicleEvidence.some(id => currentIds.has(id)) ? 'none' : customerVehicle.purpose;
   for (const key of ['continues_previous_topic', 'changes_preference', 'requires_clarification']) if (typeof conversation[key] !== 'boolean') errors.push('INVALID_CONVERSATION_' + key.toUpperCase());
   const secondary = strings(value.secondary_intents, 'SECONDARY_INTENTS');
   if (secondary.some(item => !allowed.has(item))) errors.push('INVALID_SECONDARY_INTENT');
@@ -8510,14 +8683,22 @@ function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds =
   }
   const topics = strings(value.topics, 'TOPICS'), preferences = strings(catalog.preferences, 'PREFERENCES'), exclusions = strings(catalog.exclusions, 'EXCLUSIONS'), ambiguities = strings(value.ambiguities, 'AMBIGUITIES');
   if (!['low', 'medium', 'high'].includes(value.confidence)) errors.push('INVALID_CONFIDENCE');
+  // An intent that changes the commercial mode (buy, sell, both, inventory search) needs a signal from this message
+  // that the contract cites. Without one the intent is unresolved and the CORE asks a safe clarification.
+  const modeIntents = ['purchase', 'sale', 'buy_and_sell', 'inventory_search'];
+  const currentSignal = [catalogEvidence, referenceEvidence, customerVehicleEvidence, auctionEvidence, offerEvidence, dispositionEvidence]
+    .some(list => list.some(id => currentIds.has(id)));
+  const primaryAuthorised = modeIntents.includes(primary) && !currentSignal ? 'ambiguous' : primary;
+  const secondaryAuthorised = currentSignal ? secondary : secondary.filter(item => !modeIntents.includes(item));
   if (errors.length) return salesSemanticFallback(errors);
   return {
-    valid: true, primary_intent: primary, secondary_intents: strings(value.secondary_intents).filter(item => allowed.has(item) && item !== primary), topics: strings(value.topics),
-    customer_disposition: { value: customerDisposition.value, evidence_ids: dispositionEvidence },
+    valid: true, primary_intent: primaryAuthorised, secondary_intents: secondaryAuthorised.filter(item => allowed.has(item) && item !== primaryAuthorised), topics: strings(value.topics),
+    customer_disposition: { value: dispositionValue, evidence_ids: dispositionEvidence },
+    offer_response: { value: offerValue, evidence_ids: offerEvidence, offer_ref: offerRef },
     catalog: { requested: catalog.requested, category: catalog.category, price_min_cents: min, price_max_cents: max, preferences, exclusions, evidence_ids: catalogEvidence },
-    customer_vehicle: { purpose: customerVehicle.purpose, evidence_ids: customerVehicleEvidence },
-    references: { previous_catalog: refs.previous_catalog, selected_ordinal: ordinal, mentioned_product_ids: mentioned, evidence_ids: referenceEvidence },
-    conversation: { continues_previous_topic: conversation.continues_previous_topic, changes_preference: conversation.changes_preference, requires_clarification: conversation.requires_clarification },
+    customer_vehicle: { purpose: customerVehiclePurposeAuthorised, evidence_ids: customerVehicleEvidence },
+    references: { previous_catalog: refs.previous_catalog, selected_ordinal: ordinal, mentioned_product_ids: mentioned, evidence_ids: referenceEvidence, product_references: productReferences, product_role: productRole },
+    conversation: { continues_previous_topic: conversation.continues_previous_topic, changes_preference: conversation.changes_preference, requires_clarification: conversation.requires_clarification, frustration: { value: frustrationValue, evidence_ids: frustrationValue === 'none' ? [] : frustrationEvidence } },
     auction: { intent: auctionIntents.includes(auctionRaw.intent) ? auctionRaw.intent : 'none', product_id: auctionProductId, evidence_ids: auctionEvidence }, ambiguities, confidence: value.confidence
   };
 }
@@ -8593,23 +8774,47 @@ function salesSemanticPlanFromPrimary(history, generated, lead, inventory) {
   }
   return { ...plan, attempts: [{ attempt: 0, issues: [] }], semantic_source: plan.semantic_intent.valid ? 'primary_gemini' : 'local_fallback' };
 }
+// Only a 'selected' product role selects a catalog product. 'interest' is declared interest, not selection.
+// A referenced product that selects nothing: it stays in context as information, never as selection or interest.
+
 function salesSemanticCatalogChoice(semantic, history, inventory) {
   if (!semantic?.valid) return null;
   const recent = salesRecentCatalogContext(history, inventory), products = Array.isArray(recent?.products) ? recent.products : [];
-  const ordinal = semantic.references?.selected_ordinal;
+  const refs = semantic.references || {};
+  const ordinal = refs.selected_ordinal;
+  // One entry per product the message refers to. Each keeps its own role and evidence.
+  const entries = new Map();
+  const add = (productId, role, via) => { if (productId && !entries.has(productId)) entries.set(productId, { product_id: productId, role: role || 'mentioned', via }); };
   if (ordinal !== null && ordinal !== undefined) {
     const displayed = products[ordinal - 1];
     if (!displayed) return { product: null, invalid: products.length > 0, ambiguous: false, contextual: true, ordinal };
-    const product = (inventory || []).find(item => item.id === displayed.id) || null;
-    const eligibility = salesSemanticProductEligibility(product);
-    return { product, invalid: !product, ambiguous: false, contextual: true, ordinal, resolved_via: 'semantic_ordinal', commercial_eligible: eligibility.eligible, ineligible_reason: eligibility.reason, availability_confirmed: eligibility.availability_confirmed };
+    add(displayed.id, refs.product_role, 'semantic_ordinal');
   }
-  if (semantic.references?.mentioned_product_ids?.length === 1) {
-    const product = (inventory || []).find(item => item.id === semantic.references.mentioned_product_ids[0]) || null;
-    const eligibility = salesSemanticProductEligibility(product);
-    return { product, invalid: !product, ambiguous: false, contextual: true, resolved_via: 'semantic_product_id', commercial_eligible: eligibility.eligible, ineligible_reason: eligibility.reason, availability_confirmed: eligibility.availability_confirmed };
+  const mentioned = Array.isArray(refs.mentioned_product_ids) ? refs.mentioned_product_ids : [];
+  for (const id of mentioned) add(id, mentioned.length === 1 ? refs.product_role : 'mentioned', 'semantic_product_id');
+  for (const item of Array.isArray(refs.product_references) ? refs.product_references : []) {
+    const entry = entries.get(item.product_id);
+    if (entry) entry.role = item.role; else add(item.product_id, item.role, 'product_reference');
   }
-  return null;
+  if (!entries.size) return null;
+  const all = [...entries.values()].map(entry => ({ ...entry, product: (inventory || []).find(item => item.id === entry.product_id) || null })).filter(entry => entry.product);
+  if (!all.length) return { product: null, invalid: true, ambiguous: false, contextual: true, ordinal: ordinal ?? null };
+  const selected = all.filter(entry => entry.role === 'selected');
+  const interested = all.filter(entry => entry.role === 'interest');
+  // Two selections, or two declared interests with no selection, are a real ambiguity: nothing is picked.
+  if (selected.length > 1 || (!selected.length && interested.length > 1)) {
+    return { product: null, invalid: false, ambiguous: true, candidates: (selected.length ? selected : interested).map(entry => entry.product), contextual: true };
+  }
+  if (selected.length === 1) {
+    const chosen = selected[0];
+    const eligibility = salesSemanticProductEligibility(chosen.product);
+    return { product: chosen.product, invalid: false, ambiguous: false, contextual: true, ordinal: ordinal ?? null, resolved_via: chosen.via, commercial_eligible: eligibility.eligible, ineligible_reason: eligibility.reason, availability_confirmed: eligibility.availability_confirmed };
+  }
+  // Declared interest: the product is recorded as interest, never as a selection.
+  if (interested.length === 1) return { product: null, interest_product: interested[0].product, invalid: false, ambiguous: false, contextual: true, resolved_via: interested[0].via, reference_products: all.filter(entry => entry !== interested[0]).map(entry => entry.product) };
+  // Information only: one product may inform the reply; several are never picked.
+  const info = all.map(entry => entry.product);
+  return { product: null, invalid: false, ambiguous: false, candidates: [], contextual: true, reference_product: info.length === 1 ? info[0] : null, reference_products: info, product_role: refs.product_role || 'none', resolved_via: 'semantic_reference_only' };
 }
 function salesApplySemanticIntent(previous, state, semantic) {
   const merged = salesMergeState(previous || {}, state || {});
@@ -8877,6 +9082,7 @@ function salesSemanticAuditRequest(scopeKey, reply, claims, sources, model, medi
       }
     }
   };
+  request.system_instruction.parts.push({ text: 'RELATO DO CLIENTE: sources com fact_id customer.statement.N e origin customer_text ou customer_audio_transcript são o que o próprio cliente declarou nesta conversa (inclusive por áudio transcrito). Elas comprovam que o cliente afirmou aquele conteúdo, e um segmento que apenas reproduz esse relato pode ser supported_fact citando essa fonte, com source_value exato. Não comprovam preço, disponibilidade, estoque, inspeção, condição verificada ou garantia do estabelecimento; essas afirmações continuam exigindo claims e sources oficiais. Nunca use uma fonte customer.statement para sustentar um claim official.*.' });
   request.system_instruction.parts.push({ text: 'PROPOSIÇÕES OPERACIONAIS: para official.media.*, official.product.usable_photo_count e official.inventory.N.usable_photo_count, evidence exige assertion={operator,value}. Extraia de segment.text a proposição realmente afirmada, independentemente do source_value; só depois compare com a fonte. Não copie o estado da fonte para assertion se o texto disser o contrário. Use valores canônicos do contrato (estado enabled/disabled; quantidade inteira não negativa) e eq/ne/gt/gte/lt/lte. Uma afirmação de existência pode usar um limite numérico em vez de quantidade exata. Negação, tempo e modalidade fazem parte do sentido; promessa de tentar não comprova envio realizado. Se o trecho não afirma esse fato, não o inclua como evidence. Uma fonte de quantidade não comprova o estado de habilitação do canal, nem o inverso. Ausência de evidência não é negação. Não classifique contradição como supported_fact. Este predicado é verificado pelo código contra a fonte final; demais fontes continuam exigindo implicação semântica completa.' });
   if (mediaDelivery) request.system_instruction.parts.push({ text: 'RESPOSTA DE MÍDIA AO CLIENTE: flags, habilitação técnica do canal e contagens internas do acervo são dados de execução, não conteúdo de atendimento. Se o texto expuser esses dados, classifique o segmento como technical_media_disclosure, mesmo se forem verdadeiros. Não classifique esse conteúdo como supported_fact ou non_factual. Isso não proíbe reconhecer naturalmente o pedido, identificar o veículo com evidência ou explicar que não há uma foto autorizada: existência/ausência e limitação específica podem ser sustentadas pelas fontes. Nunca invente descrição visual nem confirmação de entrega; uma legenda sem afirmação factual pode ser non_factual. Não redija nem reescreva a resposta.' });
   if (attachments.length) request.system_instruction.parts.push({ text: 'LEGENDAS DE ANEXOS: attachments contém somente mídia autorizada pela EXT e validada para este despacho; authorized_for_dispatch NÃO é entrega confirmada. Um segmento que apenas apresenta a imagem a ser anexada e identifica o mesmo produto pode ser attachment_caption, com attachment={id,product_id,mode:presentation} copiados do anexo e evidence=[]. Avalie semanticamente todo o segmento e a identidade (marca, modelo e ano) contra attachment.product. Isso não autoriza características, preço, condição ou descrição do conteúdo visual: essas afirmações continuam exigindo claims/sources e supported_fact; não as esconda na legenda. Afirmação de entrega passada/confirmada exige mode=delivery_confirmation e prova de entrega, inexistente neste estado. Ausência de anexo, outro produto ou relação incerta não sustenta legenda. Não é necessário inventar um claim de habilitação/quantidade para apresentar uma mídia autorizada. Não remova claims já declarados: todos continuam exigindo sua evidência usual. Nunca use attachment_caption para contornar technical_media_disclosure.' });
@@ -8928,6 +9134,9 @@ function salesValidateSemanticEvidence(report, scopeKey, reply, claims, sources,
         && !salesOperationalAssertionMatches(source.source_value, evidence.assertion)) {
         issues.push('OPERATIONAL_ASSERTION_MISMATCH:' + source.fact_id); continue;
       }
+      // A customer statement supports the segment's own wording only. It has no
+      // claim to link, and it cannot mark any official claim as supported.
+      if (String(source.fact_id).startsWith('customer.statement.')) continue;
       const linked = claims.map((claim, index) => ({ claim, index })).filter(({ claim }) =>
         claim.fact_id === evidence.fact_id && segment.text.includes(claim.excerpt));
       if (!linked.length) issues.push('UNDECLARED_OR_UNLINKED_SEMANTIC_FACT');
@@ -8983,16 +9192,34 @@ function salesScopeMediaAnswer(report, issues, plan, generated) {
     removed: spans.filter(span => span.to > best.end).map(span => ({ kind: span.kind, text: span.text })) };
 }
 
+// Facts the customer declared in this turn (typed text or an audio transcription).
+// They keep their origin: they prove only what the customer said, never an
+// official product, price, inventory or availability fact. Source ids live in a
+// separate namespace, so no official claim can be satisfied by them.
+function salesCustomerStatementSources(turnState) {
+  const messages = Array.isArray(turnState?.messages) ? turnState.messages : [];
+  return messages.map(item => ({ item, text: String(item?.text || '').trim() })).filter(({ text }) => text)
+    .map(({ item, text }, index) => ({
+      fact_id: 'customer.statement.' + index,
+      source_product_id: '',
+      source_value: text,
+      origin: turnState?.audio_transcriptions?.[item.event_id] ? 'customer_audio_transcript' : 'customer_text',
+    }));
+}
+
 async function salesAuditPrimaryDialogue(context, generated, plan, collection, execution) {
   const preflight = salesValidatePrimaryDialogue(generated, plan, collection, execution);
   if (!preflight.issues.includes('SEMANTIC_FACT_AUDIT_REQUIRED')) return preflight;
-  const { semantic_sources: sources, ...rejected } = preflight;
+  const { semantic_sources: officialSources, ...rejected } = preflight;
   if (preflight.issues.some(issue => issue !== 'SEMANTIC_FACT_AUDIT_REQUIRED')) return rejected;
   const model = settingsFor(context).ai_model;
   const attachment = salesAuditablePhotoAttachment(execution.photo_attachment);
   const attachments = attachment && attachment.tenant_id === context.tenant.id
     && attachment.product.id === execution.product?.id ? [attachment] : [];
   const reply = String(generated.primary_reply || '').trim(), claims = salesGlobalFactsUnscoped(generated.response_contract).facts;
+  // Customer statements are evidence for the auditor, not claims: they are never
+  // linked to official facts (see salesValidateSemanticEvidence).
+  const sources = [...(officialSources || []), ...salesCustomerStatementSources(turn)];
   const basis = salesSemanticEvidenceKey(generated, plan, execution);
   const scopeKey = JSON.stringify({ tenant_id: context.tenant.id, session_id: turn?.boundary_id,
     turn_token: turn?.token, product_id: execution.product?.id || '' });
@@ -9352,17 +9579,26 @@ function salesRecoverSafeDialogue() {
 function salesDialogueSalesSchema() {
 
   const schema = salesSchema(), str = { type: 'STRING' };
+  // Customer-declared interest and official store identity are different things; the model is told so.
+  const buyInterestSchema = schema.properties.state.properties.buy_interest;
+  if (buyInterestSchema?.properties) {
+    buyInterestSchema.properties.model.description = 'Modelo que o cliente procura, como ele declarou. Nome de modelo, nunca pronome ou referência como "esse". Não é identidade oficial do estoque.';
+    buyInterestSchema.properties.raw_mention.description = 'Como o cliente mencionou o interesse, com as palavras dele.';
+    buyInterestSchema.properties.product_id.description = 'Id de um produto do estoque apresentado nesta conversa e identificado pelo significado da mensagem. Vazio quando o interesse não é um produto da loja.';
+  }
   schema.properties.state.properties.payment_mode = { type: 'STRING', enum: ['unknown', 'cash', 'financing', 'credit_card'] };
   schema.properties.state.properties.payment_evidence = { type: 'STRING' };
   schema.properties.state.required.push('payment_mode', 'payment_evidence');
   schema.properties.dialogue_plan = {
     type: 'OBJECT', properties: {
-      requests: { type: 'ARRAY', description: 'Somente pedidos reais. Saudação exclusivamente social: array vazio; não criar other para preencher. Em turnos mistos, listar todos os pedidos e prover answers correspondentes.', items: { type: 'OBJECT', properties: { id: str, topic: { type: 'STRING', enum: salesDialogueTopics }, subject: { type: 'STRING', enum: ['specific_product', 'unspecified'], description: 'specific_product: o pedido é sobre um único veículo identificado, seja o já em foco ou um que o cliente designa agora por número, modelo ou referência. unspecified: cita só uma marca ou categoria, ou nenhum veículo específico.' } }, required: ['id', 'topic', 'subject'] } },
+      requests: { type: 'ARRAY', description: 'Somente pedidos reais. Saudação exclusivamente social: array vazio; não criar other para preencher. Em turnos mistos, listar todos os pedidos e prover answers correspondentes.', items: { type: 'OBJECT', properties: { id: str, topic: { type: 'STRING', enum: salesDialogueTopics, description: 'photos: o cliente quer ver imagens ou a aparência e o interior do veículo, em qualquer formulação. visit: quer conhecer o veículo pessoalmente ou marcar visita. Nenhum dos dois é compra, seleção ou handoff. Decida pelo sentido e pelo histórico; não por palavras.' }, subject: { type: 'STRING', enum: ['specific_product', 'unspecified'], description: 'specific_product: o pedido é sobre um único veículo identificado, seja o já em foco ou um que o cliente designa agora por número, modelo ou referência. unspecified: cita só uma marca ou categoria, ou nenhum veículo específico.' } }, required: ['id', 'topic', 'subject'] } },
       next_requirement: { type: 'STRING', enum: ['none', 'customer_name', 'deposit', 'documents', 'purchase_product', 'sell_model', 'buy_model', 'vehicle_photo', 'vehicle_description', 'trade_in_confirmation', 'buy_and_sell_models'] },
       memory: { type: 'OBJECT', properties: { trade_in_status: { type: 'STRING', enum: ['none', 'policy_discussed', 'offered', 'declined'] }, evidence_ids: { type: 'ARRAY', items: str }, vehicle_kind: { type: 'STRING', enum: ['unknown', 'car', 'motorcycle', 'other'] }, vehicle_kind_evidence_ids: { type: 'ARRAY', items: str }, customer_vehicle_purpose: { type: 'STRING', enum: ['none', 'independent_sale', 'entry_inquiry', 'entry', 'ambiguous_possession'] }, customer_vehicle_purpose_evidence_ids: { type: 'ARRAY', items: str } }, required: ['trade_in_status', 'evidence_ids', 'vehicle_kind', 'vehicle_kind_evidence_ids', 'customer_vehicle_purpose', 'customer_vehicle_purpose_evidence_ids'] },
+      location_kind: { type: 'STRING', enum: ['none', 'address', 'reference', 'directions'], description: 'Quando o pedido atual é sobre localização: address (endereço), reference (ponto de referência) ou directions (como chegar). none quando não há pedido de localização. Decida pelo sentido da mensagem.' },
+      offer: { type: 'OBJECT', description: 'Declare a ação concreta que a SUA resposta oferece ou pergunta ao cliente. product_details: mais detalhes do veículo; visit: visita ou agendamento; financing: simulação; photos: fotos; human_handoff: atendente humano; next_requirement: dado pedido na resposta; none: não oferece nem pergunta nada. Decida pelo sentido da resposta que você escreveu, nunca por palavras-chave.', properties: { action: { type: 'STRING', enum: ['none', 'product_details', 'visit', 'financing', 'photos', 'human_handoff', 'next_requirement'] } }, required: ['action'] },
       human_requested: { type: 'BOOLEAN' }, handoff_reason: { type: 'STRING', enum: ['none', 'human_requested', 'appraisal_review'] }
     },
-    required: ['requests', 'next_requirement', 'memory', 'human_requested', 'handoff_reason']
+    required: ['requests', 'next_requirement', 'memory', 'offer', 'location_kind', 'human_requested', 'handoff_reason']
   };
   schema.properties.response_contract = {
     type: 'OBJECT', properties: {
@@ -9730,7 +9966,7 @@ function salesTurnCatalogChoice({ ownVehicleOffer, currentTurnText, generated, n
     ? none
     : (generated.semantic_intent?.valid
       ? (semanticCatalogChoice || none)
-      : salesCatalogChoice(history, messages, inventory));
+      : (tenantSlug === 'wesley_automoveis' ? none : salesCatalogChoice(history, messages, inventory)));
   if (naturalPlan?.purchase_ambiguous) choice = { product: null, invalid: false, ambiguous: true, candidates: [], contextual: true };
   if (naturalPlan?.purchase_product_id) {
     const selected = inventory.find(p => p.id === naturalPlan.purchase_product_id);
@@ -9743,6 +9979,17 @@ function salesTurnCatalogChoice({ ownVehicleOffer, currentTurnText, generated, n
     }
   }
   return choice;
+}
+
+// Declared interest in a store product: identity goes to buy_interest, and the product informs the reply. It is not a
+// selection: product_id, product evidence and the transaction intent are left to the model's semantic decision.
+function salesApplyInterestChoice(generated, product, evidenceId) {
+  generated.product = product;
+  generated.state.buy_interest = {
+    ...(generated.state.buy_interest || {}), brand: product.brand || '', model: product.model || '', year: product.year || null,
+    raw_mention: product.name || product.model || '', product_id: product.id,
+    evidence_ids: [...new Set([...(generated.state.buy_interest?.evidence_ids || []), evidenceId].filter(Boolean))].slice(-30)
+  };
 }
 
 function salesApplyCatalogChoice(generated, catalogChoice, choiceEvidence) {
@@ -9771,6 +10018,7 @@ function salesApplyCatalogChoice(generated, catalogChoice, choiceEvidence) {
 }
 
 async function runSalesTurnPrepare(context, history, event, control) {
+  await salesLoadConfirmedOutboundIds(context);
   const contact = await loadContact(context);
   if (isCommercialContact(contact, turn)) {
     if (!await commit()) return { ok: true, skipped: true };
@@ -9913,10 +10161,9 @@ async function runSalesTurnPrepare(context, history, event, control) {
   let generated, documents = [], inventory = [], documentStatus = { cpf_received: false, cnh_received: false, birth_date_received: false }, resolvedReferralProduct = null;
   const latestAssistantBeforeTurn = [...history].reverse().find(row => row.direction === 'outbound' && row.sender_type === 'assistant');
   const photoAskedRecently = /\b(?:foto|fotos|imagem|imagens)\b/i.test(String(latestAssistantBeforeTurn?.message_text || ''));
-  const genesisPhotoDeferral = tenantSlug === 'wesley_automoveis'
-    && ['sell', 'buy_and_sell'].includes(salesModeFor(lead?.state || {}))
-    && photoAskedRecently
-    && salesCustomerDisposition(currentTurnText) === 'deferred_by_customer';
+  // Disabled: the Gênesis deferral is a validated contract decision applied at finalisation. This pre-check had no
+  // contract (the text-only call returned nothing for Gênesis) and the branch below only ever ran for other tenants.
+  const genesisPhotoDeferral = false;
   const isPureGreeting = /^(?:oi+|ol[aá]+|opa|bom dia|boa tarde|boa noite)[!.,\s]*$/iu.test(currentTurnText.trim());
   const greetingState = lead?.state || {};
   const greetingHasContext = Boolean(greetingState.product_id || greetingState.buy_interest?.model || greetingState.sell_vehicle?.model
@@ -10052,16 +10299,29 @@ async function runSalesTurnPrepare(context, history, event, control) {
     }
   }
   if (generated.response_repair) event.raw_payload = { ...(event.raw_payload || {}), sales_response_repair: generated.response_repair };
+  // P1-01: an invalid semantic contract has no authority over the plan, the state or the product. The CORE keeps the
+  // persisted state, an empty request list and the persisted product, so the EXT has nothing new to act on.
+  if (tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid !== true) {
+    naturalPlan = {
+      requests: [], memory: salesDialogueMemory(lead?.state || {}, history), next_requirement: 'none', human_requested: false,
+      handoff_reason: 'none', needs_clarification: true, offer: { action: 'none' }, location_kind: 'none',
+      semantic_intent: generated.semantic_intent, semantic_source: 'contract_invalid',
+    };
+    generated.state = salesMergeState(lead?.state || {}, {});
+    generated.product = lead?.product || null;
+  }
   const currentIntentAmbiguity = tenantSlug === 'wesley_automoveis' && naturalPlan?.customer_vehicle_ambiguous
     ? { kind: 'customer_vehicle_purpose', reply: 'Você pretende vender esse veículo separadamente, usar como entrada em outro da loja ou só comentou que possui ele?' }
     : tenantSlug === 'wesley_automoveis' && salesSemanticAmbiguousOtherReference(currentTurnText, generated.semantic_intent, history, inventory)
       ? { kind: 'ambiguous_catalog_reference', reply: 'Qual veículo da lista você quis dizer? Pode informar o número ou o modelo para eu identificar corretamente.' }
       : tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid
-        ? (generated.semantic_intent.primary_intent === 'ambiguous' ? { kind: 'semantic_ambiguity', reply: 'Quero confirmar para não seguir pelo caminho errado: você pretende comprar, vender, trocar ou apenas consultar um veículo?' } : null)
-        : salesIntentAmbiguity(currentTurnText, lead?.state || {});
+        ? (generated.semantic_intent.primary_intent === 'ambiguous' ? { kind: 'semantic_ambiguity', reply: SALES_INTENT_CLARIFICATION } : null)
+        : (tenantSlug === 'wesley_automoveis' ? { kind: 'semantic_unavailable', reply: salesContextualClarification(lead?.state || {}) } : salesIntentAmbiguity(currentTurnText, lead?.state || {}));
   const intentDecision = tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid
     ? salesApplySemanticIntent(lead?.state || {}, currentIntentAmbiguity ? salesMergeState(lead?.state || {}, {}) : (generated.state || {}), generated.semantic_intent)
-    : salesApplyIntentEvidence(lead?.state || {}, currentIntentAmbiguity ? salesMergeState(lead?.state || {}, {}) : (generated.state || {}), history, turn.messages);
+    : (tenantSlug === 'wesley_automoveis'
+      ? salesPersistedIntentDecision(lead?.state || {})
+      : salesApplyIntentEvidence(lead?.state || {}, currentIntentAmbiguity ? salesMergeState(lead?.state || {}, {}) : (generated.state || {}), history, turn.messages));
   // preserve-unresolved-catalog-reference-state
   if (currentIntentAmbiguity?.kind === 'ambiguous_catalog_reference') {
     intentDecision.state = salesMergeState(lead?.state || {}, {});
@@ -10101,7 +10361,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
     tenant_id: context.tenant.id,
     tenant_slug: tenantSlug,
     noria_extension: 'genesis',
-    noria_contract_version: '1.0',
+    noria_contract_version: tenantSlug === 'wesley_automoveis' ? NORIA_GENESIS_CONTRACT_VERSION : '1.0',
     remoteJid: chatId,
     instance: inputJson.instance,
     session_id: turn.boundary_id,
@@ -10147,6 +10407,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
 }
 
 async function runSalesTurnFinalize(context, history, event, control, intermediate, commercialDecision) {
+  await salesLoadConfirmedOutboundIds(context);
   let lead = intermediate.lead || await salesLoadLead(context);
   let generated = intermediate.generated;
   let naturalPlan = intermediate.dialogue_plan;
@@ -10185,13 +10446,17 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
   const commercialDecisionAuthoritative = genesisCommercialTurn
     && inputJson.commercial_decision_status === 'ok'
     && decisionData?.status === 'ok'
-    && decisionData?.provenance === 'genesis_extension_commercial_decide_v3'
+    && decisionData?.provenance === NORIA_GENESIS_DECISION_PROVENANCE
+    && decisionData?.noria_contract_version === NORIA_GENESIS_CONTRACT_VERSION
     && decisionIdentityMatches;
   if (genesisCommercialTurn && !commercialDecisionAuthoritative) {
     throw new Error('COMMERCIAL_DECISION_PROVENANCE_INVALID');
   }
   if (!decisionIdentityMatches) throw new Error('COMMERCIAL_DECISION_IDENTITY_MISMATCH');
-  if (decisionData) {
+  // P1-01: the EXT decision is verified (identity, version) but applied to the state only when the semantic contract is
+  // valid. An invalid contract keeps the persisted state and the neutral plan; it has no commercial authority.
+  const genesisSemanticAuthorized = !genesisCommercialTurn || generated.semantic_intent?.valid === true;
+  if (decisionData && genesisSemanticAuthorized) {
     if (decisionData.commercial_state) {
       generated.state = salesMergeState(generated.state || {}, decisionData.commercial_state);
       intentDecision.state = salesMergeState(intentDecision.state || {}, decisionData.commercial_state);
@@ -10315,6 +10580,12 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
   if (!semanticCatalogChoice && tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid
     && (generated.semantic_intent.references?.selected_ordinal !== null || generated.semantic_intent.references?.mentioned_product_ids?.length))
     event.raw_payload = { ...(event.raw_payload || {}), semantic_fallback: { reason: 'selection_not_structured', mode: 'deterministic_legacy' } };
+  // Gênesis: register_interest records a selection, so it needs a selected product from the catalog choice.
+  if (tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid && generated.action === 'register_interest' && !catalogChoice.product) generated.action = 'reply';
+  // Declared interest in a store product: its identity goes to buy_interest only, and the product informs the reply.
+  if (!catalogChoice.product && catalogChoice.interest_product && tenantSlug === 'wesley_automoveis') salesApplyInterestChoice(generated, catalogChoice.interest_product, turn.messages.at(-1)?.event_id || '');
+  // A product only mentioned or asked about informs this reply; the EXT authorizes its facts. It is not a selection.
+  else if (!catalogChoice.product && catalogChoice.reference_product && tenantSlug === 'wesley_automoveis') generated.product = catalogChoice.reference_product;
   const contextualCatalogQuestion = !!(catalogChoice.product
     && (tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid
       ? ['product_details', 'price_question'].includes(generated.semantic_intent.primary_intent)
@@ -10461,7 +10732,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
   }
   const primaryDialogueReply = typeof generated.primary_reply === 'string' ? generated.primary_reply.trim() : (tenantSlug !== 'wesley_automoveis' ? String(generated.reply || '').trim() : '');
   const s = generated.state;
-  if (decisionData?.lead_classification) {
+  if (genesisSemanticAuthorized && decisionData?.lead_classification) {
     s.temperature = decisionData.lead_classification.temperature;
     s.financing = {
       temperature: decisionData.lead_classification.temperature,
@@ -10511,13 +10782,27 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
   let handoffReason = '';
   let defaultAssignee = null;
   const turnText = (typeof rawText !== 'undefined' && rawText) || turn.messages.map(m => m.text || '').join(' ');
+  const lastAssistantOffer = tenantSlug === 'wesley_automoveis' ? await salesLastAssistantOffer(context, history) : null;
   const lastHumanOffer = salesLastOptionalHumanOffer(history) || lead?.state?.optional_human_offer;
-  const acceptedHumanOffer = !!(lastHumanOffer && turn.messages.some(m => salesIsAffirmativeToHumanOffer(m.text)));
-  const repeatsDeferredSale = (lead?.state?.follow_up_disposition === 'deferred_by_customer' && ['sell', 'buy_and_sell'].includes(mode) && /^(?:vender|quero\s+vender|continuar\s+(?:a\s+)?venda)$/.test(normalizeText(turnText).trim()));
-  const customerDisposition = salesCustomerDisposition(turnText) || (repeatsDeferredSale ? 'deferred_by_customer' : '');
+  // Gênesis: only a delivered human_handoff offer, accepted by the model with its reference, can transfer.
+  // Accepting a commercial offer is not accepting a transfer to a human.
+  // Other tenants keep the previous behaviour, unchanged by this refactor.
+  const acceptedHumanOffer = tenantSlug === 'wesley_automoveis'
+    ? lastAssistantOffer?.action === 'human_handoff' && salesOfferResponse(generated.semantic_intent, turn.messages, lastAssistantOffer) === 'accepted'
+    : !!lastHumanOffer && turn.messages.some(m => salesIsAffirmativeToHumanOffer(m.text));
+  const repeatsDeferredSale = tenantSlug !== 'wesley_automoveis' && (lead?.state?.follow_up_disposition === 'deferred_by_customer' && ['sell', 'buy_and_sell'].includes(mode) && /^(?:vender|quero\s+vender|continuar\s+(?:a\s+)?venda)$/.test(normalizeText(turnText).trim()));
+  // Gênesis: declined, closed_by_customer or deferred_by_customer come only from the validated semantic contract, with
+  // evidence from this message. No text heuristic stands in for a missing contract (the signature takes the contract).
+  const customerDisposition = tenantSlug === 'wesley_automoveis'
+    ? salesCustomerDisposition(turnText, generated.semantic_intent, turn.messages)
+    : (salesCustomerDisposition(turnText) || (repeatsDeferredSale ? 'deferred_by_customer' : ''));
   const vehicleYearClarification = ['sell', 'buy_and_sell'].includes(mode) ? salesVehicleYearClarification(turnText) : null;
-  const locationIntent = salesLocationIntent(turnText);
-  const isLocationRequest = !!(locationIntent || generated.action === 'location' || groundingLocationRequested(turnText));
+  // Gênesis: the model's plan decides whether this is a location request and which kind. Others keep the legacy classifier.
+  const locationIntent = tenantSlug === 'wesley_automoveis'
+    ? ({ address: 'ADDRESS_REQUEST', reference: 'REFERENCE_REQUEST', directions: 'DIRECTIONS_REQUEST' })[naturalPlan?.location_kind] || null
+    : salesLocationIntent(turnText);
+  const isLocationRequest = !!(locationIntent || generated.action === 'location' || (tenantSlug === 'wesley_automoveis'
+    ? (naturalPlan?.requests || []).some(request => request.topic === 'location') : groundingLocationRequested(turnText)));
   // Decide listing after contextual questions have been resolved below.
   const unlistedExternalReference = salesUnlistedExternalReference(s, turnText, inventory);
   const activeReferral = salesReferralForTurn(history, turn.messages, context);
@@ -10579,14 +10864,19 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     })
     : commercialResult('financing.evaluate', 'ok', { is_financing_question: false, reply: null, pending_requirement: '' });
   const financingQuestion = financingOp.status === 'ok' && financingOp.data?.is_financing_question;
-  const continuation = tenantSlug === 'wesley_automoveis' && mode === 'buy' ? salesConversationContinuation(turnText, history, generated.product) : null;
+  // Continuation is structural: the customer accepted an actionable offer of this session. The reply itself is left to the primary model call, which has the offer.
+  const continuation = tenantSlug === 'wesley_automoveis' && mode === 'buy' && lastAssistantOffer && ['product_details', 'visit'].includes(lastAssistantOffer.action)
+    && salesOfferResponse(generated.semantic_intent, turn.messages, lastAssistantOffer) === 'accepted' ? { offer_id: lastAssistantOffer.offer_id, action: lastAssistantOffer.action } : null;
   const selectedProductQuestion = tenantSlug === 'wesley_automoveis' && ['buy', 'buy_and_sell'].includes(mode) && generated.product && !financingQuestion
     && generated.semantic_intent?.valid && generated.semantic_intent.primary_intent === 'product_details';
   const explicitCatalogRequest = tenantSlug === 'wesley_automoveis'
     ? generated.semantic_intent?.valid === true && generated.semantic_intent.catalog?.requested === true
     : salesCatalogRequested(turnText);
   const currentInventoryReference = tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid
-    ? { product: null, candidates: [], semantic: true } : salesResolveInventoryReference(turnText, inventory);
+    ? { product: null, candidates: [], semantic: true } : salesResolveInventoryReference(turnText, inventory, false, {
+      reference_product: generated.product || inventory.find(item => item.id === s.product_id) || null,
+      customer_years: [s.sell_vehicle?.year, s.sell_vehicle?.model_year, s.sell_year],
+    });
   const currentProductSelected = !!generated.product && !ownVehicleOffer
     && ['buy', 'buy_and_sell'].includes(mode)
     && (tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid
@@ -10732,7 +11022,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     catalogChoiceAcknowledged = true;
     event.raw_payload = { ...(event.raw_payload || {}), contextual_reference_resolved: catalogChoice.product.id };
   } else if (continuation || selectedProductQuestion) {
-    reply = primaryDialogueReply || continuation?.reply || salesContextualProductReply(generated.product, turnText);
+    reply = primaryDialogueReply || salesContextualProductReply(generated.product, turnText);
     pendingRequirement = ''; register = false; optionalHumanOffer = null;
     followUpDisposition = 'awaiting_customer';
     event.raw_payload = { ...(event.raw_payload || {}), conversation_continuation: continuation ? 'last_question' : 'product_question' };
@@ -10761,7 +11051,14 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
           ? 'Entendi! Sem problema, pode enviar a foto amanhã quando estiver em casa. Não precisa enviar agora; continuamos a avaliação do seu veículo quando você puder.'
           : 'Combinado! Pode enviar a foto ou continuar a avaliação quando for conveniente, sem pressa.';
     }
-    await cancelPendingFollowUps(context, customerDisposition);
+    // Gênesis: the EXT policy decides what happens to pending follow-ups; the CORE executes only an authorised 'cancel'.
+    // 'keep' and 'undecided' leave the jobs untouched (a deferral is not a refusal). Other tenants keep their behaviour.
+    const followUpAction = tenantSlug === 'wesley_automoveis' ? (decisionData?.follow_up_policy?.actions?.[customerDisposition] || 'undecided') : 'cancel';
+    if (tenantSlug === 'wesley_automoveis') {
+      event.raw_payload = { ...(event.raw_payload || {}), follow_up_policy_action: followUpAction,
+        follow_up_policy_source: decisionData?.follow_up_policy?.sources?.[customerDisposition] || 'no_policy_defined' };
+    }
+    if (followUpAction === 'cancel') await cancelPendingFollowUps(context, customerDisposition);
   } else if (isLocationRequest) {
     const allLocations = settings.business_facts?.locations || [];
     const verifiedLocations = allLocations.filter(l => l.verified && l.address);
@@ -11027,7 +11324,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
       reply = 'Você quer comprar ou vender um veículo?';
     } else {
       register = true;
-      reply = (generated.reply && generated.reply.trim()) ? generated.reply : 'Seu interesse foi registrado. Vou chamar a equipe para continuar a negociação com os dados que você enviou.';
+      reply = (generated.reply && generated.reply.trim()) ? generated.reply : 'Seu interesse foi registrado.';
       followUpDisposition = 'resolved';
     }
   }
@@ -11141,19 +11438,25 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
   }
   const mediaProgress = documents.some(item => item?.readable !== false && ['vehicle_photo', 'vehicle_visual', 'document'].includes(item?.kind));
   const currentIntentUpdated = salesModeFor(lead?.state || {}) !== mode && turn.messages.some(m => (m.event_id || m.id) === intentDecision.evidence?.id);
-  const conversationalOverride = !!tradeInInquiry || !!tradeInOffer || currentIntentUpdated || !!customerDisposition || !!financingQuestion || !!continuation || !!selectedProductQuestion || appraisalWalkInActive || currentIntentAmbiguity || vehicleYearClarification || contextualCatalogQuestion || catalogChoice.ambiguous || salesCurrentTurnCorrectionOrQuestion(turnText) || mediaProgress;
+  // Gênesis: the model's conversation.changes_preference is the decision; other tenants keep the legacy check.
+  const currentTurnChangeSignal = tenantSlug === 'wesley_automoveis'
+    ? generated.semantic_intent?.valid === true && generated.semantic_intent.conversation?.changes_preference === true
+    : salesCurrentTurnCorrectionOrQuestion(turnText);
+  const conversationalOverride = !!tradeInInquiry || !!tradeInOffer || currentIntentUpdated || !!customerDisposition || !!financingQuestion || !!continuation || !!selectedProductQuestion || appraisalWalkInActive || currentIntentAmbiguity || vehicleYearClarification || contextualCatalogQuestion || catalogChoice.ambiguous || currentTurnChangeSignal || mediaProgress;
   const duplicateDecision = conversationalOverride
     ? { duplicate: false, escalate: false, offerHuman: false, level: 0, reply }
     : salesDuplicateReplyDecision(reply, history, pendingRequirement, catalogRequested);
   if (duplicateDecision.duplicate) reply = duplicateDecision.reply;
 
-  const isFrustrated = turn.messages.some(m => salesFrustrationDetected(m.text));
+  const isFrustrated = tenantSlug === 'wesley_automoveis'
+    ? salesSignalInTurn(generated.semantic_intent?.valid ? generated.semantic_intent.conversation?.frustration : null, turn.messages, 'frustrated')
+    : turn.messages.some(m => salesFrustrationDetected(m.text));
   const requirementAttempts = pendingRequirement ? salesPendingRequirementAttempts(history, pendingRequirement) : 0;
   const previousRequirement = salesLastPendingRequirement(history);
   const currentRequirementProgress = mediaProgress && ['vehicle_description', 'vehicle_photo', 'documents'].includes(pendingRequirement);
   const antiLoopContextChanged = !!tradeInInquiry || !!tradeInOffer || !!customerDisposition || !!financingQuestion || !!continuation
     || !!selectedProductQuestion || appraisalWalkInActive || currentIntentAmbiguity || vehicleYearClarification || contextualCatalogQuestion
-    || catalogChoice.ambiguous || salesCurrentTurnCorrectionOrQuestion(turnText) || currentRequirementProgress;
+    || catalogChoice.ambiguous || currentTurnChangeSignal || currentRequirementProgress;
   if (!antiLoopContextChanged && !intentDecision.evidence?.correction && !isFrustrated && !isLocationRequest && !acceptedHumanOffer
     && previousRequirement === pendingRequirement && requirementAttempts === 1) {
     const reorientation = salesPendingRequirementReorientation(pendingRequirement);
@@ -11212,7 +11515,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     pendingRequirement = ''; reply = 'Estou com uma dificuldade temporária no atendimento. Posso pedir para um atendente ajudar?'; followUpDisposition = 'technical_failure';
     optionalHumanOffer = { reason: 'temporary_processing_failure' };
   }
-  if (decisionData?.handoff?.required) {
+  if (genesisSemanticAuthorized && decisionData?.handoff?.required) {
     stage = decisionData.stage_key || cfg.stage_keys?.human || stage;
     register = false;
     handoffReason = decisionData.handoff.reason;
@@ -11290,7 +11593,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
   // Genesis commercial state, stage, handoff and pending requirements are
   // decided only by the authenticated EXT response.  The CORE retains only
   // operational ownership, idempotency and delivery responsibilities.
-  if (commercialDecisionAuthoritative) {
+  if (commercialDecisionAuthoritative && genesisSemanticAuthorized) {
     const extStage = String(decisionData.stage_key || '');
     const extStageMeta = cfg.stages?.[extStage];
     if (!extStage || !extStageMeta) throw new Error('COMMERCIAL_DECISION_STAGE_INVALID');
@@ -11323,7 +11626,9 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     s.commercial_handoff = decisionData.handoff?.required === true
       ? { reason: handoffReason, destination_queue: decisionData.handoff.destination_queue || null }
       : null;
-    pendingRequirement = String(decisionData.commercial_state?.pending_requirement || '');
+    // A customer disposition from this message (declined, closed, deferred) ends or defers the exchange: the EXT's
+    // pending requirement must not reopen it, and the disposition stays the one the validated contract stated.
+    pendingRequirement = customerDisposition ? '' : String(decisionData.commercial_state?.pending_requirement || '');
     followUpDisposition = decisionData.handoff?.required === true ? 'resolved'
       : (pendingRequirement ? 'awaiting_customer' : followUpDisposition);
     if (decisionData.handoff?.required === true && !defaultAssignee) defaultAssignee = await salesResolveDefaultAssignee(context);
@@ -11341,7 +11646,8 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     });
   } catch (error) {
     // A concurrent human transition remains authoritative and must stay silent.
-    if (/SALES_CONTROL_CHANGED|STALE_SALES_/.test(String(error.message || ''))) {
+    // The token is raised by the RPC and returned in the PostgREST body, not in the HTTP message.
+    if (/SALES_CONTROL_CHANGED|STALE_SALES_/.test(supabaseErrorText(error))) {
       await complete('cancelled'); return { ok: false, skipped: true, reason: 'sales_control_changed' };
     }
     throw error;
@@ -11788,6 +12094,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
       ...(financingCollection.active ? { financing_collection: { missing_fields: financingCollection.missing_fields, next_field: financingCollection.next_field, full_name_complete: financingCollection.full_name_complete, ready: financingCollection.ready } } : {}),
       ...(appraisalWalkInActive ? { appraisal_channel: 'walk_in', appraisal_channel_source: appraisalChannelPolicy.revision } : {}),
       ...(optionalHumanOffer ? { optional_human_offer: optionalHumanOffer } : {}),
+      assistant_offer: event.handoff ? null : salesAssistantOfferForTurn(optionalHumanOffer, naturalPlan, generated.product, turn),
       ...(followUpDisposition ? { follow_up_disposition: followUpDisposition } : {}),
       ...(duplicateDecision.duplicate ? { duplicate_reply_guard: duplicateDecision.level } : {}),
       ...(mediaProgress ? { media_progress: true } : {}),
@@ -12309,7 +12616,9 @@ async function runTurn() {
       if (!Array.isArray(turn.messages) || !String(turn.token || '') || !String(turn.boundary_id || '')) throw new Error('NORIA_PRECLAIMED_TURN_INVALID');
       const dispatched = inputJson.noria_business_context;
       if (!dispatched || typeof dispatched !== 'object') {
-        if (inputJson.error) throw new Error('NORIA_EXT_DISPATCH_UNAVAILABLE');
+        // A contract-version refusal by the EXT identity (publication gap between CORE and EXT) is tagged so the failure path can
+        // classify it as a pre-send, retryable cutover condition. Any other EXT dispatch failure keeps its previous handling.
+        if (inputJson.error) throw new Error('NORIA_EXT_DISPATCH_UNAVAILABLE' + (CONTRACT_CUTOVER_PATTERN.test(String(inputJson.error?.message || inputJson.error || '')) ? ':CONTRACT_VERSION' : ''));
         throw new Error('NORIA_TURN_DISPATCH_STALE');
       }
       if (dispatched.phase === 'bootstrap' || dispatched.session_id !== turn.boundary_id
@@ -12592,16 +12901,16 @@ async function runTurn() {
     } catch (error) {
       responseText = 'Não consegui registrar esse horário. Me confirme o serviço, a data e o horário desejados para eu verificar?';
       if (schedulingEnabled(context)) {
-        if (/NB_DUPLICATE_FUTURE_APPOINTMENT/.test(String(error.message))) {
+        if (/NB_DUPLICATE_FUTURE_APPOINTMENT/.test(supabaseErrorText(error))) {
           responseText = 'Já existe uma reserva para esse atendimento nesse horário. Vou chamar a equipe para conferir antes de registrar outra.';
           event.handoff = true; event.stage = 'Atendimento humano';
-        } else if (/NB_(?:OVERLAPPING|EXISTING)_FUTURE_APPOINTMENT/.test(String(error.message))) {
+        } else if (/NB_(?:OVERLAPPING|EXISTING)_FUTURE_APPOINTMENT/.test(supabaseErrorText(error))) {
           responseText = 'Já existe uma reserva em horário conflitante. Vou chamar a equipe para verificar antes de fazer outro agendamento.';
           event.handoff = true; event.stage = 'Atendimento humano';
-        } else if (/APPOINTMENT_FULL_NAME_REQUIRED/.test(String(error.message))) {
+        } else if (/APPOINTMENT_FULL_NAME_REQUIRED/.test(supabaseErrorText(error))) {
           responseText = 'Qual \u00e9 o seu nome completo, por favor?';
           event.handoff = false;
-        } else if (/SLOT_UNAVAILABLE/.test(String(error.message))) {
+        } else if (/SLOT_UNAVAILABLE/.test(supabaseErrorText(error))) {
           responseText = 'Esse hor\u00e1rio acabou de ficar indispon\u00edvel. Qual outro hor\u00e1rio ou dia fica bom para voc\u00ea?';
         } else {
           responseText = 'N\u00e3o consegui concluir a reserva com seguran\u00e7a. Vou chamar a equipe para verificar, aproveitando os dados que voc\u00ea j\u00e1 enviou.';
@@ -12664,8 +12973,11 @@ try {
       failure.queue_state_error = String(stateError.message || stateError).slice(0, 300);
     }
     const diagnostic = salesSafeFailureDiagnostics(error, 'turn_lifecycle');
-    const retryable = diagnostic.retryable === true
-      && ['rate_limit', 'upstream_server', 'network_or_timeout'].includes(diagnostic.category);
+    // Contract-version refusals happen before any commercial effect or send. They are retryable inside the persisted budget:
+    // magia_fail_turn still routes a turn with a delivery attempt to uncertain and an exhausted budget to review.
+    const retryable = (diagnostic.retryable === true
+      && ['rate_limit', 'upstream_server', 'network_or_timeout'].includes(diagnostic.category))
+      || (CONTRACT_CUTOVER_PATTERN.test(errorCode) && !sendAttempted);
     failure.finish_requested = deliveryConfirmed ? 'done' : 'fail';
     failure.failure_retryable = retryable;
     try {

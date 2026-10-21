@@ -1,0 +1,442 @@
+{
+  "description": "Short synthetic dialogues run through the real pipeline (CORE prepare, EXT commercial.decide, CORE finalize). The customer text is synthetic; the Gemini answers are canned, shaped like the dialogue schema, and state the interpretation the scenario tests. The expectations are on what the simulated database and provider record, not on the code.",
+  "inventory": [
+    {
+      "id": "chevrolet|corsa|2009|",
+      "brand": "CHEVROLET",
+      "model": "CORSA",
+      "year": 2009,
+      "status": "listed",
+      "offerable": true,
+      "availability_verified": true,
+      "price_cents": 1000000,
+      "color": "PRATA",
+      "fuel": "FLEX",
+      "km": 120000
+    },
+    {
+      "id": "chevrolet|montana|2018|",
+      "brand": "CHEVROLET",
+      "model": "MONTANA",
+      "year": 2018,
+      "status": "listed",
+      "offerable": true,
+      "availability_verified": true,
+      "price_cents": 9900000,
+      "color": "BRANCA",
+      "fuel": "FLEX",
+      "km": 60000
+    },
+    {
+      "id": "honda|cg160|2018|",
+      "brand": "HONDA",
+      "model": "CG 160",
+      "year": 2018,
+      "status": "listed",
+      "offerable": true,
+      "availability_verified": true,
+      "price_cents": 800000,
+      "color": "VERMELHA",
+      "fuel": "GASOLINA",
+      "km": 15000
+    },
+    {
+      "id": "yamaha|crosser|2023|",
+      "brand": "YAMAHA",
+      "model": "CROSSER",
+      "year": 2023,
+      "status": "announced",
+      "offerable": false,
+      "availability_verified": false,
+      "price_cents": 1798000,
+      "color": null,
+      "fuel": null,
+      "km": 64000
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "S0 social greeting, valid contract: no state change, no commercial action",
+      "turns": [
+        {
+          "text": "Oi",
+          "gemini": {
+            "reply": "Olá! Como posso ajudar?",
+            "semantic_intent": {
+              "primary_intent": "other",
+              "topics": [
+                "greeting"
+              ],
+              "confidence": "high"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "lead_interest_registered": false,
+        "lead_product_id": ""
+      }
+    },
+    {
+      "name": "P1-01 invalid contract does not change intent or transaction mode",
+      "turns": [
+        {
+          "text": "Quero comprar uma Montana.",
+          "gemini": {
+            "reply": "Claro! Temos a Montana 2018 disponível.",
+            "semantic_intent": {
+              "primary_intent": "purchase",
+              "topics": [
+                "inventory"
+              ],
+              "catalog": {
+                "requested": true,
+                "evidence_ids": [
+                  "in-1"
+                ]
+              },
+              "confidence": "high"
+            },
+            "state": {
+              "intent": "buy",
+              "transaction_mode": "buy"
+            }
+          }
+        },
+        {
+          "text": "oi",
+          "gemini": {
+            "contract": "invalid",
+            "reply": "Oi!",
+            "semantic_intent": {
+              "primary_intent": "sale"
+            },
+            "state": {
+              "intent": "sell",
+              "transaction_mode": "sell"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "lead_state_intent": "buy",
+        "lead_state_transaction_mode": "buy"
+      }
+    },
+    {
+      "name": "P1-02 a greeting cannot select a product through an old message",
+      "turns": [
+        {
+          "text": "Quero a CG 160.",
+          "gemini": {
+            "reply": "Quer saber mais sobre a CG 160?",
+            "semantic_intent": {
+              "primary_intent": "product_details",
+              "topics": [
+                "product_details"
+              ],
+              "references": {
+                "mentioned_product_ids": [
+                  "honda|cg160|2018|"
+                ],
+                "evidence_ids": [
+                  "in-1"
+                ],
+                "product_role": "mentioned",
+                "product_references": [
+                  {
+                    "product_id": "honda|cg160|2018|",
+                    "role": "mentioned",
+                    "evidence_ids": [
+                      "in-1"
+                    ]
+                  }
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        },
+        {
+          "text": "oi",
+          "gemini": {
+            "reply": "Oi! Tudo bem?",
+            "semantic_intent": {
+              "primary_intent": "other",
+              "topics": [
+                "greeting"
+              ],
+              "references": {
+                "mentioned_product_ids": [
+                  "honda|cg160|2018|"
+                ],
+                "evidence_ids": [
+                  "in-1"
+                ],
+                "product_role": "selected",
+                "product_references": [
+                  {
+                    "product_id": "honda|cg160|2018|",
+                    "role": "selected",
+                    "evidence_ids": [
+                      "in-1"
+                    ]
+                  }
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "lead_product_id": ""
+      }
+    },
+    {
+      "name": "P1-03 declined disposition from this message is applied; an old one is not",
+      "turns": [
+        {
+          "text": "Quero a CG 160.",
+          "gemini": {
+            "reply": "Quer conhecer a CG 160?",
+            "semantic_intent": {
+              "primary_intent": "purchase",
+              "topics": [
+                "inventory"
+              ],
+              "catalog": {
+                "requested": true,
+                "evidence_ids": [
+                  "in-1"
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        },
+        {
+          "text": "Não tenho mais interesse, obrigado.",
+          "gemini": {
+            "reply": "Tudo bem! Se precisar, estamos à disposição.",
+            "semantic_intent": {
+              "primary_intent": "other",
+              "topics": [
+                "other"
+              ],
+              "customer_disposition": {
+                "value": "declined",
+                "evidence_ids": [
+                  "in-2"
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "follow_up_disposition": "declined"
+      }
+    },
+    {
+      "name": "P1-03b deferral from this message is applied and does not reopen the exchange",
+      "turns": [
+        {
+          "text": "Quero a CG 160.",
+          "gemini": {
+            "reply": "Quer conhecer a CG 160?",
+            "semantic_intent": {
+              "primary_intent": "purchase",
+              "topics": [
+                "inventory"
+              ],
+              "catalog": {
+                "requested": true,
+                "evidence_ids": [
+                  "in-1"
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        },
+        {
+          "text": "Vou pensar com calma e depois eu falo com vocês.",
+          "gemini": {
+            "reply": "Combinado, sem pressa.",
+            "semantic_intent": {
+              "primary_intent": "other",
+              "topics": [
+                "other"
+              ],
+              "customer_disposition": {
+                "value": "deferred_by_customer",
+                "evidence_ids": [
+                  "in-2"
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "follow_up_disposition": "deferred_by_customer"
+      }
+    },
+    {
+      "name": "P1-03c closure from this message is applied",
+      "turns": [
+        {
+          "text": "Quero a CG 160.",
+          "gemini": {
+            "reply": "Quer conhecer a CG 160?",
+            "semantic_intent": {
+              "primary_intent": "purchase",
+              "topics": [
+                "inventory"
+              ],
+              "catalog": {
+                "requested": true,
+                "evidence_ids": [
+                  "in-1"
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        },
+        {
+          "text": "Obrigado, era só isso, pode encerrar.",
+          "gemini": {
+            "reply": "Por nada!",
+            "semantic_intent": {
+              "primary_intent": "other",
+              "topics": [
+                "other"
+              ],
+              "customer_disposition": {
+                "value": "closed_by_customer",
+                "evidence_ids": [
+                  "in-2"
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "follow_up_disposition": "closed_by_customer"
+      }
+    },
+    {
+      "name": "P1-02b historical evidence identifies a product but only current evidence selects it",
+      "turns": [
+        {
+          "text": "Quero a CG 160.",
+          "gemini": {
+            "reply": "Temos a CG 160 2018.",
+            "semantic_intent": {
+              "primary_intent": "purchase",
+              "topics": [
+                "inventory"
+              ],
+              "catalog": {
+                "requested": true,
+                "evidence_ids": [
+                  "in-1"
+                ]
+              },
+              "references": {
+                "mentioned_product_ids": [
+                  "honda|cg160|2018|"
+                ],
+                "evidence_ids": [
+                  "in-1"
+                ],
+                "product_role": "mentioned",
+                "product_references": [
+                  {
+                    "product_id": "honda|cg160|2018|",
+                    "role": "mentioned",
+                    "evidence_ids": [
+                      "in-1"
+                    ]
+                  }
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        },
+        {
+          "text": "oi",
+          "gemini": {
+            "reply": "Oi! Tudo bem?",
+            "semantic_intent": {
+              "primary_intent": "other",
+              "topics": [
+                "greeting"
+              ],
+              "references": {
+                "mentioned_product_ids": [
+                  "honda|cg160|2018|"
+                ],
+                "evidence_ids": [
+                  "in-1"
+                ],
+                "product_role": "selected",
+                "product_references": [
+                  {
+                    "product_id": "honda|cg160|2018|",
+                    "role": "selected",
+                    "evidence_ids": [
+                      "in-1"
+                    ]
+                  }
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        },
+        {
+          "text": "Quero essa moto.",
+          "gemini": {
+            "reply": "Ótimo!",
+            "semantic_intent": {
+              "primary_intent": "purchase",
+              "topics": [
+                "inventory"
+              ],
+              "references": {
+                "mentioned_product_ids": [
+                  "honda|cg160|2018|"
+                ],
+                "evidence_ids": [
+                  "in-3"
+                ],
+                "product_role": "selected",
+                "product_references": [
+                  {
+                    "product_id": "honda|cg160|2018|",
+                    "role": "selected",
+                    "evidence_ids": [
+                      "in-3"
+                    ]
+                  }
+                ]
+              },
+              "confidence": "high"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "lead_product_id": "honda|cg160|2018|"
+      }
+    }
+  ]
+}

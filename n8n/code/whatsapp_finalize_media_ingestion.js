@@ -64,21 +64,60 @@ const externalMessageId = String(job.external_message_id || '').trim();
 const chatId = String(source.remoteJid || '').trim();
 let persistenceError = '';
 
-if (tenantId && eventId && externalMessageId && chatId) {
+if (!tenantId || !eventId || !externalMessageId || !chatId) {
+  persistenceError = 'media_identity_missing';
+  media = { ...media, status: 'persistence_error', verified: false, error: persistenceError };
+} else {
   const base = String($env.SUPABASE_URL || '').replace(/\/$/, '');
   const serviceKey = $env.SUPABASE_SERVICE_ROLE_KEY;
-  const scope = `${base}/rest/v1/channel_events?tenant_id=eq.${encodeURIComponent(tenantId)}&channel_type=eq.whatsapp&external_conversation_id=eq.${encodeURIComponent(chatId)}&id=eq.${encodeURIComponent(eventId)}&external_message_id=eq.${encodeURIComponent(externalMessageId)}`;
+  let result;
   try {
-    const rows = await this.helpers.httpRequest({ method: 'GET', url: `${scope}&select=id,raw_payload&limit=1`, headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, json: true, timeout: 10000 });
-    if (!Array.isArray(rows) || rows.length !== 1) throw new Error('media_event_scope_mismatch');
-    const rawPayload = rows[0].raw_payload && typeof rows[0].raw_payload === 'object' ? rows[0].raw_payload : {};
-    const saved = await this.helpers.httpRequest({
-      method: 'PATCH', url: scope, headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
-      body: { raw_payload: { ...rawPayload, media } }, json: true, timeout: 10000,
+    result = await this.helpers.httpRequest({
+      method: 'POST',
+      url: base + '/rest/v1/rpc/magia_confirm_whatsapp_media',
+      headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey, 'Content-Type': 'application/json' },
+      body: {
+        p_tenant: tenantId,
+        p_event: eventId,
+        p_channel: 'whatsapp',
+        p_conversation: chatId,
+        p_external_message: externalMessageId,
+        p_media: media,
+      },
+      json: true,
+      timeout: 10000,
     });
-    if (!Array.isArray(saved) || saved.length !== 1) throw new Error('media_event_not_persisted');
-  } catch (error) {
-    persistenceError = compactMediaError(error, 'media_persistence_failed');
+  } catch (_) {
+    persistenceError = 'media_atomic_rpc_transport_failed';
+    media = { ...media, status: 'persistence_error', verified: false, error: persistenceError };
+  }
+  const confirmationResult = Array.isArray(result) ? result[0] : result;
+  const normalizeNoriaMime = (value) => {
+    const normalized = String(value || '').toLowerCase().replace(/\s+/g, '');
+    if (/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(normalized)) {
+      return { value: normalized, base: normalized };
+    }
+    if (normalized === 'audio/ogg;codecs=opus') return { value: normalized, base: 'audio/ogg' };
+    return null;
+  };
+  const equivalentNoriaMime = (left, right) => {
+    const a = normalizeNoriaMime(left);
+    const b = normalizeNoriaMime(right);
+    return Boolean(a && b && a.base === b.base && (a.base === 'audio/ogg' || a.value === b.value));
+  };
+  const sameObject = confirmationResult?.stored_media
+    && confirmationResult.stored_media.bucket === media.bucket
+    && confirmationResult.stored_media.storagePath === media.storagePath
+    && equivalentNoriaMime(confirmationResult.stored_media.mimeType, media.mimeType)
+    && Number(confirmationResult.stored_media.size || 0) === Number(media.size || 0)
+    && confirmationResult.stored_media.status === 'stored'
+    && confirmationResult.stored_media.verified === true
+    && media.status === 'stored'
+    && media.verified === true;
+  if (!persistenceError && (!confirmationResult
+    || (confirmationResult.applied !== true
+      && !(confirmationResult.reason === 'already_stored' && sameObject)))) {
+    persistenceError = 'media_atomic_confirmation_rejected';
     media = { ...media, status: 'persistence_error', verified: false, error: persistenceError };
   }
 }

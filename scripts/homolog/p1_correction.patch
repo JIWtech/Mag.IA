@@ -1,0 +1,1735 @@
+diff --git a/n8n/sources/noria_core.js b/n8n/sources/noria_core.js
+index 6585fc8..07cea52 100644
+--- a/a/n8n/sources/noria_core.js
++++ b/b/n8n/sources/noria_core.js
+@@ -52,9 +52,9 @@ function validateTenantPolicyContract() {
+ }
+ const coreBuildMetadata = {
+   revision: 'conversation_core_v2_1_34_core_ext_decision_identity_2026_10_20',
+-  built_at: '2026-10-20T21:37:37.081Z',
+-  core_sha256: 'b89ccb89ac271733f7026a1d09f61f7d4a1d4c2aee033240500885aad406e198',
+-  ext_sha256: 'df2ba3862b8cffd16b05cc875a79c2faf38f56dbf023ef65308a817123518767',
++  built_at: '2026-10-20T22:31:41.139Z',
++  core_sha256: 'cb584d49ce6996f36bf09881cd7156d4ddbf53ad21c60bb46805132b898a62ca',
++  ext_sha256: 'c3a2a04a3cf355c1a6cf87fd40a187528557723bdfa86b934c89e09d4c332e40',
+ };
+ const coreRevision = coreBuildMetadata.revision;
+ let salesInventoryMemo = null;
+@@ -6055,13 +6055,28 @@ function salesContextualClarification(state = {}) {
+   return SALES_INTENT_CLARIFICATION;
+ }
+ 
+-// Gênesis with an invalid contract: the intent persisted by an earlier validated turn stays in force.
+-// Nothing is rebuilt from old messages with patterns; without a persisted intent it stays unknown.
+-function salesPersistedIntentDecision(previous = {}, candidate = {}) {
+-  const state = salesMergeState(previous, candidate);
++// Gênesis with an invalid contract: only the state persisted by an earlier validated turn stays in force.
++// The model's unvalidated state (intent, transaction mode, product, requirements) is never merged in: it has no
++// authority until the semantic contract validates. Nothing is rebuilt from old messages with patterns.
++function salesPersistedIntentDecision(previous = {}) {
++  const state = salesMergeState(previous, {});
+   return { state, evidence: { mode: salesModeFor(previous), id: '' }, source: 'persisted_state' };
+ }
+ 
++// Version contract between the CORE and the Gênesis EXT. Both sides must agree before any commercial decision is applied:
++// the EXT echoes this version in its decision and the CORE verifies it. A mismatch blocks the commercial action.
++const NORIA_GENESIS_CONTRACT_VERSION = '2.0';
++const NORIA_GENESIS_DECISION_PROVENANCE = 'genesis_extension_commercial_decide_v4';
++
++// Evidence of the message being processed now. Historical evidence may identify a product presented before,
++// but only evidence from this message can authorise a new commercial action (selection, interest, intent change,
++// offer acceptance, disposition).
++function salesCurrentTurnEvidenceIds() {
++  // Fail closed: without a bound turn there is no current evidence, so no new commercial action is authorised.
++  const messages = typeof turn === 'undefined' || !turn || !Array.isArray(turn.messages) ? [] : turn.messages;
++  return messages.flatMap(m => [m?.event_id, m?.id].filter(Boolean).map(String));
++}
++
+ function salesApplyIntentEvidence(previous = {}, candidate = {}, history = [], messages = []) {
+   const state = salesMergeState(previous, candidate, messages.map(message => message?.event_id || message?.id).filter(Boolean));
+   const previousMode = salesModeFor(previous);
+@@ -8531,7 +8546,7 @@ function salesSemanticIntentSchema() {
+   };
+ }
+ function salesSemanticFallback(errors = ['SEMANTIC_INTENT_UNAVAILABLE']) { return { valid: false, validation_errors: [...new Set(errors)], primary_intent: 'other', secondary_intents: [], topics: [], catalog: { requested: false, category: 'unspecified', price_min_cents: null, price_max_cents: null, preferences: [], exclusions: [], evidence_ids: [] }, customer_vehicle: { purpose: 'none', evidence_ids: [] }, references: { previous_catalog: false, selected_ordinal: null, mentioned_product_ids: [], evidence_ids: [], product_references: [], product_role: 'none' }, conversation: { continues_previous_topic: false, changes_preference: false, requires_clarification: true, frustration: { value: 'none', evidence_ids: [] } }, auction: { intent: 'none', product_id: null, evidence_ids: [] }, offer_response: { value: 'none', evidence_ids: [], offer_ref: '' }, ambiguities: ['semantic_intent_unavailable'], confidence: 'low' }; }
+-function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds = []) {
++function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds = [], currentEvidenceIds = salesCurrentTurnEvidenceIds()) {
+   if (!value || typeof value !== 'object' || Array.isArray(value)) return salesSemanticFallback(['INVALID_SEMANTIC_INTENT_OBJECT']);
+   const allowed = new Set(['inventory_search', 'purchase', 'sale', 'buy_and_sell', 'trade_in', 'financing', 'price_question', 'product_details', 'after_sales', 'human_handoff', 'other', 'ambiguous']);
+   const category = new Set(['all', 'cars', 'motorcycles', 'unspecified']);
+@@ -8573,31 +8588,36 @@ function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds =
+     return [...new Set(input.filter(item => typeof item === 'string' && item.trim() && item.length <= 160).map(item => item.trim()))].slice(0, 20);
+   };
+   const allowedEvidence = new Set((sessionEvidenceIds || []).map(String));
++  // Evidence of the message being processed now. Session evidence may identify what was presented before; only
++  // current evidence authorises a new commercial action (selection, interest, intent change, offer, disposition).
++  const currentIds = new Set((currentEvidenceIds || []).map(String));
+   const customerDisposition = value.customer_disposition || { value: 'active', evidence_ids: [] };
+   let dispositionEvidence = strings(customerDisposition.evidence_ids, 'DISPOSITION_EVIDENCE_IDS');
+   if (!['active', 'declined', 'closed_by_customer', 'deferred_by_customer'].includes(customerDisposition.value)) errors.push('INVALID_CUSTOMER_DISPOSITION');
+-  if (customerDisposition.value !== 'active') {
+-    if (dispositionEvidence.some(id => !allowedEvidence.has(id))) errors.push('UNSCOPED_DISPOSITION_EVIDENCE');
+-    if (!dispositionEvidence.length) errors.push('MISSING_DISPOSITION_EVIDENCE');
+-  } else {
+-    dispositionEvidence = dispositionEvidence.filter(id => allowedEvidence.has(id));
+-  }
+-  // An offer response without evidence from this session is downgraded to none: it never invalidates the contract.
++  // A declined, closed or deferred disposition is a new decision: it counts only with evidence from the current message.
++  // Without it the customer is active, so an earlier deferral never repeats itself.
++  const dispositionCurrent = dispositionEvidence.filter(id => currentIds.has(id));
++  const dispositionValue = customerDisposition.value !== 'active' && dispositionCurrent.length ? customerDisposition.value : 'active';
++  dispositionEvidence = dispositionValue === 'active' ? [] : dispositionCurrent;
++  // An offer response without current evidence is downgraded to none: it never invalidates the contract.
+   const offerResponse = value.offer_response && typeof value.offer_response === 'object' ? value.offer_response : { value: 'none', evidence_ids: [] };
+-  const offerValue = ['accepted', 'declined', 'unclear'].includes(offerResponse.value) && strings(offerResponse.evidence_ids, 'OFFER_RESPONSE_EVIDENCE_IDS').length && strings(offerResponse.evidence_ids, 'OFFER_RESPONSE_EVIDENCE_IDS').every(id => allowedEvidence.has(id))
++  const offerValue = ['accepted', 'declined', 'unclear'].includes(offerResponse.value) && strings(offerResponse.evidence_ids, 'OFFER_RESPONSE_EVIDENCE_IDS').length && strings(offerResponse.evidence_ids, 'OFFER_RESPONSE_EVIDENCE_IDS').every(id => currentIds.has(id))
+     ? offerResponse.value : 'none';
+   const offerEvidence = offerValue === 'none' ? [] : strings(offerResponse.evidence_ids, 'OFFER_RESPONSE_EVIDENCE_IDS');
+   const offerRef = offerValue === 'none' || typeof offerResponse.offer_ref !== 'string' ? '' : offerResponse.offer_ref;
+-  // Frustration is a model decision; it counts only with evidence from this session.
++  // Frustration is a model decision that can hand the customer to a human; it counts only with current evidence.
+   const frustrationSignal = conversation.frustration && typeof conversation.frustration === 'object' ? conversation.frustration : { value: 'none', evidence_ids: [] };
+-  const frustrationEvidence = strings(frustrationSignal.evidence_ids, 'FRUSTRATION_EVIDENCE_IDS').filter(id => allowedEvidence.has(id));
++  const frustrationEvidence = strings(frustrationSignal.evidence_ids, 'FRUSTRATION_EVIDENCE_IDS').filter(id => currentIds.has(id));
+   const frustrationValue = frustrationSignal.value === 'frustrated' && frustrationEvidence.length ? 'frustrated' : 'none';
+   const inventoryIds = new Set((Array.isArray(inventory) ? inventory : []).map(row => String(row?.id || '')));
+   const productReferences = (Array.isArray(refs.product_references) ? refs.product_references : []).slice(0, 4).flatMap(item => {
+     const productId = String(item?.product_id || '');
+     const evidence = strings(item?.evidence_ids, 'PRODUCT_REFERENCE_EVIDENCE_IDS').filter(id => allowedEvidence.has(id));
+     if (!inventoryIds.has(productId) || !evidence.length) return [];
+-    return [{ product_id: productId, role: ['mentioned', 'asked_info', 'interest', 'selected'].includes(item?.role) ? item.role : 'mentioned', evidence_ids: evidence }];
++    // Selection and declared interest need this message's evidence; a historical reference stays information only.
++    const role = ['mentioned', 'asked_info', 'interest', 'selected'].includes(item?.role) ? item.role : 'mentioned';
++    const roleCurrent = evidence.some(id => currentIds.has(id));
++    return [{ product_id: productId, role: ['selected', 'interest'].includes(role) && !roleCurrent ? 'mentioned' : role, evidence_ids: evidence }];
+   });
+   const hasCatalogMeaning = catalog.requested === true || catalog.category !== 'unspecified' || min !== null || max !== null
+     || (Array.isArray(catalog.preferences) && catalog.preferences.length) || (Array.isArray(catalog.exclusions) && catalog.exclusions.length);
+@@ -8621,7 +8641,7 @@ function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds =
+   const rawMentioned = strings(refs.mentioned_product_ids, 'MENTIONED_PRODUCT_IDS');
+   const mentioned = rawMentioned.filter(id => ids.has(id));
+   // The role is the model's decision. Without a valid role, a referred product is only mentioned: never selected.
+-  const productRole = ['none', 'mentioned', 'asked_info', 'interest', 'selected'].includes(refs.product_role)
++  let productRole = ['none', 'mentioned', 'asked_info', 'interest', 'selected'].includes(refs.product_role)
+     ? refs.product_role : ((ordinal !== null || mentioned.length) ? 'mentioned' : 'none');
+   if (mentioned.length !== rawMentioned.length) errors.push('UNKNOWN_PRODUCT_REFERENCE');
+   const hasReference = (ordinal !== null || mentioned.length > 0 || refs.previous_catalog === true);
+@@ -8633,6 +8653,10 @@ function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds =
+     referenceEvidence = referenceEvidence.filter(id => allowedEvidence.has(id));
+   }
+   if (typeof refs.previous_catalog !== 'boolean') errors.push('INVALID_PREVIOUS_CATALOG');
++  // Selection and declared interest, and a customer-vehicle purpose (a commercial change), need this message's evidence.
++  // Without it they stay information: a reference to a product presented before never selects it by itself.
++  if (['selected', 'interest'].includes(productRole) && !referenceEvidence.some(id => currentIds.has(id))) productRole = 'mentioned';
++  const customerVehiclePurposeAuthorised = customerVehicle.purpose !== 'none' && !customerVehicleEvidence.some(id => currentIds.has(id)) ? 'none' : customerVehicle.purpose;
+   for (const key of ['continues_previous_topic', 'changes_preference', 'requires_clarification']) if (typeof conversation[key] !== 'boolean') errors.push('INVALID_CONVERSATION_' + key.toUpperCase());
+   const secondary = strings(value.secondary_intents, 'SECONDARY_INTENTS');
+   if (secondary.some(item => !allowed.has(item))) errors.push('INVALID_SECONDARY_INTENT');
+@@ -8652,13 +8676,20 @@ function salesValidateSemanticIntent(value, inventory = [], sessionEvidenceIds =
+   }
+   const topics = strings(value.topics, 'TOPICS'), preferences = strings(catalog.preferences, 'PREFERENCES'), exclusions = strings(catalog.exclusions, 'EXCLUSIONS'), ambiguities = strings(value.ambiguities, 'AMBIGUITIES');
+   if (!['low', 'medium', 'high'].includes(value.confidence)) errors.push('INVALID_CONFIDENCE');
++  // An intent that changes the commercial mode (buy, sell, both, inventory search) needs a signal from this message
++  // that the contract cites. Without one the intent is unresolved and the CORE asks a safe clarification.
++  const modeIntents = ['purchase', 'sale', 'buy_and_sell', 'inventory_search'];
++  const currentSignal = [catalogEvidence, referenceEvidence, customerVehicleEvidence, auctionEvidence, offerEvidence, dispositionEvidence]
++    .some(list => list.some(id => currentIds.has(id)));
++  const primaryAuthorised = modeIntents.includes(primary) && !currentSignal ? 'ambiguous' : primary;
++  const secondaryAuthorised = currentSignal ? secondary : secondary.filter(item => !modeIntents.includes(item));
+   if (errors.length) return salesSemanticFallback(errors);
+   return {
+-    valid: true, primary_intent: primary, secondary_intents: strings(value.secondary_intents).filter(item => allowed.has(item) && item !== primary), topics: strings(value.topics),
+-    customer_disposition: { value: customerDisposition.value, evidence_ids: dispositionEvidence },
++    valid: true, primary_intent: primaryAuthorised, secondary_intents: secondaryAuthorised.filter(item => allowed.has(item) && item !== primaryAuthorised), topics: strings(value.topics),
++    customer_disposition: { value: dispositionValue, evidence_ids: dispositionEvidence },
+     offer_response: { value: offerValue, evidence_ids: offerEvidence, offer_ref: offerRef },
+     catalog: { requested: catalog.requested, category: catalog.category, price_min_cents: min, price_max_cents: max, preferences, exclusions, evidence_ids: catalogEvidence },
+-    customer_vehicle: { purpose: customerVehicle.purpose, evidence_ids: customerVehicleEvidence },
++    customer_vehicle: { purpose: customerVehiclePurposeAuthorised, evidence_ids: customerVehicleEvidence },
+     references: { previous_catalog: refs.previous_catalog, selected_ordinal: ordinal, mentioned_product_ids: mentioned, evidence_ids: referenceEvidence, product_references: productReferences, product_role: productRole },
+     conversation: { continues_previous_topic: conversation.continues_previous_topic, changes_preference: conversation.changes_preference, requires_clarification: conversation.requires_clarification, frustration: { value: frustrationValue, evidence_ids: frustrationValue === 'none' ? [] : frustrationEvidence } },
+     auction: { intent: auctionIntents.includes(auctionRaw.intent) ? auctionRaw.intent : 'none', product_id: auctionProductId, evidence_ids: auctionEvidence }, ambiguities, confidence: value.confidence
+@@ -10123,10 +10154,9 @@ async function runSalesTurnPrepare(context, history, event, control) {
+   let generated, documents = [], inventory = [], documentStatus = { cpf_received: false, cnh_received: false, birth_date_received: false }, resolvedReferralProduct = null;
+   const latestAssistantBeforeTurn = [...history].reverse().find(row => row.direction === 'outbound' && row.sender_type === 'assistant');
+   const photoAskedRecently = /\b(?:foto|fotos|imagem|imagens)\b/i.test(String(latestAssistantBeforeTurn?.message_text || ''));
+-  const genesisPhotoDeferral = tenantSlug === 'wesley_automoveis'
+-    && ['sell', 'buy_and_sell'].includes(salesModeFor(lead?.state || {}))
+-    && photoAskedRecently
+-    && salesCustomerDisposition(currentTurnText) === 'deferred_by_customer';
++  // Disabled: the Gênesis deferral is a validated contract decision applied at finalisation. This pre-check had no
++  // contract (the text-only call returned nothing for Gênesis) and the branch below only ever ran for other tenants.
++  const genesisPhotoDeferral = false;
+   const isPureGreeting = /^(?:oi+|ol[aá]+|opa|bom dia|boa tarde|boa noite)[!.,\s]*$/iu.test(currentTurnText.trim());
+   const greetingState = lead?.state || {};
+   const greetingHasContext = Boolean(greetingState.product_id || greetingState.buy_interest?.model || greetingState.sell_vehicle?.model
+@@ -10262,6 +10292,17 @@ async function runSalesTurnPrepare(context, history, event, control) {
+     }
+   }
+   if (generated.response_repair) event.raw_payload = { ...(event.raw_payload || {}), sales_response_repair: generated.response_repair };
++  // P1-01: an invalid semantic contract has no authority over the plan, the state or the product. The CORE keeps the
++  // persisted state, an empty request list and the persisted product, so the EXT has nothing new to act on.
++  if (tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid !== true) {
++    naturalPlan = {
++      requests: [], memory: salesDialogueMemory(lead?.state || {}, history), next_requirement: 'none', human_requested: false,
++      handoff_reason: 'none', needs_clarification: true, offer: { action: 'none' }, location_kind: 'none',
++      semantic_intent: generated.semantic_intent, semantic_source: 'contract_invalid',
++    };
++    generated.state = salesMergeState(lead?.state || {}, {});
++    generated.product = lead?.product || null;
++  }
+   const currentIntentAmbiguity = tenantSlug === 'wesley_automoveis' && naturalPlan?.customer_vehicle_ambiguous
+     ? { kind: 'customer_vehicle_purpose', reply: 'Você pretende vender esse veículo separadamente, usar como entrada em outro da loja ou só comentou que possui ele?' }
+     : tenantSlug === 'wesley_automoveis' && salesSemanticAmbiguousOtherReference(currentTurnText, generated.semantic_intent, history, inventory)
+@@ -10272,7 +10313,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
+   const intentDecision = tenantSlug === 'wesley_automoveis' && generated.semantic_intent?.valid
+     ? salesApplySemanticIntent(lead?.state || {}, currentIntentAmbiguity ? salesMergeState(lead?.state || {}, {}) : (generated.state || {}), generated.semantic_intent)
+     : (tenantSlug === 'wesley_automoveis'
+-      ? salesPersistedIntentDecision(lead?.state || {}, currentIntentAmbiguity ? salesMergeState(lead?.state || {}, {}) : (generated.state || {}))
++      ? salesPersistedIntentDecision(lead?.state || {})
+       : salesApplyIntentEvidence(lead?.state || {}, currentIntentAmbiguity ? salesMergeState(lead?.state || {}, {}) : (generated.state || {}), history, turn.messages));
+   // preserve-unresolved-catalog-reference-state
+   if (currentIntentAmbiguity?.kind === 'ambiguous_catalog_reference') {
+@@ -10313,7 +10354,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
+     tenant_id: context.tenant.id,
+     tenant_slug: tenantSlug,
+     noria_extension: 'genesis',
+-    noria_contract_version: '1.0',
++    noria_contract_version: tenantSlug === 'wesley_automoveis' ? NORIA_GENESIS_CONTRACT_VERSION : '1.0',
+     remoteJid: chatId,
+     instance: inputJson.instance,
+     session_id: turn.boundary_id,
+@@ -10398,13 +10439,17 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
+   const commercialDecisionAuthoritative = genesisCommercialTurn
+     && inputJson.commercial_decision_status === 'ok'
+     && decisionData?.status === 'ok'
+-    && decisionData?.provenance === 'genesis_extension_commercial_decide_v3'
++    && decisionData?.provenance === NORIA_GENESIS_DECISION_PROVENANCE
++    && decisionData?.noria_contract_version === NORIA_GENESIS_CONTRACT_VERSION
+     && decisionIdentityMatches;
+   if (genesisCommercialTurn && !commercialDecisionAuthoritative) {
+     throw new Error('COMMERCIAL_DECISION_PROVENANCE_INVALID');
+   }
+   if (!decisionIdentityMatches) throw new Error('COMMERCIAL_DECISION_IDENTITY_MISMATCH');
+-  if (decisionData) {
++  // P1-01: the EXT decision is verified (identity, version) but applied to the state only when the semantic contract is
++  // valid. An invalid contract keeps the persisted state and the neutral plan; it has no commercial authority.
++  const genesisSemanticAuthorized = !genesisCommercialTurn || generated.semantic_intent?.valid === true;
++  if (decisionData && genesisSemanticAuthorized) {
+     if (decisionData.commercial_state) {
+       generated.state = salesMergeState(generated.state || {}, decisionData.commercial_state);
+       intentDecision.state = salesMergeState(intentDecision.state || {}, decisionData.commercial_state);
+@@ -10680,7 +10725,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
+   }
+   const primaryDialogueReply = typeof generated.primary_reply === 'string' ? generated.primary_reply.trim() : (tenantSlug !== 'wesley_automoveis' ? String(generated.reply || '').trim() : '');
+   const s = generated.state;
+-  if (decisionData?.lead_classification) {
++  if (genesisSemanticAuthorized && decisionData?.lead_classification) {
+     s.temperature = decisionData.lead_classification.temperature;
+     s.financing = {
+       temperature: decisionData.lead_classification.temperature,
+@@ -10738,8 +10783,12 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
+   const acceptedHumanOffer = tenantSlug === 'wesley_automoveis'
+     ? lastAssistantOffer?.action === 'human_handoff' && salesOfferResponse(generated.semantic_intent, turn.messages, lastAssistantOffer) === 'accepted'
+     : !!lastHumanOffer && turn.messages.some(m => salesIsAffirmativeToHumanOffer(m.text));
+-  const repeatsDeferredSale = (lead?.state?.follow_up_disposition === 'deferred_by_customer' && ['sell', 'buy_and_sell'].includes(mode) && /^(?:vender|quero\s+vender|continuar\s+(?:a\s+)?venda)$/.test(normalizeText(turnText).trim()));
+-  const customerDisposition = salesCustomerDisposition(turnText) || (repeatsDeferredSale ? 'deferred_by_customer' : '');
++  const repeatsDeferredSale = tenantSlug !== 'wesley_automoveis' && (lead?.state?.follow_up_disposition === 'deferred_by_customer' && ['sell', 'buy_and_sell'].includes(mode) && /^(?:vender|quero\s+vender|continuar\s+(?:a\s+)?venda)$/.test(normalizeText(turnText).trim()));
++  // Gênesis: declined, closed_by_customer or deferred_by_customer come only from the validated semantic contract, with
++  // evidence from this message. No text heuristic stands in for a missing contract (the signature takes the contract).
++  const customerDisposition = tenantSlug === 'wesley_automoveis'
++    ? salesCustomerDisposition(turnText, generated.semantic_intent, turn.messages)
++    : (salesCustomerDisposition(turnText) || (repeatsDeferredSale ? 'deferred_by_customer' : ''));
+   const vehicleYearClarification = ['sell', 'buy_and_sell'].includes(mode) ? salesVehicleYearClarification(turnText) : null;
+   // Gênesis: the model's plan decides whether this is a location request and which kind. Others keep the legacy classifier.
+   const locationIntent = tenantSlug === 'wesley_automoveis'
+@@ -11452,7 +11501,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
+     pendingRequirement = ''; reply = 'Estou com uma dificuldade temporária no atendimento. Posso pedir para um atendente ajudar?'; followUpDisposition = 'technical_failure';
+     optionalHumanOffer = { reason: 'temporary_processing_failure' };
+   }
+-  if (decisionData?.handoff?.required) {
++  if (genesisSemanticAuthorized && decisionData?.handoff?.required) {
+     stage = decisionData.stage_key || cfg.stage_keys?.human || stage;
+     register = false;
+     handoffReason = decisionData.handoff.reason;
+@@ -11530,7 +11579,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
+   // Genesis commercial state, stage, handoff and pending requirements are
+   // decided only by the authenticated EXT response.  The CORE retains only
+   // operational ownership, idempotency and delivery responsibilities.
+-  if (commercialDecisionAuthoritative) {
++  if (commercialDecisionAuthoritative && genesisSemanticAuthorized) {
+     const extStage = String(decisionData.stage_key || '');
+     const extStageMeta = cfg.stages?.[extStage];
+     if (!extStage || !extStageMeta) throw new Error('COMMERCIAL_DECISION_STAGE_INVALID');
+@@ -11563,7 +11612,9 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
+     s.commercial_handoff = decisionData.handoff?.required === true
+       ? { reason: handoffReason, destination_queue: decisionData.handoff.destination_queue || null }
+       : null;
+-    pendingRequirement = String(decisionData.commercial_state?.pending_requirement || '');
++    // A customer disposition from this message (declined, closed, deferred) ends or defers the exchange: the EXT's
++    // pending requirement must not reopen it, and the disposition stays the one the validated contract stated.
++    pendingRequirement = customerDisposition ? '' : String(decisionData.commercial_state?.pending_requirement || '');
+     followUpDisposition = decisionData.handoff?.required === true ? 'resolved'
+       : (pendingRequirement ? 'awaiting_customer' : followUpDisposition);
+     if (decisionData.handoff?.required === true && !defaultAssignee) defaultAssignee = await salesResolveDefaultAssignee(context);
+diff --git a/n8n/sources/genesis_extension.js b/n8n/sources/genesis_extension.js
+index 4885023..c48198b 100644
+--- a/a/n8n/sources/genesis_extension.js
++++ b/b/n8n/sources/genesis_extension.js
+@@ -10,6 +10,31 @@ if (input.tenant_slug !== expectedSlug || (input.noria_extension && input.noria_
+ // identity and result untouched so the finalisation node never re-runs it.
+ if (input.noria_terminal === true) return { json: { ...input } };
+ 
++// Version contract with the CORE. The EXT decides only for the version it was published with; the CORE verifies the same
++// value in the decision it receives. A different version blocks the commercial action (see the commercial block).
++const NORIA_GENESIS_CONTRACT_VERSION = '2.0';
++
++// P1-02 (EXT side). A new commercial action (selection, declared interest, offer acceptance, disposition, frustration)
++// needs evidence from the message being processed now. Historical evidence may still identify a product presented
++// before, but never selects or declares interest in it by itself. The CORE applies the same rule before the EXT runs.
++function currentTurnSemantic(semantic, messages) {
++  if (!semantic || semantic.valid !== true) return semantic;
++  const current = new Set((Array.isArray(messages) ? messages : []).flatMap(m => [m?.event_id, m?.id]).filter(Boolean).map(String));
++  const hasCurrent = ids => (Array.isArray(ids) ? ids : []).some(id => current.has(String(id)));
++  const refs = semantic.references || {};
++  const productReferences = (Array.isArray(refs.product_references) ? refs.product_references : []).map(item =>
++    ['selected', 'interest'].includes(item?.role) && !hasCurrent(item.evidence_ids) ? { ...item, role: 'mentioned' } : item);
++  const productRole = ['selected', 'interest'].includes(refs.product_role) && !hasCurrent(refs.evidence_ids) ? 'mentioned' : refs.product_role;
++  const offer = semantic.offer_response && semantic.offer_response.value !== 'none' && !hasCurrent(semantic.offer_response.evidence_ids)
++    ? { ...semantic.offer_response, value: 'none', evidence_ids: [], offer_ref: '' } : semantic.offer_response;
++  const disposition = semantic.customer_disposition && semantic.customer_disposition.value !== 'active' && !hasCurrent(semantic.customer_disposition.evidence_ids)
++    ? { value: 'active', evidence_ids: [] } : semantic.customer_disposition;
++  return { ...semantic, references: { ...refs, product_role: productRole, product_references: productReferences }, offer_response: offer, customer_disposition: disposition };
++}
++const currentMessages = Array.isArray(input.messages) ? input.messages : (input.turn?.messages || []);
++if (input.semantic_intent) input.semantic_intent = currentTurnSemantic(input.semantic_intent, currentMessages);
++if (input.generated?.semantic_intent) input.generated.semantic_intent = currentTurnSemantic(input.generated.semantic_intent, currentMessages);
++
+ const base = String($env.SUPABASE_URL || '').replace(/\/$/, '');
+ const key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');
+ if (!base || !key) throw new Error('NORIA_EXTENSION_POLICY_NO_DB');
+@@ -1301,7 +1326,8 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
+         tenant_slug: expectedSlug,
+         ...identity,
+         status: 'ok',
+-        provenance: 'genesis_extension_commercial_decide_v3',
++        provenance: 'genesis_extension_commercial_decide_v4',
++        noria_contract_version: NORIA_GENESIS_CONTRACT_VERSION,
+         parameters: parameterStatus,
+         semantic: {
+           valid: semantic?.valid === true,
+@@ -1548,7 +1574,8 @@ function decideProductPhotoAction(payload, inventory, settings, controlBlocked =
+   // from the inventory and the model's role and evidence). A recorded or resolved selection is not needed for the photo:
+   // an explicit request identifies its product without selecting it. Eligibility, the product image proof and the
+   // media settings below still decide whether an image is authorised.
+-  const recordedSelection = String(payload.state?.product_id || payload.generated?.state?.product_id || '');
++  // Only the state the CORE authorised for this turn. The unvalidated candidate state (generated.state) is never read here.
++  const recordedSelection = String(payload.state?.product_id || '');
+   const recordedProduct = semantic.conversation?.continues_previous_topic === true && recordedSelection
+     && recordedSelection === String(payload.product?.id || '') ? inventory.find(item => item.id === recordedSelection) : null;
+   const identifiedSubject = resolved.identified_product && referenceRoleOf(semantic.references, resolved.identified_product.id) !== 'none'
+@@ -1602,6 +1629,8 @@ if (input.noria_phase === 'commercial_decision' || input.operation === 'commerci
+       commercial_decision_status: 'error', commercial_decision_error: code, commercial_identity: identity
+     }
+   });
++  // Version contract: a CORE built for another contract version is refused before any commercial decision is made.
++  if (String(input.noria_contract_version || '') !== NORIA_GENESIS_CONTRACT_VERSION) return refuse('COMMERCIAL_CONTRACT_VERSION_MISMATCH');
+   if (turn.claimed !== true || !identity.turn_token || identity.session_id !== String(turn.boundary_id || '')
+     || !identity.request_id.endsWith(':' + identity.turn_token)) return refuse('COMMERCIAL_TURN_IDENTITY_MISMATCH');
+   const inventoryRequired = commercialDecisionNeedsInventory(input);
+diff --git a/n8n/sources/genesis_tenant_identity.js b/n8n/sources/genesis_tenant_identity.js
+index 6901c16..ecb60e8 100644
+--- a/a/n8n/sources/genesis_tenant_identity.js
++++ b/b/n8n/sources/genesis_tenant_identity.js
+@@ -4,7 +4,7 @@
+ // tenant-scoped commercial contract.
+ const input = $json || {};
+ const expectedSlug = 'wesley_automoveis';
+-if (String(input.tenant_slug || '') !== expectedSlug || String(input.noria_extension || '') !== 'genesis' || String(input.noria_contract_version || '') !== '1.0') throw new Error('NORIA_EXTENSAO_TENANT_INCORRETO');
++if (String(input.tenant_slug || '') !== expectedSlug || String(input.noria_extension || '') !== 'genesis' || String(input.noria_contract_version || '') !== '2.0') throw new Error('NORIA_EXTENSAO_TENANT_INCORRETO');
+ const uuid = String(input.tenant_id || ''), instance = String(input.instance || ''), chatId = String(input.remoteJid || '');
+ if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(uuid) || !instance || !chatId) throw new Error('NORIA_IDENTIDADE_INCOMPLETA');
+ const base = String($env.SUPABASE_URL || '').replace(/\/$/, ''), key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');
+diff --git a/scripts/homolog/genesis_executor.cjs b/scripts/homolog/genesis_executor.cjs
+index 19d3835..7a67d73 100644
+--- a/a/scripts/homolog/genesis_executor.cjs
++++ b/b/scripts/homolog/genesis_executor.cjs
+@@ -1,109 +1,83 @@
+-// Isolated homologation executor for the Gênesis (wesley_automoveis) semantic pipeline.
++// Isolated homologation executor for the Gênesis (wesley_automoveis) pipeline.
+ //
+-// It loads the REAL declarations of n8n/sources/noria_core.js and n8n/sources/genesis_extension.js (no copy of the
+-// conversational logic). The Gemini call is made by the workflow's own salesGenerate, so the prompt and the response
+-// schema are the real ones. The executor then runs the same validators the workflow runs:
+-//   Gemini output -> semantic contract -> dialogue plan -> catalog choice -> EXT selection and photo decisions -> auditor.
++// It runs the REAL workflow nodes, in the same order the n8n workflows chain them, with no copy of their logic:
++//   EXT identity node -> EXT bootstrap (conversation.evaluate) -> CORE prepare -> EXT commercial.decide -> CORE finalize
++// Each node is the canonical source file (n8n/sources/*.js) executed as an n8n Code node: `$json`, `$env` and
++// `this.helpers.httpRequest` are provided, the rest is the file's own code. The CORE's finalisation contains the
++// auditor (deterministic validator and, when enabled, the second Gemini call) and the delivery path.
+ //
+-// Modes:
+-//   fixtures  deterministic check of the validators with fixed Gemini-shaped outputs (no network).
+-//   dry       default. Runs salesGenerate up to the Gemini request and records the exact request. Nothing is sent.
+-//   real      sends the recorded request to Gemini. Requires HOMOLOG_GEMINI_AUTHORIZED=1, a dedicated
+-//             HOMOLOG_GEMINI_KEY (never GEMINI_API_KEY) and a tenant settings snapshot (HOMOLOG_SETTINGS_SNAPSHOT).
++// The only network-facing boundary is `helpers.httpRequest`, served by the world below:
++//   - Supabase REST and RPC: an in-memory simulator seeded from the fixtures. Writes are recorded, never sent.
++//     Unknown tables or RPCs throw HOMOLOG_MISSING_DEPENDENCY, so a missing dependency fails the run explicitly.
++//   - Side-effect RPCs (follow-up scheduling and cancellation, appointments) are recorded as blocked.
++//   - The WhatsApp provider (Evolution) is simulated: it returns a message id and records the text. Nothing is sent.
++//   - Gemini generateContent: `fixtures` answers from the scenario, `dry` records the exact request and stops,
++//     `real` sends it only with HOMOLOG_GEMINI_AUTHORIZED=1, HOMOLOG_GEMINI_KEY (never GEMINI_API_KEY) and a settings snapshot.
++//   - Anything else throws HOMOLOG_BLOCKED.
+ //
+-// Side effects blocked in code:
+-//   - httpJson is replaced: the only reachable URL is a Gemini generateContent endpoint. WhatsApp (Evolution),
+-//     Telegram, Supabase REST and any other host throw HOMOLOG_BLOCKED.
+-//   - supabaseGet, supabasePost and supabasePatch throw HOMOLOG_BLOCKED: no database read or write, no RPC.
+-//   - The send path (sendChannelMessage) is never invoked; no handoff, follow-up scheduling or lead save runs.
+-//   - The Gemini rate-control reservation (a Supabase RPC that writes gemini_rate_control_*) is bypassed on purpose.
+-//     This is a documented gap, not a silent omission (see the homologation plan).
++// Modes:
++//   fixtures  (default) canned Gemini answers from fixtures/genesis_scenarios.json, full pipeline, no network.
++//   dry       runs the pipeline until the first Gemini request and records it. Nothing is sent.
++//   real      sends Gemini requests. Gated as described above. Not executed by default.
+ //
+ // Usage:
+-//   node scripts/homolog/genesis_executor.cjs --mode=fixtures
+-//   node scripts/homolog/genesis_executor.cjs --mode=dry [--dialogues=path] [--out=path]
+-//   node scripts/homolog/genesis_executor.cjs --mode=real   (only with the gates set; not executed by default)
++//   node scripts/homolog/genesis_executor.cjs [--mode=fixtures] [--scenarios=path] [--out=path]
++
++'use strict';
+ 
+-const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
++const fs = require('node:fs');
++const path = require('node:path');
++const vm = require('node:vm');
++
++// HOMOLOG_SOURCE_ROOT lets the same executor run against another snapshot of the sources (before/after comparison).
++const root = process.env.HOMOLOG_SOURCE_ROOT ? path.resolve(process.env.HOMOLOG_SOURCE_ROOT) : path.resolve(__dirname, '../..');
+ const ts = require(path.resolve(__dirname, '../../app/node_modules/typescript'));
+-const root = path.resolve(__dirname, '../..');
++
+ const TENANT_SLUG = 'wesley_automoveis';
+-const GEMINI_GENERATE = /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/[a-z0-9.\-]+:generateContent$/;
++const TENANT_ID = '0b5e0000-0000-4000-8000-000000000001';
++const INSTANCE = 'homolog';
++const CHAT_ID = '5500000000001';
++const SUFFIX = 'WESLEY_AUTOMOVEIS';
++const SIM_SUPABASE = 'homolog-supabase.invalid';
++const SIM_EVOLUTION = 'homolog-evolution.invalid';
++const GENESIS_CONTRACT_VERSION = process.env.HOMOLOG_CONTRACT_VERSION || '2.0';
++const CORE_FILE = 'n8n/sources/noria_core.js';
++const EXT_FILE = 'n8n/sources/genesis_extension.js';
++const IDENTITY_FILE = 'n8n/sources/genesis_tenant_identity.js';
+ 
+-function loadDeclarations(file, tenantSlug = TENANT_SLUG) {
+-  const source = fs.readFileSync(path.join(root, file), 'utf8');
+-  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+-  const blocked = name => () => { throw new Error('HOMOLOG_BLOCKED: ' + name + ' is disabled in the executor'); };
+-  const context = {
+-    console, Buffer, process: { env: {} },
+-    $json: { tenant_slug: tenantSlug, tenant_id: 'homolog-tenant', instance: 'homolog', noria_extension: {} },
+-    $env: {}, $vars: {}, $getWorkflowStaticData: () => ({}), helpers: {},
+-    supabaseGet: blocked('supabaseGet'), supabasePost: blocked('supabasePost'), supabasePatch: blocked('supabasePatch'),
+-  };
+-  vm.createContext(context);
+-  for (const statement of ast.statements) {
+-    if (!(ts.isFunctionDeclaration(statement) || ts.isVariableStatement(statement))) continue;
+-    try { vm.runInContext(statement.getText(ast), context); } catch (error) { /* outside dependency, not used here */ }
+-  }
+-  // Declarations loaded above would overwrite the stubs, so the barrier is applied after loading.
+-  // Every side-effect entry point is replaced by a function that throws, whether or not the file defines it.
+-  for (const name of SIDE_EFFECT_FUNCTIONS) {
+-    if (vm.runInContext(`typeof ${name}`, context) === 'function') {
+-      vm.runInContext(`${name} = async function () { throw new Error('HOMOLOG_BLOCKED: ${name} is disabled in the executor'); };`, context);
+-    }
+-  }
+-  return context;
+-}
++// Declarations the executor depends on. Each one must exist in the canonical source, or the run stops.
++const REQUIRED_DECLARATIONS = {
++  [CORE_FILE]: ['runSalesTurnPrepare', 'runSalesTurnFinalize', 'salesGenerate', 'salesPlanNaturalDialogue', 'salesSemanticCatalogChoice',
++    'salesValidatePrimaryDialogue', 'salesAuditPrimaryDialogue', 'salesValidateSemanticIntent', 'salesPersistedIntentDecision',
++    'salesCustomerDisposition', 'sendChannelMessage', 'cancelPendingFollowUps', 'scheduleFollowUps', 'supabaseGet', 'supabasePost', 'httpJson'],
++  [EXT_FILE]: ['executeBusinessOperation', 'resolveSelection', 'decideProductPhotoAction', 'loadSupabaseInventory'],
++};
+ 
+-// Entry points with side effects: database writes or reads, WhatsApp/Telegram sends, handoffs, follow-up scheduling.
+-const SIDE_EFFECT_FUNCTIONS = [
+-  'supabaseGet', 'supabasePost', 'supabasePatch',
+-  'sendChannelMessage', 'sendTelegramFallbackMessage', 'sendTelegramMessage',
+-  'salesAssignConversation', 'scheduleFollowUps', 'cancelPendingFollowUps', 'saveEvent',
+-];
+-
+-// The transport that replaces httpJson inside the CORE. It is the only network path the executor can reach.
+-function makeTransport({ mode, geminiKey, log }) {
+-  return async function homologHttpJson(method, url, headers = {}, payload = null, options = {}) {
+-    const target = String(url || '');
+-    if (method !== 'POST' || !GEMINI_GENERATE.test(target)) {
+-      throw new Error('HOMOLOG_BLOCKED: only Gemini generateContent is reachable (' + method + ' ' + target.split('?')[0].slice(0, 80) + ')');
+-    }
+-    const operation = options.operation || 'gemini_generate';
+-    log.calls.push({ operation, model: target.split('/models/')[1].split(':')[0] });
+-    if (mode !== 'real') {
+-      log.recorded.push({ operation, url: target, body: payload });
+-      throw new Error('HOMOLOG_DRY_RUN: request recorded, not sent');
+-    }
+-    const response = await fetch(target, {
+-      method: 'POST',
+-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
+-      body: JSON.stringify(payload),
+-      signal: AbortSignal.timeout(45000),
+-    });
+-    const text = await response.text();
+-    if (!response.ok) { const error = new Error('Request failed with status code ' + response.status); error.statusCode = response.status; throw error; }
+-    return JSON.parse(text);
+-  };
++// Each canonical file can come from its own snapshot (before/after comparison, mixed CORE and EXT versions).
++function sourceRootFor(file) {
++  if (file === CORE_FILE && process.env.HOMOLOG_CORE_SOURCE_ROOT) return path.resolve(process.env.HOMOLOG_CORE_SOURCE_ROOT);
++  if ((file === EXT_FILE || file === IDENTITY_FILE) && process.env.HOMOLOG_EXT_SOURCE_ROOT) return path.resolve(process.env.HOMOLOG_EXT_SOURCE_ROOT);
++  return root;
+ }
+ 
+-function gateFor(mode, env) {
+-  if (mode !== 'real') return { geminiKey: null };
+-  if (env.HOMOLOG_GEMINI_AUTHORIZED !== '1') throw new Error('REAL_MODE_NOT_AUTHORIZED: set HOMOLOG_GEMINI_AUTHORIZED=1 to allow real calls');
+-  const key = env.HOMOLOG_GEMINI_KEY || '';
+-  if (!key) throw new Error('REAL_MODE_KEY_MISSING: HOMOLOG_GEMINI_KEY is required');
+-  if (env.GEMINI_API_KEY && key === env.GEMINI_API_KEY) throw new Error('REAL_MODE_KEY_REFUSED: the homologation key must not be the production GEMINI_API_KEY');
+-  if (!env.HOMOLOG_SETTINGS_SNAPSHOT) throw new Error('REAL_MODE_SNAPSHOT_MISSING: HOMOLOG_SETTINGS_SNAPSHOT must point to a read-only export of the tenant settings');
+-  return { geminiKey: key };
++function assertDeclarations(file) {
++  const source = fs.readFileSync(path.join(sourceRootFor(file), file), 'utf8');
++  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
++  const declared = new Set();
++  const visit = node => {
++    if ((ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node)) && node.name && ts.isIdentifier(node.name)) declared.add(node.name.text);
++    ts.forEachChild(node, visit);
++  };
++  visit(ast);
++  const missing = (REQUIRED_DECLARATIONS[file] || []).filter(name => !declared.has(name));
++  if (missing.length) throw new Error('HOMOLOG_MISSING_DEPENDENCY: ' + file + ' does not declare ' + missing.join(', '));
+ }
+ 
+-// Tenant settings: the real snapshot when provided; otherwise a synthetic placeholder that real mode refuses to send.
+-function loadSettings(file) {
+-  if (!file) return { settings: { ai_model: 'gemini-2.5-flash-lite', system_prompt: 'SYNTHETIC PLACEHOLDER (no snapshot)', conversation_capability: 'sales_v1', ai_enabled: true, follow_up_enabled: true }, synthetic: true };
+-  return { settings: JSON.parse(fs.readFileSync(file, 'utf8')), synthetic: false };
+-}
++// ---------------------------------------------------------------------------------------------------------------------
++// Simulated world: Supabase tables and RPCs, the Evolution provider, the Gemini boundary.
++// ---------------------------------------------------------------------------------------------------------------------
+ 
+-// Fixture helpers: fill the contract's required keys with neutral values. They never interpret language.
++// Fixture helper: fills the semantic contract's required keys with neutral values. It never interprets language.
+ function contractDefaults(overrides = {}) {
+   const base = {
+     primary_intent: 'other', secondary_intents: [], topics: [],
+@@ -113,8 +87,7 @@ function contractDefaults(overrides = {}) {
+     references: { previous_catalog: false, selected_ordinal: null, mentioned_product_ids: [], evidence_ids: [], product_references: [], product_role: 'none' },
+     conversation: { continues_previous_topic: false, changes_preference: false, requires_clarification: false, frustration: { value: 'none', evidence_ids: [] } },
+     auction: { intent: 'none', product_id: null, evidence_ids: [] },
+-    ambiguities: [], confidence: 'high',
+-    offer_response: { value: 'none', evidence_ids: [], offer_ref: '' },
++    ambiguities: [], confidence: 'high', offer_response: { value: 'none', evidence_ids: [], offer_ref: '' },
+   };
+   const merged = { ...base };
+   for (const [key, value] of Object.entries(overrides)) {
+@@ -124,138 +97,423 @@ function contractDefaults(overrides = {}) {
+   return merged;
+ }
+ 
+-// Sets the workflow's `turn` lexical binding inside the VM realm. The Set is built there too, because the workflow
+-// checks `instanceof Set`, which fails across realms.
+-function setTurn(core, turnState) {
+-  core.__homologTurn = turnState;
+-  vm.runInContext('turn = { boundary_id: __homologTurn.boundary_id, token: __homologTurn.token, confirmed_outbound_ids: new Set(__homologTurn.confirmed), messages: __homologTurn.messages }', core);
++// The primary Gemini answer for one turn, shaped like the dialogue schema. Only the fields given are customised.
++function cannedPrimaryBody(spec = {}) {
++  const reply = spec.reply ?? 'Olá! Como posso ajudar?';
++  const payload = {
++    reply, primary_reply: reply, action: 'reply', reason: 'none', primary_facts: [],
++    state: spec.state || {},
++    response_contract: {
++      answers: [], requested_fields: [], facts: [], fact_evidence_mode: 'standard', availability_asserted: false, assignment_confirmed: false, photo_sent: false,
++      handoff_announced: false, ...(spec.response_contract || {}),
++    },
++    // A scenario marks a deliberately invalid contract with contract: 'invalid'; otherwise the contract is completed with neutral defaults.
++    semantic_intent: spec.contract === 'invalid' ? spec.semantic_intent : contractDefaults(spec.semantic_intent || { topics: ['greeting'] }),
++    dialogue_plan: { requests: [], next_requirement: 'none', memory: {}, human_requested: false, handoff_reason: 'none', location_kind: 'none', offer: { action: 'none' }, ...(spec.dialogue_plan || {}) },
++  };
++  return { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(payload) }] } }] };
+ }
+ 
+-function fixtureScenario(core, ext, scenario) {
+-  const inventory = scenario.inventory;
+-  const inbound = scenario.message;
+-  const history = [{ id: 'catalog-1', direction: 'outbound', raw_payload: { catalog_item_ids: scenario.catalog_shown || [] } }];
+-  setTurn(core, { boundary_id: 'homolog-session', token: 'homolog-token', confirmed: scenario.catalog_shown ? ['catalog-1'] : [], messages: [{ id: inbound.id, event_id: inbound.id, text: inbound.text, direction: 'inbound' }] });
+-  const semantic = core.salesValidateSemanticIntent(contractDefaults(scenario.gemini.semantic_intent), inventory, [inbound.id]);
+-  const choice = core.salesSemanticCatalogChoice(semantic, history, inventory) || {};
+-  const resolved = ext.resolveSelection(semantic, inventory, { products: (scenario.catalog_shown || []).map(id => inventory.find(p => p.id === id)).filter(Boolean) });
+-  const focus = scenario.focus_product_id ? inventory.find(p => p.id === scenario.focus_product_id) : null;
+-  const turnProduct = choice.product || choice.interest_product || choice.reference_product || focus || null;
+-  const photo = ext.decideProductPhotoAction({
+-    tenant_id: 'homolog-tenant', session_id: 'homolog-session', turn: { token: 'homolog-token', messages: [{ event_id: inbound.id, id: inbound.id }] }, request_id: 'homolog-request',
+-    semantic_intent: semantic, dialogue_plan: { requests: scenario.gemini.dialogue_plan?.requests || [] },
+-    product: turnProduct, state: { product_id: scenario.recorded_selection_id || '' }, lead: {},
+-  }, inventory, { sales: { vehicle_photos_enabled: true } });
+-  const outcome = {
+-    semantic_valid: semantic.valid === true, validation_errors: semantic.validation_errors || [],
+-    selected: choice.product?.id || null, interest: choice.interest_product?.id || null, reference: choice.reference_product?.id || null,
+-    ambiguous: !!choice.ambiguous, ext_selection: resolved.product?.id || null, ext_identified: resolved.identified_product?.id || null,
+-    photo_status: photo.status, photo_product: photo.product_id,
+-    action: choice.product && choice.product.id ? 'register_interest_candidate' : 'reply',
+-    buy_interest_written: Boolean(choice.interest_product),
++function createWorld({ mode, geminiKey, settings, inventory, scenarioResponses }) {
++  const world = {
++    mode, geminiKey, settings, inventory,
++    responses: { primary: [...(scenarioResponses?.primary || [])], other: [...(scenarioResponses?.other || [])] },
++    tables: {
++      tenants: [{ id: TENANT_ID, slug: TENANT_SLUG, status: 'active', name: 'Gênesis (homologação)' }],
++      tenant_settings: [{ tenant_id: TENANT_ID, settings }],
++      channels: [{ tenant_id: TENANT_ID, type: 'whatsapp', status: 'active', external_id: INSTANCE, config: { instance_name: INSTANCE } }],
++      channel_events: [],
++      conversation_turn_queue: [],
++      conversation_turn_delivery_attempts: [],
++      sales_leads: [],
++      follow_up_jobs: [],
++      ai_agents: [],
++      contacts: [],
++      appointments: [],
++      sales_documents: [],
++      team_agents: [],
++      tenant_service_catalog: [],
++      whatsapp_catalog_products: [],
++      whatsapp_catalog_sync_state: [],
++      genesis_inventory_vehicles: inventory.map(vehicleRow),
++    },
++    log: { writes: [], blocked: [], simulated_sends: [], gemini: [], missing: [], failures: [] },
++    seq: 0,
+   };
+-  const failures = [];
+-  for (const [key, expected] of Object.entries(scenario.expect || {})) {
+-    if (outcome[key] !== expected) failures.push(key + ': expected ' + JSON.stringify(expected) + ', got ' + JSON.stringify(outcome[key]));
++  world.env = {
++    SUPABASE_URL: 'https://' + SIM_SUPABASE, SUPABASE_SERVICE_ROLE_KEY: 'homolog-simulated-service-key',
++    ['EVOLUTION_API_URL_' + SUFFIX]: 'https://' + SIM_EVOLUTION, ['EVOLUTION_API_KEY_' + SUFFIX]: 'homolog-simulated',
++    ['EVOLUTION_INSTANCE_' + SUFFIX]: INSTANCE, ['NORIA_INGRESS_FORWARD_TOKEN_' + SUFFIX]: 'homolog-simulated',
++    GEMINI_API_KEY: mode === 'real' ? geminiKey : 'homolog-simulated', GEMINI_ENABLED: 'true',
++  };
++  return world;
++}
++
++// Maps a fixture inventory row to the columns the EXT inventory loader reads.
++function vehicleRow(item) {
++  return {
++    tenant_id: TENANT_ID, vehicle_id: item.id, sheet_row: null, brand: item.brand, model: item.model, model_year: item.year,
++    color: item.color, mileage_km: item.km, fuel: item.fuel, category: 'car', status: item.status, price_cents: item.price_cents,
++    previous_price_cents: null, availability_confirmed: item.availability_verified === true, price_source: 'homolog',
++    source_observed_at: new Date().toISOString(), synced_at: new Date().toISOString(), offerable: item.offerable === true,
++  };
++}
++
++function parseFilter(searchParams) {
++  const filters = [], limit = Number(searchParams.get('limit') || 0) || null;
++  for (const [key, raw] of searchParams.entries()) {
++    if (['select', 'order', 'limit', 'offset'].includes(key)) continue;
++    if (key === 'or') {
++      const alternatives = raw.replace(/^\(|\)$/g, '').split(',').map(item => parseCondition(item));
++      filters.push(row => alternatives.some(test => test(row)));
++      continue;
++    }
++    filters.push(parseCondition(key + '.' + raw));
++  }
++  return { filters, limit };
++}
++
++function parseCondition(text) {
++  const [column, ...rest] = text.split('.');
++  const op = rest.shift();
++  const value = rest.join('.');
++  const cast = raw => (raw === 'null' ? null : raw === 'true' ? true : raw === 'false' ? false : (/^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw));
++  if (op === 'not') { const inner = parseCondition(column + '.' + value); return row => !inner(row); }
++  if (op === 'is') return row => (row[column] ?? null) === cast(value);
++  if (op === 'in') {
++    const set = value.replace(/^\(|\)$/g, '').split(',').map(v => String(cast(v)));
++    return row => set.includes(String(row[column]));
++  }
++  const expected = cast(value);
++  const compare = (a, b) => (typeof a === 'number' || typeof b === 'number') ? Number(a) - Number(b) : String(a).localeCompare(String(b));
++  switch (op) {
++    case 'eq': return row => String(row[column] ?? '') === String(expected ?? '');
++    case 'neq': return row => String(row[column] ?? '') !== String(expected ?? '');
++    case 'gt': return row => row[column] != null && compare(row[column], expected) > 0;
++    case 'gte': return row => row[column] != null && compare(row[column], expected) >= 0;
++    case 'lt': return row => row[column] != null && compare(row[column], expected) < 0;
++    case 'lte': return row => row[column] != null && compare(row[column], expected) <= 0;
++    default: throw new Error('HOMOLOG_MISSING_DEPENDENCY: unsupported PostgREST operator ' + op);
++  }
++}
++
++function tableRequest(world, method, table, searchParams, body) {
++  if (!Object.prototype.hasOwnProperty.call(world.tables, table)) {
++    world.log.missing.push(table);
++    throw new Error('HOMOLOG_MISSING_DEPENDENCY: no simulated table ' + table);
++  }
++  const rows = world.tables[table];
++  const { filters, limit } = parseFilter(searchParams);
++  const matches = rows.filter(row => filters.every(test => test(row)));
++  if (method === 'GET') return limit ? matches.slice(0, limit) : matches;
++  if (method === 'POST') {
++    const inserted = (Array.isArray(body) ? body : [body]).map(item => ({ id: 'sim-' + table + '-' + (++world.seq), created_at: new Date().toISOString(), ...item }));
++    rows.push(...inserted);
++    world.log.writes.push({ method, table, rows: inserted.length });
++    return inserted;
++  }
++  if (method === 'PATCH') {
++    for (const row of matches) Object.assign(row, body);
++    world.log.writes.push({ method, table, rows: matches.length, patch: Object.keys(body || {}) });
++    return matches;
++  }
++  throw new Error('HOMOLOG_BLOCKED: method ' + method + ' on ' + table);
++}
++
++function rpcError(message) {
++  const error = new Error('Request failed with status code 400');
++  error.response = { data: { message } };
++  return error;
++}
++
++// Turn lifecycle and delivery RPCs. They record the outcome the CORE checks for; they do not decide business rules.
++const RPC = {
++  magia_turn_lifecycle_status: () => ({ ready: true, contract: 'noria_turn_lifecycle_v1' }),
++  magia_turn_suppression_status: () => ({ contract: 'noria_turn_lifecycle_v1', evidence: {} }),
++  magia_contact_exclusion_status: () => ({ blocked: false }),
++  magia_commit_turn: (world, p) => {
++    const queue = world.tables.conversation_turn_queue.find(row => row.token === p.p_token && row.chat_id === CHAT_ID);
++    if (!queue || queue.phase !== 'claimed') throw rpcError('TURN_NOT_CLAIMED');
++    queue.phase = 'processing';
++    return { committed: true, contract: 'noria_turn_lifecycle_v1' };
++  },
++  magia_finish_turn: (world, p) => {
++    const queue = world.tables.conversation_turn_queue.find(row => row.chat_id === CHAT_ID);
++    if (queue) queue.phase = p.p_outcome === 'done' ? 'ready' : queue.phase;
++    return { finished: true, outcome: p.p_outcome, contract: 'noria_turn_lifecycle_v1', retry_queued: false };
++  },
++  magia_begin_turn_delivery: (world, p) => {
++    const queue = world.tables.conversation_turn_queue.find(row => row.token === p.p_token && row.chat_id === CHAT_ID);
++    if (!queue || queue.phase !== 'processing') throw rpcError('STALE_DELIVERY_ATTEMPT');
++    const attempt = { id: 'sim-attempt-' + (++world.seq), status: 'attempting', session_id: queue.session_id, chat_id: CHAT_ID, outbound_event_id: null };
++    world.tables.conversation_turn_delivery_attempts.push(attempt);
++    return { id: attempt.id, dispatch_allowed: true, contract: 'noria_turn_lifecycle_v1' };
++  },
++  magia_confirm_turn_delivery: (world, p) => {
++    const attempt = world.tables.conversation_turn_delivery_attempts.find(row => row.id === p.p_attempt);
++    if (!attempt || attempt.status !== 'attempting') throw rpcError('DELIVERY_ATTEMPT_NOT_OPEN');
++    attempt.status = 'confirmed';
++    attempt.outbound_event_id = p.p_outbound_event;
++    attempt.provider_message_id = p.p_provider_message;
++    return { confirmed: true, contract: 'noria_turn_lifecycle_v1' };
++  },
++  magia_sales_save: (world, p) => {
++    const existing = world.tables.sales_leads.find(row => row.chat_id === CHAT_ID);
++    const revision = existing ? existing.revision : 0;
++    if (Number(p.p_revision || 0) !== revision) throw rpcError('STALE_SALES_REVISION');
++    const interest = Boolean(existing?.interest_registered) || Boolean(p.p_register);
++    const row = Object.assign(existing || { id: 'sim-lead-' + (++world.seq), chat_id: CHAT_ID, tenant_id: TENANT_ID, channel_type: 'whatsapp', session_id: p.p_session }, {
++      revision: revision + 1, state: p.p_state, product_id: p.p_product?.id || null, stage_key: p.p_stage,
++      interest_registered: interest, updated_at: new Date().toISOString(),
++    });
++    if (!existing) world.tables.sales_leads.push(row);
++    world.log.writes.push({ method: 'RPC', table: 'sales_leads', rows: 1, rpc: 'magia_sales_save' });
++    return { id: row.id, revision: row.revision, stage_key: row.stage_key, hot: row.stage_key === 'sales_hot' };
++  },
++  // Side-effect RPCs: recorded, never executed.
++  magia_schedule_followups: (world, p) => { world.log.blocked.push({ rpc: 'magia_schedule_followups', payload: p }); return { scheduled: 0, blocked: true }; },
++  magia_cancel_followups_from_event: (world, p) => { world.log.blocked.push({ rpc: 'magia_cancel_followups_from_event', payload: p }); return { cancelled: 0, blocked: true }; },
++  magia_merge_channel_event_raw: (world, p) => ({ merged: true, event: p.p_event }),
++  magia_fail_turn: (world, p) => {
++    const queue = world.tables.conversation_turn_queue.find(row => row.chat_id === CHAT_ID);
++    world.log.failures.push({ error: p.p_error, retryable: p.p_retryable === true });
++    const outcome = p.p_retryable === true ? 'ready' : 'review';
++    if (queue) queue.phase = outcome;
++    return { finished: true, outcome, contract: 'noria_turn_lifecycle_v1', retry_queued: false };
++  },
++  magia_gemini_reserve: () => ({ allowed: true, mode: 'homolog_simulated', reservation_id: 'homolog' }),
++  magia_gemini_acquire: () => ({ allowed: true, mode: 'homolog_simulated', lease_id: 'homolog' }),
++  magia_gemini_release: () => ({ released: true }),
++};
++
++function sideEffectGuard(world, method, pathname) {
++  // Anything that would touch a human, an appointment or a WhatsApp conversation outside the simulated attempt.
++  if (method !== 'GET' && /magia_(appointment|reserve_appointment|reserve_session_appointment|command_router|operator)/.test(pathname)) {
++    world.log.blocked.push({ rpc: pathname.split('/').pop(), method });
++    throw new Error('HOMOLOG_BLOCKED: ' + pathname.split('/').pop() + ' is a side effect');
++  }
++}
++
++function supabaseRequest(world, method, url, body) {
++  const pathname = url.pathname, search = url.searchParams;
++  if (process.env.HOMOLOG_TRACE) console.error('TRACE', method, pathname, decodeURIComponent(url.search).slice(0, 220));
++  sideEffectGuard(world, method, pathname);
++  if (pathname.startsWith('/rest/v1/rpc/')) {
++    const name = pathname.slice('/rest/v1/rpc/'.length);
++    const handler = RPC[name];
++    if (!handler) { world.log.missing.push(name); throw new Error('HOMOLOG_MISSING_DEPENDENCY: no simulated RPC ' + name); }
++    world.log.writes.push({ method, rpc: name });
++    return handler(world, body || {});
++  }
++  if (pathname.startsWith('/rest/v1/')) return tableRequest(world, method, pathname.slice('/rest/v1/'.length), search, body);
++  throw new Error('HOMOLOG_BLOCKED: unsupported Supabase path ' + pathname);
++}
++
++function providerRequest(world, method, url, body) {
++  if (method !== 'POST' || !/^\/message\/sendText\//.test(url.pathname)) throw new Error('HOMOLOG_BLOCKED: provider ' + method + ' ' + url.pathname);
++  const text = String(body?.text || '');
++  const id = 'SIM-MSG-' + (++world.seq);
++  world.log.simulated_sends.push({ id, to: body?.number, text: text.slice(0, 200) });
++  return { key: { id } };
++}
++
++// Gemini boundary: the only request that can leave the process, and only in `real` mode with the homologation key.
++async function geminiRequest(world, url, body) {
++  const model = url.pathname.split('/models/')[1].split(':')[0];
++  const schema = body?.generationConfig?.responseSchema || {};
++  world.log.gemini.push({ model, schema_properties: Object.keys(schema.properties || {}).slice(0, 40), body });
++  if (world.mode === 'dry') throw new Error('HOMOLOG_DRY_RUN: Gemini request recorded, not sent');
++  if (world.mode === 'real') {
++    const response = await fetch(url.href, {
++      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': world.geminiKey },
++      body: JSON.stringify(body), signal: AbortSignal.timeout(45000),
++    });
++    const text = await response.text();
++    if (!response.ok) { const error = new Error('Request failed with status code ' + response.status); error.statusCode = response.status; throw error; }
++    return JSON.parse(text);
+   }
+-  return { name: scenario.name, outcome, failures };
++  // Fixtures: the primary dialogue call consumes the scenario's answer for that turn. Any other Gemini call (the
++  // auditor) consumes its own queue. An empty queue stops the run: a missing answer is a missing dependency.
++  const isPrimary = Boolean(schema.properties?.semantic_intent);
++  const queue = isPrimary ? world.responses.primary : world.responses.other;
++  const next = queue.shift();
++  if (!next) throw new Error('HOMOLOG_MISSING_DEPENDENCY: no canned Gemini answer left for this ' + (isPrimary ? 'primary' : 'auditor') + ' call (' + model + ')');
++  return next;
++}
++
++function makeHttpRequest(world) {
++  return async function homologHttpRequest(options = {}) {
++    const url = new URL(String(options.url || ''));
++    const method = String(options.method || 'GET').toUpperCase();
++    const body = options.body === undefined ? null : options.body;
++    if (url.hostname === SIM_SUPABASE) return supabaseRequest(world, method, url, body);
++    if (url.hostname === SIM_EVOLUTION) return providerRequest(world, method, url, body);
++    if (url.hostname === 'generativelanguage.googleapis.com') {
++      if (method !== 'POST' || !/^\/v1beta\/models\/[a-z0-9.\-]+:generateContent$/.test(url.pathname)) {
++        throw new Error('HOMOLOG_BLOCKED: only Gemini generateContent is reachable (' + method + ' ' + url.pathname + ')');
++      }
++      return geminiRequest(world, url, body);
++    }
++    throw new Error('HOMOLOG_BLOCKED: no route for host ' + url.hostname);
++  };
++}
++
++// ---------------------------------------------------------------------------------------------------------------------
++// Node execution. Each call runs the canonical file as an n8n Code node in a fresh VM realm.
++// ---------------------------------------------------------------------------------------------------------------------
++
++async function runNode(file, { json, phase = null, world }) {
++  assertDeclarations(file);
++  const source = fs.readFileSync(path.join(sourceRootFor(file), file), 'utf8');
++  const sandbox = {
++    console, Buffer, URL, URLSearchParams, JSON, Math, Date, Number, String, Boolean, Array, Object, Map, Set, Promise, Error, TypeError, RegExp,
++    encodeURIComponent, decodeURIComponent, setTimeout, clearTimeout, AbortSignal,
++    $json: JSON.parse(JSON.stringify(json)), $env: world.env, $vars: {}, $getWorkflowStaticData: () => ({}),
++  };
++  if (phase) sandbox.NORIA_NODE_PHASE = phase;
++  const context = vm.createContext(sandbox);
++  const script = new vm.Script('(async function () {\n' + source + '\n})', { filename: file });
++  const node = script.runInContext(context);
++  const result = await node.call({ helpers: { httpRequest: makeHttpRequest(world) } });
++  // An n8n Code node returns { json }; the CORE returns its phase result directly.
++  return result && typeof result === 'object' && Object.keys(result).length === 1 && 'json' in result ? result.json : result;
++}
++
++// ---------------------------------------------------------------------------------------------------------------------
++// One customer message through the real chain.
++// ---------------------------------------------------------------------------------------------------------------------
++
++async function runCustomerTurn(world, text, index, options = {}) {
++  const eventId = 'in-' + (index + 1);
++  const token = 'homolog-token-' + (index + 1), boundary = 'initial';
++  const createdAt = new Date(Date.now() - 1000 * (100 - index)).toISOString();
++  world.tables.channel_events.push({
++    id: eventId, tenant_id: TENANT_ID, tenant_slug: TENANT_SLUG, channel_type: 'whatsapp', external_conversation_id: CHAT_ID,
++    direction: 'inbound', sender_type: 'customer', message_text: text, created_at: createdAt, raw_payload: {}, service: 'sales_qualification',
++  });
++  const queueRow = world.tables.conversation_turn_queue.find(row => row.chat_id === CHAT_ID);
++  const messages = [{ id: eventId, event_id: eventId, text, direction: 'inbound', created_at: createdAt }];
++  if (queueRow) Object.assign(queueRow, { token, phase: 'claimed', session_id: boundary, messages, lease_until: new Date(Date.now() + 600000).toISOString() });
++  else world.tables.conversation_turn_queue.push({ tenant_id: TENANT_ID, channel_type: 'whatsapp', chat_id: CHAT_ID, token, phase: 'claimed', session_id: boundary, messages, lease_until: new Date(Date.now() + 600000).toISOString() });
++  const turn = { claimed: true, token, boundary_id: boundary, messages, contract: 'noria_turn_lifecycle_v1' };
++  const base = { tenant_slug: TENANT_SLUG, tenant_id: TENANT_ID, instance: INSTANCE, remoteJid: CHAT_ID, noria_extension: 'genesis', contactName: 'Cliente Homolog', messageId: eventId, messageText: text };
++  const identity = await runNode(IDENTITY_FILE, { json: { ...base, noria_contract_version: GENESIS_CONTRACT_VERSION }, world });
++  const verified = identity.noria_verified_settings;
++  // Bootstrap: the EXT builds the business context the CORE validates before the model is consulted.
++  const requestId = 'homolog:' + token;
++  const dispatch = { tenant_id: TENANT_ID, tenant_slug: TENANT_SLUG, session_id: boundary, request_id: requestId, turn: { token, boundary_id: boundary, grouped_messages: messages } };
++  const bootstrap = await runNode(EXT_FILE, { json: { ...base, noria_extension: 'genesis', noria_contract_version: GENESIS_CONTRACT_VERSION, noria_verified_settings: verified, operation: 'conversation.evaluate', payload: dispatch }, world });
++  const businessContext = bootstrap.noria_business_context;
++  // CORE prepare: sales context, the Gemini call (the real prompt and schema), the semantic validation and the plan.
++  const intermediate = await runNode(CORE_FILE, {
++    json: { ...base, noria_contract_version: GENESIS_CONTRACT_VERSION, noria_phase: 'prepare', noria_preclaimed_turn: turn, noria_business_context: businessContext, noria_verified_settings: verified, noria_client_policy: bootstrap.noria_client_policy },
++    phase: 'prepare', world,
++  });
++  if (intermediate.skipped) return { skipped: intermediate.reason || 'skipped', intermediate: null };
++  // EXT commercial decision on the validated contract, with the EXT's own authorised inventory.
++  const decided = await runNode(EXT_FILE, {
++    json: { ...intermediate, noria_verified_settings: verified, noria_client_policy: bootstrap.noria_client_policy, noria_phase: 'commercial_decision', operation: 'commercial.decide' }, world,
++  });
++  // CORE finalise: persistence through the simulated RPCs, delivery through the simulated provider, then the auditor.
++  // The hook exists for the checks only: it lets a check present a decision the CORE must refuse.
++  const decisionForCore = options.tamperDecision ? options.tamperDecision(decided) : decided;
++  const finalized = await runNode(CORE_FILE, { json: { ...decisionForCore }, phase: 'finalize', world });
++  return { intermediate, decided, finalized, sim_request_id: requestId, verified };
++}
++
++// ---------------------------------------------------------------------------------------------------------------------
++// Scenario runner. A scenario is a short dialogue with canned Gemini answers (fixtures) and expectations on the
++// observed effects, read back from the simulated tables. The expectations are on effects, not on the code.
++// ---------------------------------------------------------------------------------------------------------------------
++
++function observed(world) {
++  const lead = world.tables.sales_leads[0] || null;
++  const outbound = world.tables.channel_events.filter(row => row.direction === 'outbound').map(row => row.message_text);
++  return {
++    lead_state_intent: lead?.state?.intent ?? null,
++    lead_state_transaction_mode: lead?.state?.transaction_mode ?? null,
++    lead_product_id: lead?.state?.product_id ?? null,
++    lead_stage: lead?.stage_key ?? null,
++    lead_interest_registered: lead?.interest_registered ?? false,
++    follow_up_disposition: lead?.state?.follow_up_disposition ?? null,
++    simulated_sends: world.log.simulated_sends.length,
++    outbound_texts: outbound,
++    follow_up_calls_blocked: world.log.blocked.filter(item => /followups/.test(item.rpc)).map(item => item.rpc),
++    delivery_confirmed: world.tables.conversation_turn_delivery_attempts.some(row => row.status === 'confirmed'),
++    turn_failures: world.log.failures.map(item => item.error),
++    events: world.tables.channel_events.map(row => ({ dir: row.direction, provider: row.ai_provider || null, service: row.service || null, error: row.ai_error || null, text: String(row.message_text || '').slice(0, 60), payload_keys: Object.keys(row.raw_payload || {}).slice(0, 12) })),
++  };
+ }
+ 
+-// Runs one customer dialogue through the real pipeline. Each turn calls the workflow's salesGenerate once.
+-async function runDialogue(core, ext, dialogue, { mode, geminiKey, settingsFile }) {
+-  const log = { calls: [], recorded: [] };
+-  const settings = loadSettings(settingsFile);
+-  if (mode === 'real' && settings.synthetic) throw new Error('REAL_MODE_SYNTHETIC_SETTINGS: a real call needs the tenant settings snapshot');
+-  core.__homologTransport = makeTransport({ mode, geminiKey, log });
+-  vm.runInContext('httpJson = __homologTransport', core);
+-  const context = { tenant: { id: 'homolog-tenant', slug: TENANT_SLUG, name: 'Gênesis (homologação)' }, settings, channel: { config: {} } };
+-  const inventory = dialogue.inventory;
+-  const history = [];
+-  const lead = { state: {}, revision: 0, product: null };
+-  const turns = [];
+-  for (let index = 0; index < dialogue.turns.length; index += 1) {
+-    const message = { id: 'in-' + (index + 1), event_id: 'in-' + (index + 1), text: dialogue.turns[index].text, direction: 'inbound' };
+-    history.push({ id: message.id, direction: 'inbound', message_text: message.text, raw_payload: {}, created_at: new Date(Date.now() - 1000 * (dialogue.turns.length - index)).toISOString() });
+-    setTurn(core, { boundary_id: 'homolog-session', token: 'homolog-token-' + index, confirmed: [], messages: [message] });
+-    const entry = { customer: message.text, observed: {} };
+-    try {
+-      const generated = await vm.runInContext('salesGenerate', core)(context, history, inventory, [], {}, lead);
+-      entry.observed.gemini_text = generated.primary_reply;
+-      const plan = await vm.runInContext('salesPlanNaturalDialogue', core)(context, history, generated, lead, inventory, {});
+-      const semantic = plan.semantic_intent || generated.semantic_intent;
+-      entry.observed.semantic_valid = semantic?.valid === true;
+-      entry.observed.validation_errors = semantic?.validation_errors || [];
+-      entry.observed.primary_intent = semantic?.primary_intent;
+-      entry.observed.topics = semantic?.topics || [];
+-      entry.observed.references = semantic?.references ? { mentioned: semantic.references.mentioned_product_ids, product_references: semantic.references.product_references, role: semantic.references.product_role } : null;
+-      entry.observed.requests = (plan.requests || []).map(r => r.topic + '/' + r.subject);
+-      entry.observed.dialogue_offer = plan.offer?.action || 'none';
+-      // Selection the CORE would apply, and the EXT's own decision on the same validated contract.
+-      const choice = vm.runInContext('salesSemanticCatalogChoice', core)(semantic, history, inventory) || {};
+-      entry.observed.catalog_choice = { selected: choice.product?.id || null, interest: choice.interest_product?.id || null, reference: choice.reference_product?.id || null, ambiguous: !!choice.ambiguous };
+-      const resolved = ext.resolveSelection(semantic, inventory, { products: [] });
+-      entry.observed.ext_selection = resolved.product?.id || null;
+-      const turnProduct = choice.product || choice.interest_product || choice.reference_product || generated.product || null;
+-      const photo = ext.decideProductPhotoAction({
+-        tenant_id: 'homolog-tenant', session_id: 'homolog-session', turn: { token: 'homolog-token', messages: [{ event_id: message.id, id: message.id }] }, request_id: 'homolog-request-' + index,
+-        semantic_intent: semantic, dialogue_plan: { requests: plan.requests || [] }, product: turnProduct,
+-        state: { product_id: lead.state?.product_id || '' }, lead: {},
+-      }, inventory, settings.settings);
+-      entry.observed.photo = { status: photo.status, product: photo.product_id };
+-      // Auditor, deterministic part: the validator the workflow applies to the drafted reply.
+-      const audit = vm.runInContext('salesValidatePrimaryDialogue', core)(generated, plan, { active: false, ready: false, next_field: null }, {
+-        product: turnProduct, inventory, catalog_requested: false, photo_attachment: null,
+-        turn_text: message.text, fact_ledger: [], authorized_facts: [], assigned: false, photo_sent: false,
+-      });
+-      entry.observed.audit = { status: audit.status, issues: audit.issues };
+-      history.push({ id: 'out-' + (index + 1), direction: 'outbound', message_text: generated.primary_reply, ai_provider: 'sales_core', raw_payload: {}, created_at: new Date().toISOString() });
+-      // The state the workflow would persist (in memory only) is the state the next turn starts from. Without it,
+-      // continuity and topic-change scenarios would not be exercised.
+-      lead.state = JSON.parse(JSON.stringify(generated.state || {}));
+-      lead.product = generated.product || null;
+-    } catch (error) {
+-      entry.observed.stopped = String(error.message || error).slice(0, 220);
+-      turns.push(entry);
+-      break;
++async function runScenario(scenario, { mode, geminiKey, settings, inventory }) {
++  const world = createWorld({ mode, geminiKey, settings, inventory, scenarioResponses: { primary: scenario.turns.map(turn => cannedPrimaryBody(turn.gemini || {})), other: scenario.auditor_responses || [] } });
++  const steps = [];
++  try {
++    for (let index = 0; index < scenario.turns.length; index += 1) {
++      const text = scenario.turns[index].text;
++      const outcome = await runCustomerTurn(world, text, index, {});
++      const f = outcome.finalized || {};
++      steps.push({ customer: text, state: observed(world), final: { ok: f.ok ?? null, keys: Object.keys(f).slice(0, 30), cancelled: f.cancelled ?? null, reason: f.reason ?? null, silent: f.silent ?? null, review: f.review_required ?? null, error_code: f.error_code ?? null, delivery_ok: f.delivery_ok ?? null }, finalized_ok: outcome.finalized?.ok ?? null, skipped: outcome.skipped || null,
++        error_code: outcome.finalized?.error_code ?? null, decision_status: outcome.decided?.commercial_decision_status ?? null });
++      if (outcome.skipped) break;
++    }
++  } catch (error) {
++    const where = process.env.HOMOLOG_DEBUG ? String(error.stack).split('\n').slice(0, 6).join(' | ') : undefined;
++    steps.push({ stopped: String(error.message || error).slice(0, 240), where });
++  }
++  // Dry mode stops at the first Gemini request: there is no answer to judge, so no expectation is evaluated.
++  const failures = [];
++  if (mode !== 'dry') {
++    for (const [key, expected] of Object.entries(scenario.expect || {})) {
++      const got = steps.at(-1)?.state?.[key];
++      if (JSON.stringify(got) !== JSON.stringify(expected)) failures.push(key + ': expected ' + JSON.stringify(expected) + ', got ' + JSON.stringify(got));
+     }
+-    turns.push(entry);
+   }
+-  return { name: dialogue.name, turns, log: { gemini_calls: log.calls.length, recorded_requests: log.recorded.length, calls: log.calls, recorded: log.recorded } };
++  const recorded = mode === 'dry' ? world.log.gemini.map(item => ({ model: item.model, schema_properties: item.schema_properties, request_chars: JSON.stringify(item.body).length })) : [];
++  return { name: scenario.name, steps, failures, recorded, gemini_requests: world.log.gemini.length, missing: world.log.missing, world };
++}
++
++function loadSettings() {
++  return JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'genesis_settings_synthetic.json'), 'utf8'));
+ }
+ 
+ async function main() {
+   const args = Object.fromEntries(process.argv.slice(2).map(arg => arg.replace(/^--/, '').split('=')));
+-  const mode = args.mode || 'dry';
++  const mode = args.mode || 'fixtures';
+   if (!['fixtures', 'dry', 'real'].includes(mode)) throw new Error('unknown mode ' + mode);
+-  const core = loadDeclarations('n8n/sources/noria_core.js');
+-  const ext = loadDeclarations('n8n/sources/genesis_extension.js');
+-  if (mode === 'fixtures') {
+-    const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'genesis_scenarios.json'), 'utf8'));
+-    const results = fixtures.scenarios.map(scenario => fixtureScenario(core, ext, scenario));
+-    for (const result of results) {
+-      console.log((result.failures.length ? 'FAIL ' : 'PASS ') + result.name);
+-      for (const failure of result.failures) console.log('   ! ' + failure);
+-    }
+-    const failed = results.filter(result => result.failures.length).length;
+-    console.log('\n' + (results.length - failed) + '/' + results.length + ' fixture scenarios match (no network, no database).');
+-    process.exitCode = failed ? 1 : 0;
+-    return;
++  let geminiKey = null;
++  if (mode === 'real') {
++    const env = process.env;
++    if (env.HOMOLOG_GEMINI_AUTHORIZED !== '1') throw new Error('REAL_MODE_NOT_AUTHORIZED: set HOMOLOG_GEMINI_AUTHORIZED=1 to allow real calls');
++    if (!env.HOMOLOG_GEMINI_KEY) throw new Error('REAL_MODE_KEY_MISSING: HOMOLOG_GEMINI_KEY is required');
++    if (env.GEMINI_API_KEY && env.HOMOLOG_GEMINI_KEY === env.GEMINI_API_KEY) throw new Error('REAL_MODE_KEY_REFUSED: the homologation key must not be the production GEMINI_API_KEY');
++    if (!env.HOMOLOG_SETTINGS_SNAPSHOT) throw new Error('REAL_MODE_SNAPSHOT_MISSING: HOMOLOG_SETTINGS_SNAPSHOT must point to a read-only export of the tenant settings');
++    geminiKey = env.HOMOLOG_GEMINI_KEY;
+   }
+-  const gate = gateFor(mode, process.env);
+-  const dialoguesFile = args.dialogues || path.join(__dirname, 'fixtures', 'genesis_dialogues.json');
+-  const dialogueFile = JSON.parse(fs.readFileSync(dialoguesFile, 'utf8'));
+-  const dialogues = dialogueFile.dialogues.map(dialogue => ({ ...dialogue, inventory: dialogue.inventory || dialogueFile.inventory }));
+-  const report = [];
+-  for (const dialogue of dialogues) {
+-    const result = await runDialogue(core, ext, dialogue, { mode, geminiKey: gate.geminiKey, settingsFile: process.env.HOMOLOG_SETTINGS_SNAPSHOT || '' });
+-    report.push(result);
+-    console.log('\n== ' + result.name + '  (gemini calls: ' + result.log.gemini_calls + ', recorded: ' + result.log.recorded_requests + ')');
+-    result.turns.forEach((turn, i) => console.log('  [' + (i + 1) + '] ' + turn.customer + '\n      ' + JSON.stringify(turn.observed)));
++  for (const file of [CORE_FILE, EXT_FILE, IDENTITY_FILE]) assertDeclarations(file);
++  const settings = mode === 'real' ? JSON.parse(fs.readFileSync(process.env.HOMOLOG_SETTINGS_SNAPSHOT, 'utf8')) : loadSettings();
++  const file = JSON.parse(fs.readFileSync(args.scenarios || path.join(__dirname, 'fixtures', 'genesis_scenarios.json'), 'utf8'));
++  const results = [];
++  for (const scenario of file.scenarios) {
++    const result = await runScenario(scenario, { mode, geminiKey, settings, inventory: file.inventory });
++    results.push(result);
++    if (mode === 'dry') {
++      console.log('DRY ' + result.name + '  (recorded Gemini requests: ' + result.recorded.length + ')');
++      for (const request of result.recorded) console.log('    ' + JSON.stringify(request));
++      if (result.steps.at(-1)?.stopped) console.log('    stopped after recording: ' + result.steps.at(-1).stopped);
++      continue;
++    }
++    console.log((result.failures.length ? 'FAIL ' : 'PASS ') + result.name + '  (gemini requests: ' + result.gemini_requests + ')');
++    for (const step of result.steps) console.log('    ' + JSON.stringify(step).slice(0, 600));
++    for (const failure of result.failures) console.log('    ! ' + failure);
++    if (result.missing.length) console.log('    missing dependencies: ' + result.missing.join(', '));
+   }
+-  // The recorded requests (dry mode) are written outside the repository only when an explicit path is given.
+-  if (args.out) fs.writeFileSync(args.out, JSON.stringify(report, null, 2));
+-  process.exitCode = 0;
++  const failed = results.filter(result => result.failures.length).length;
++  if (mode === 'dry') console.log('\n' + results.length + ' dialogues recorded up to the first Gemini request. Nothing was sent.');
++  else console.log('\n' + (results.length - failed) + '/' + results.length + ' scenarios match (mode: ' + mode + ').');
++  if (args.out) fs.writeFileSync(args.out, JSON.stringify(results.map(({ world, ...rest }) => rest), null, 2));
++  process.exitCode = failed ? 1 : 0;
+ }
+ 
+ if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 2; });
+-module.exports = { loadDeclarations, contractDefaults, makeTransport, gateFor };
++module.exports = { runNode, createWorld, makeHttpRequest, assertDeclarations, observed, runCustomerTurn, runScenario, sourceRootFor, cannedPrimaryBody, loadSettings, REQUIRED_DECLARATIONS, RPC, TENANT_ID, CHAT_ID, CORE_FILE, EXT_FILE, IDENTITY_FILE, GENESIS_CONTRACT_VERSION };
+diff --git a/scripts/homolog/p1_behavioural_checks.cjs b/scripts/homolog/p1_behavioural_checks.cjs
+new file mode 100644
+index 0000000..c901528
+--- /dev/null
++++ b/b/scripts/homolog/p1_behavioural_checks.cjs
+@@ -0,0 +1,163 @@
++// Behavioural checks for the five P1 defects of the Gênesis audit. They run the real CORE and EXT code through the
++// homologation executor and read the effects back from the simulated database and provider. They are not regex
++// checks on the source.
++//
++//   node scripts/homolog/p1_behavioural_checks.cjs
++//
++// Before/after comparison: HOMOLOG_SOURCE_ROOT=<snapshot of the earlier sources> runs the same checks on that snapshot.
++// P1-04 also needs HOMOLOG_PREVIOUS_SOURCE_ROOT (a snapshot with the previous contract version) for the mixed-version runs.
++
++'use strict';
++
++const fs = require('node:fs');
++const os = require('node:os');
++const path = require('node:path');
++const vm = require('node:vm');
++const cp = require('node:child_process');
++const ts = require(path.resolve(__dirname, '../../app/node_modules/typescript'));
++const exec = require('./genesis_executor.cjs');
++
++const scenarios = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'genesis_scenarios.json'), 'utf8'));
++const byName = prefix => scenarios.scenarios.find(item => item.name.startsWith(prefix));
++const settings = exec.loadSettings();
++const results = [];
++const record = (id, name, ok, detail) => results.push({ id, name, ok: Boolean(ok), detail });
++
++// What stopped a turn, read from the turn itself: a thrown error, or the failure the CORE recorded on the turn.
++function refusal(result) {
++  const step = result.steps[0] || {};
++  return step.stopped || step.state?.turn_failures?.[0] || step.final?.error_code || 'no refusal';
++}
++
++function run(scenario) {
++  return exec.runScenario(scenario, { mode: 'fixtures', geminiKey: null, settings, inventory: scenarios.inventory });
++}
++
++// Evaluates the EXT's own function as written in the EXT source, so the EXT rule is tested exactly as deployed.
++function extFunction(name) {
++  const file = path.join(exec.sourceRootFor(exec.EXT_FILE), exec.EXT_FILE);
++  const source = fs.readFileSync(file, 'utf8');
++  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
++  const node = ast.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === name);
++  if (!node) return null;
++  const context = vm.createContext({});
++  vm.runInContext(node.getText(ast), context);
++  return vm.runInContext(name, context);
++}
++
++// Runs the same single-turn scenario with a given decision adjustment and returns what the CORE did with it.
++async function finaliseWith(tamperDecision) {
++  const world = exec.createWorld({ mode: 'fixtures', geminiKey: null, settings, inventory: scenarios.inventory,
++    scenarioResponses: { primary: [exec.cannedPrimaryBody({ reply: 'Quer conhecer a CG 160?', semantic_intent: { primary_intent: 'purchase', topics: ['inventory'], catalog: { requested: true, evidence_ids: ['in-1'] }, confidence: 'high' } })], other: [] } });
++  let error = null, finalized = null;
++  try { ({ finalized } = await exec.runCustomerTurn(world, 'Quero a CG 160.', 0, { tamperDecision })); } catch (caught) { error = String(caught.message || caught); }
++  // The CORE isolates a turn failure: it is recorded on the turn and returned, not always thrown. Both are evidence.
++  error = error || finalized?.error_code || world.log.failures.map(item => item.error).join(',') || null;
++  return { error, delivered: world.log.simulated_sends.length, sales_saved: world.tables.sales_leads.length };
++}
++
++async function main() {
++  // P1-01: a contract that does not validate changes neither the intent nor the transaction mode.
++  {
++    const r = await run(byName('P1-01'));
++    const after = r.steps[1]?.state || {};
++    record('P1-01', 'invalid contract keeps the persisted intent and transaction mode',
++      after.lead_state_intent === 'buy' && after.lead_state_transaction_mode === 'buy' && !r.steps[1].stopped,
++      { intent: after.lead_state_intent, transaction_mode: after.lead_state_transaction_mode, stopped: r.steps[1].stopped || null });
++  }
++
++  // P1-02: evidence from an earlier message identifies a product, but does not authorise a new selection.
++  {
++    const currentTurnSemantic = extFunction('currentTurnSemantic');
++    const semantic = { valid: true, references: { product_role: 'selected', evidence_ids: ['in-1'], product_references: [{ product_id: 'p', role: 'selected', evidence_ids: ['in-1'] }] },
++      customer_disposition: { value: 'active', evidence_ids: [] }, offer_response: { value: 'none', evidence_ids: [], offer_ref: '' } };
++    const oldOnly = currentTurnSemantic ? currentTurnSemantic(semantic, [{ id: 'in-2', event_id: 'in-2' }]) : null;
++    const currentToo = currentTurnSemantic ? currentTurnSemantic(semantic, [{ id: 'in-1', event_id: 'in-1' }]) : null;
++    const r = await run(byName('P1-02'));
++    record('P1-02', 'an old message cannot select a product (EXT guard and end-to-end)',
++      Boolean(currentTurnSemantic) && oldOnly.references.product_role === 'mentioned' && oldOnly.references.product_references[0].role === 'mentioned'
++      && currentToo.references.product_role === 'selected' && (r.steps[1]?.state.lead_product_id ?? '') === '',
++      { ext_guard_declared: Boolean(currentTurnSemantic), ext_old_role: oldOnly?.references.product_role ?? null, ext_current_role: currentToo?.references.product_role ?? null, lead_product_id: r.steps[1]?.state.lead_product_id });
++  }
++
++  // P1-03: declined, closed_by_customer and deferred_by_customer are consumed from the validated contract.
++  {
++    const declined = await run(byName('P1-03 '));
++    const deferred = await run(byName('P1-03b'));
++    const closed = await run(byName('P1-03c'));
++    const value = r => r.steps.at(-1)?.state.follow_up_disposition;
++    record('P1-03', 'declined, closed_by_customer and deferred_by_customer are applied',
++      value(declined) === 'declined' && value(deferred) === 'deferred_by_customer' && value(closed) === 'closed_by_customer',
++      { declined: value(declined), deferred: value(deferred), closed: value(closed) });
++  }
++
++  // P1-04: a CORE and an EXT of different versions never execute a commercial action.
++  {
++    const previous = process.env.HOMOLOG_PREVIOUS_SOURCE_ROOT;
++    let newCoreOldExt = 'skipped: HOMOLOG_PREVIOUS_SOURCE_ROOT not set', oldCoreNewExt = 'skipped: HOMOLOG_PREVIOUS_SOURCE_ROOT not set';
++    if (previous) {
++      // Current CORE with the previous EXT: the EXT identity check refuses the request before any decision.
++      process.env.HOMOLOG_EXT_SOURCE_ROOT = previous;
++      newCoreOldExt = refusal(await run(byName('P1-01')));
++      delete process.env.HOMOLOG_EXT_SOURCE_ROOT;
++      // Previous CORE with the current EXT: the EXT refuses the CORE's contract version before any commercial effect.
++      process.env.HOMOLOG_CORE_SOURCE_ROOT = previous;
++      oldCoreNewExt = refusal(await run(byName('P1-01')));
++      delete process.env.HOMOLOG_CORE_SOURCE_ROOT;
++    }
++    // Current CORE and EXT, but a decision carrying another provenance or version: the CORE refuses to finalise.
++    const tampered = {
++      provenance_v3: await finaliseWith(d => ({ ...d, commercial_decision: { ...d.commercial_decision, provenance: 'genesis_extension_commercial_decide_v3' } })),
++      contract_version_1: await finaliseWith(d => ({ ...d, commercial_decision: { ...d.commercial_decision, noria_contract_version: '1.0' } })),
++    };
++    const refused = Object.values(tampered).every(item => item.error && /COMMERCIAL_(DECISION|CONTRACT)/.test(item.error) && item.delivered === 0 && item.sales_saved === 0);
++    const mixedRefused = !previous || (/NORIA_EXTENSAO_TENANT_INCORRETO/.test(newCoreOldExt) && /COMMERCIAL_CONTRACT_VERSION_MISMATCH/.test(oldCoreNewExt));
++    record('P1-04', 'a decision or request of another contract version is refused before any commercial effect',
++      refused && mixedRefused, { tampered, new_core_old_ext: newCoreOldExt, old_core_new_ext: oldCoreNewExt });
++  }
++
++  // P1-05: the executor walks the real pipeline, stops on a missing dependency, and blocks every external effect.
++  {
++    const walk = await run(byName('P1-01'));
++    const step = walk.steps[0];
++    const walked = step.decision_status === 'ok' && step.final?.ok === true && step.state.delivery_confirmed === true && step.state.simulated_sends === 1;
++    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'noria-missing-'));
++    fs.mkdirSync(path.join(tmp, 'n8n', 'sources'), { recursive: true });
++    const coreSource = fs.readFileSync(path.join(exec.sourceRootFor(exec.CORE_FILE), exec.CORE_FILE), 'utf8').replace('function salesGenerate(', 'function salesGenerateRemoved(');
++    fs.writeFileSync(path.join(tmp, exec.CORE_FILE), coreSource);
++    process.env.HOMOLOG_CORE_SOURCE_ROOT = tmp;
++    let missingMessage = null;
++    try { exec.assertDeclarations(exec.CORE_FILE); } catch (error) { missingMessage = String(error.message); }
++    delete process.env.HOMOLOG_CORE_SOURCE_ROOT;
++    fs.rmSync(tmp, { recursive: true, force: true });
++    const world = exec.createWorld({ mode: 'fixtures', geminiKey: null, settings, inventory: scenarios.inventory, scenarioResponses: { primary: [], other: [] } });
++    const http = exec.makeHttpRequest(world);
++    const attempt = async options => { try { await http(options); return 'allowed'; } catch (error) { return String(error.message).split(':')[0]; } };
++    const unknownTable = await attempt({ method: 'GET', url: 'https://homolog-supabase.invalid/rest/v1/tabela_inexistente' });
++    const unknownRpc = await attempt({ method: 'POST', url: 'https://homolog-supabase.invalid/rest/v1/rpc/magia_inexistente' });
++    const externalWhatsApp = await attempt({ method: 'POST', url: 'https://graph.facebook.com/v20.0/message' });
++    const externalSupabase = await attempt({ method: 'GET', url: 'https://example-project.supabase.co/rest/v1/tenants' });
++    const countTokens = await attempt({ method: 'POST', url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:countTokens', body: {} });
++    const env = { ...process.env };
++    delete env.HOMOLOG_GEMINI_AUTHORIZED; delete env.HOMOLOG_GEMINI_KEY;
++    const real = cp.spawnSync(process.execPath, [path.join(__dirname, 'genesis_executor.cjs'), '--mode=real'], { env, encoding: 'utf8' });
++    const gated = real.status !== 0 && /REAL_MODE_NOT_AUTHORIZED/.test(real.stderr + real.stdout);
++    const blocked = unknownTable === 'HOMOLOG_MISSING_DEPENDENCY' && unknownRpc === 'HOMOLOG_MISSING_DEPENDENCY'
++      && externalWhatsApp === 'HOMOLOG_BLOCKED' && externalSupabase === 'HOMOLOG_BLOCKED' && countTokens === 'HOMOLOG_BLOCKED';
++    record('P1-05', 'executor walks prepare, EXT decision, finalize and delivery; stops on missing dependencies; blocks external effects',
++      walked && /HOMOLOG_MISSING_DEPENDENCY/.test(missingMessage || '') && blocked && gated,
++      { walked_chain: walked, missing_declaration: missingMessage ? missingMessage.slice(0, 100) : null,
++        transport: { unknownTable, unknownRpc, externalWhatsApp, externalSupabase, countTokens }, real_mode_gate: gated });
++  }
++
++  let failed = 0;
++  for (const item of results) {
++    if (!item.ok) failed += 1;
++    console.log((item.ok ? 'PASS ' : 'FAIL ') + item.id + '  ' + item.name);
++    console.log('       ' + JSON.stringify(item.detail).slice(0, 700));
++  }
++  console.log('\n' + (results.length - failed) + '/' + results.length + ' P1 behavioural checks pass.');
++  process.exitCode = failed ? 1 : 0;
++}
++
++main().catch(error => { console.error(error.stack || error.message); process.exitCode = 2; });
+diff --git a/scripts/homolog/fixtures/genesis_scenarios.json b/scripts/homolog/fixtures/genesis_scenarios.json
+new file mode 100644
+index 0000000..bab8231
+--- /dev/null
++++ b/b/scripts/homolog/fixtures/genesis_scenarios.json
+@@ -0,0 +1,335 @@
++{
++  "description": "Short synthetic dialogues run through the real pipeline (CORE prepare, EXT commercial.decide, CORE finalize). The customer text is synthetic; the Gemini answers are canned, shaped like the dialogue schema, and state the interpretation the scenario tests. The expectations are on what the simulated database and provider record, not on the code.",
++  "inventory": [
++    {
++      "id": "chevrolet|corsa|2009|",
++      "brand": "CHEVROLET",
++      "model": "CORSA",
++      "year": 2009,
++      "status": "listed",
++      "offerable": true,
++      "availability_verified": true,
++      "price_cents": 1000000,
++      "color": "PRATA",
++      "fuel": "FLEX",
++      "km": 120000
++    },
++    {
++      "id": "chevrolet|montana|2018|",
++      "brand": "CHEVROLET",
++      "model": "MONTANA",
++      "year": 2018,
++      "status": "listed",
++      "offerable": true,
++      "availability_verified": true,
++      "price_cents": 9900000,
++      "color": "BRANCA",
++      "fuel": "FLEX",
++      "km": 60000
++    },
++    {
++      "id": "honda|cg160|2018|",
++      "brand": "HONDA",
++      "model": "CG 160",
++      "year": 2018,
++      "status": "listed",
++      "offerable": true,
++      "availability_verified": true,
++      "price_cents": 800000,
++      "color": "VERMELHA",
++      "fuel": "GASOLINA",
++      "km": 15000
++    },
++    {
++      "id": "yamaha|crosser|2023|",
++      "brand": "YAMAHA",
++      "model": "CROSSER",
++      "year": 2023,
++      "status": "announced",
++      "offerable": false,
++      "availability_verified": false,
++      "price_cents": 1798000,
++      "color": null,
++      "fuel": null,
++      "km": 64000
++    }
++  ],
++  "scenarios": [
++    {
++      "name": "S0 social greeting, valid contract: no state change, no commercial action",
++      "turns": [
++        {
++          "text": "Oi",
++          "gemini": {
++            "reply": "Olá! Como posso ajudar?",
++            "semantic_intent": {
++              "primary_intent": "other",
++              "topics": [
++                "greeting"
++              ],
++              "confidence": "high"
++            }
++          }
++        }
++      ],
++      "expect": {
++        "lead_interest_registered": false,
++        "lead_product_id": ""
++      }
++    },
++    {
++      "name": "P1-01 invalid contract does not change intent or transaction mode",
++      "turns": [
++        {
++          "text": "Quero comprar uma Montana.",
++          "gemini": {
++            "reply": "Claro! Temos a Montana 2018 disponível.",
++            "semantic_intent": {
++              "primary_intent": "purchase",
++              "topics": [
++                "inventory"
++              ],
++              "catalog": {
++                "requested": true,
++                "evidence_ids": [
++                  "in-1"
++                ]
++              },
++              "confidence": "high"
++            },
++            "state": {
++              "intent": "buy",
++              "transaction_mode": "buy"
++            }
++          }
++        },
++        {
++          "text": "oi",
++          "gemini": {
++            "contract": "invalid",
++            "reply": "Oi!",
++            "semantic_intent": {
++              "primary_intent": "sale"
++            },
++            "state": {
++              "intent": "sell",
++              "transaction_mode": "sell"
++            }
++          }
++        }
++      ],
++      "expect": {
++        "lead_state_intent": "buy",
++        "lead_state_transaction_mode": "buy"
++      }
++    },
++    {
++      "name": "P1-02 a greeting cannot select a product through an old message",
++      "turns": [
++        {
++          "text": "Quero a CG 160.",
++          "gemini": {
++            "reply": "Quer saber mais sobre a CG 160?",
++            "semantic_intent": {
++              "primary_intent": "product_details",
++              "topics": [
++                "product_details"
++              ],
++              "references": {
++                "mentioned_product_ids": [
++                  "honda|cg160|2018|"
++                ],
++                "evidence_ids": [
++                  "in-1"
++                ],
++                "product_role": "mentioned",
++                "product_references": [
++                  {
++                    "product_id": "honda|cg160|2018|",
++                    "role": "mentioned",
++                    "evidence_ids": [
++                      "in-1"
++                    ]
++                  }
++                ]
++              },
++              "confidence": "high"
++            }
++          }
++        },
++        {
++          "text": "oi",
++          "gemini": {
++            "reply": "Oi! Tudo bem?",
++            "semantic_intent": {
++              "primary_intent": "other",
++              "topics": [
++                "greeting"
++              ],
++              "references": {
++                "mentioned_product_ids": [
++                  "honda|cg160|2018|"
++                ],
++                "evidence_ids": [
++                  "in-1"
++                ],
++                "product_role": "selected",
++                "product_references": [
++                  {
++                    "product_id": "honda|cg160|2018|",
++                    "role": "selected",
++                    "evidence_ids": [
++                      "in-1"
++                    ]
++                  }
++                ]
++              },
++              "confidence": "high"
++            }
++          }
++        }
++      ],
++      "expect": {
++        "lead_product_id": ""
++      }
++    },
++    {
++      "name": "P1-03 declined disposition from this message is applied; an old one is not",
++      "turns": [
++        {
++          "text": "Quero a CG 160.",
++          "gemini": {
++            "reply": "Quer conhecer a CG 160?",
++            "semantic_intent": {
++              "primary_intent": "purchase",
++              "topics": [
++                "inventory"
++              ],
++              "catalog": {
++                "requested": true,
++                "evidence_ids": [
++                  "in-1"
++                ]
++              },
++              "confidence": "high"
++            }
++          }
++        },
++        {
++          "text": "Não tenho mais interesse, obrigado.",
++          "gemini": {
++            "reply": "Tudo bem! Se precisar, estamos à disposição.",
++            "semantic_intent": {
++              "primary_intent": "other",
++              "topics": [
++                "other"
++              ],
++              "customer_disposition": {
++                "value": "declined",
++                "evidence_ids": [
++                  "in-2"
++                ]
++              },
++              "confidence": "high"
++            }
++          }
++        }
++      ],
++      "expect": {
++        "follow_up_disposition": "declined"
++      }
++    },
++    {
++      "name": "P1-03b deferral from this message is applied and does not reopen the exchange",
++      "turns": [
++        {
++          "text": "Quero a CG 160.",
++          "gemini": {
++            "reply": "Quer conhecer a CG 160?",
++            "semantic_intent": {
++              "primary_intent": "purchase",
++              "topics": [
++                "inventory"
++              ],
++              "catalog": {
++                "requested": true,
++                "evidence_ids": [
++                  "in-1"
++                ]
++              },
++              "confidence": "high"
++            }
++          }
++        },
++        {
++          "text": "Vou pensar com calma e depois eu falo com vocês.",
++          "gemini": {
++            "reply": "Combinado, sem pressa.",
++            "semantic_intent": {
++              "primary_intent": "other",
++              "topics": [
++                "other"
++              ],
++              "customer_disposition": {
++                "value": "deferred_by_customer",
++                "evidence_ids": [
++                  "in-2"
++                ]
++              },
++              "confidence": "high"
++            }
++          }
++        }
++      ],
++      "expect": {
++        "follow_up_disposition": "deferred_by_customer"
++      }
++    },
++    {
++      "name": "P1-03c closure from this message is applied",
++      "turns": [
++        {
++          "text": "Quero a CG 160.",
++          "gemini": {
++            "reply": "Quer conhecer a CG 160?",
++            "semantic_intent": {
++              "primary_intent": "purchase",
++              "topics": [
++                "inventory"
++              ],
++              "catalog": {
++                "requested": true,
++                "evidence_ids": [
++                  "in-1"
++                ]
++              },
++              "confidence": "high"
++            }
++          }
++        },
++        {
++          "text": "Obrigado, era só isso, pode encerrar.",
++          "gemini": {
++            "reply": "Por nada!",
++            "semantic_intent": {
++              "primary_intent": "other",
++              "topics": [
++                "other"
++              ],
++              "customer_disposition": {
++                "value": "closed_by_customer",
++                "evidence_ids": [
++                  "in-2"
++                ]
++              },
++              "confidence": "high"
++            }
++          }
++        }
++      ],
++      "expect": {
++        "follow_up_disposition": "closed_by_customer"
++      }
++    }
++  ]
++}
+diff --git a/scripts/homolog/fixtures/genesis_settings_synthetic.json b/scripts/homolog/fixtures/genesis_settings_synthetic.json
+new file mode 100644
+index 0000000..fd80812
+--- /dev/null
++++ b/b/scripts/homolog/fixtures/genesis_settings_synthetic.json
+@@ -0,0 +1,53 @@
++{
++  "_note": "SYNTHETIC tenant settings for the homologation fixtures only. Not the tenant's configuration. Real mode requires HOMOLOG_SETTINGS_SNAPSHOT (a read-only export).",
++  "whatsapp_processing_mode": "conversation_core_v1",
++  "conversation_capability": "sales_v1",
++  "grounding_mode": "canonical_v2",
++  "ai_model": "gemini-2.5-flash-lite",
++  "system_prompt": "SYNTHETIC PLACEHOLDER: the tenant prompt is not part of the fixtures.",
++  "ai_enabled": true,
++  "follow_up_enabled": true,
++  "whatsapp_audio_enabled": false,
++  "appointment_scheduling": { "enabled": false },
++  "approved_messages": { "enabled": false },
++  "sales_follow_up": { "enabled": true },
++  "sales": {
++    "stage_keys": {
++      "initial": "sales_new",
++      "qualifying": "sales_qualifying",
++      "hot": "sales_hot",
++      "human": "sales_human",
++      "appraisal": "sales_appraisal",
++      "after_sales": "sales_after_sales"
++    },
++    "stages": {
++      "sales_new": { "label": "Novo", "role": "initial", "requires_human": false },
++      "sales_qualifying": { "label": "Qualificando", "role": "qualifying", "requires_human": false },
++      "sales_hot": { "label": "Quente", "role": "hot", "requires_human": true },
++      "sales_human": { "label": "Atendimento humano", "role": "human", "requires_human": true },
++      "sales_appraisal": { "label": "Avaliação", "role": "appraisal", "requires_human": false },
++      "sales_after_sales": { "label": "Pós-venda", "role": "after_sales", "requires_human": false }
++    },
++    "whatsapp_catalog_photo_enabled": false,
++    "vehicle_photos_enabled": false,
++    "whatsapp_catalog_sync_enabled": false
++  },
++  "sdr_rules": {
++    "hot_lead_percent": 80,
++    "minimum_purchase_year": null,
++    "rejected_purchase_brands": [],
++    "preferred_purchase_models": [],
++    "warranty_response": "",
++    "document_processing": {}
++  },
++  "business_facts": {
++    "name": "Gênesis (homologação)",
++    "payment_methods": [],
++    "vehicle_appraisal": { "enabled": false },
++    "financing": { "offered_by_business": false },
++    "trade_in_policy": { "accepted_subject_to_appraisal": false },
++    "opening_hours": {},
++    "locations": [],
++    "vehicle_types": ["car", "motorcycle"]
++  }
++}
+diff --git a/n8n/RUNBOOK_GENESIS_CONTRACT_V2.md b/n8n/RUNBOOK_GENESIS_CONTRACT_V2.md
+new file mode 100644
+index 0000000..a5de3c8
+--- /dev/null
++++ b/b/n8n/RUNBOOK_GENESIS_CONTRACT_V2.md
+@@ -0,0 +1,78 @@
++# Gênesis — publicação coordenada do contrato CORE ↔ EXT v2.0 e rollback
++
++Status: **preparado, não publicado**. Nenhum workflow foi publicado. Este runbook só pode ser executado com autorização
++explícita do responsável pela operação.
++
++## 1. O que muda no contrato
++
++| Ponto | Antes (contrato 1.0) | Agora (contrato 2.0) |
++|---|---|---|
++| Versão enviada pelo CORE ao EXT (`noria_contract_version`) | `1.0` | `2.0` (somente tenant `wesley_automoveis`; Núbia continua `1.0`) |
++| Identidade do nó EXT (`genesis_tenant_identity.js`) | aceita `1.0` | aceita `2.0` |
++| Decisão comercial da EXT (`provenance`) | `genesis_extension_commercial_decide_v3` | `genesis_extension_commercial_decide_v4`, com `noria_contract_version: '2.0'` |
++| Verificação no CORE (`commercialDecisionAuthoritative`) | provenance `v3` | provenance `v4` **e** `noria_contract_version === '2.0'` |
++
++Consequência por combinação (verificada no executor, `scripts/homolog/p1_behavioural_checks.cjs`, P1-04):
++
++- CORE novo (2.0) + EXT antiga (1.0): a identidade da EXT recusa (`NORIA_EXTENSAO_TENANT_INCORRETO`). Nenhuma decisão comercial.
++- CORE antigo (1.0) + EXT nova (2.0): a EXT recusa na decisão (`COMMERCIAL_CONTRACT_VERSION_MISMATCH`). Nenhuma decisão comercial.
++- Decisão com provenance v3 ou versão 1.0 apresentada ao CORE novo: `COMMERCIAL_DECISION_PROVENANCE_INVALID`. Nada é entregue nem gravado.
++
++Em todas as combinações a falha ocorre antes de qualquer efeito: sem envio, sem `magia_sales_save`, sem follow-up.
++
++## 2. Pré-condições (todas obrigatórias)
++
++1. Auditoria independente do Codex sobre o diff entregue aprovada.
++2. `node scripts/homolog/p1_behavioural_checks.cjs` → 5/5. `node scripts/homolog/genesis_executor.cjs --mode=fixtures` → 6/6.
++3. Harness `scripts/test_noria_primary_dialogue.cjs`: 11 aprovados e os mesmos 4 reprovados do HEAD. Nenhum novo.
++4. Artefatos gerados de `node scripts/build_noria_workflows.cjs` conferidos: `n8n/build_manifest.json` com `production_approved: false` antes da publicação, e o hash do EXT do workflow igual ao do fonte.
++5. **Exportação somente leitura do workflow ao vivo** (CORE e EXT) guardada como artefato de rollback. O git não é a referência de rollback: a versão em produção pode diferir do HEAD.
++6. Fila do chat Gênesis sem turnos em `claimed`, `processing` ou `sending`. Turnos em `review` e `uncertain` não são tocados.
++7. Janela com baixo tráfego. A lacuna entre as duas publicações falha os turnos novos de forma explícita e sem envio (ver seção 3).
++
++## 3. Ordem de publicação (uma única janela)
++
++1. Publicar o workflow **EXT Gênesis** (identidade aceita `2.0`, decisão v4).
++2. Imediatamente depois, publicar o workflow **CORE** (envia `2.0`, verifica v4).
++3. Verificar, antes de liberar tráfego: um turno de teste sem envio real; `noria_contract_version` `2.0` no intermediário; provenance v4 na decisão.
++
++Durante a lacuna (entre 1 e 2), um turno que atravesse os dois workflows é recusado **antes de qualquer envio**:
++
++- Se o CORE novo recebe decisão da EXT antiga, o nó de identidade da EXT lança erro e o CORE não finaliza. O turno segue o que a fila faz com um nó que falhou (lease e recuperação existentes). **Este caminho não foi verificado contra a fila real**: no executor, a identidade recusa e o turno para. Confirmar o estado final na fila antes de publicar.
++- Se o CORE antigo envia 1.0 à EXT nova, a EXT recusa com `COMMERCIAL_CONTRACT_VERSION_MISMATCH` e o CORE registra a falha no turno, sem envio (verificado no executor: o evento técnico é gravado sem texto e `simulated_sends` fica em 0).
++
++Em ambos os casos **não há reprocessamento automático**.
++
++## 4. Turnos em andamento
++
++- Turnos já decididos pela versão antiga e finalizados pela nova são recusados por versão. Eles seguem o caminho de falha; não há reenvio automático.
++- `uncertain`: não reenviar. Decisão operacional caso a caso.
++- `review`: não manipular os tickets.
++- Não executar SQL de alteração para esta publicação.
++
++## 5. Efeito sobre follow-ups (decisão pendente)
++
++A correção P1-03 torna **efetivas** as disposições `declined`, `closed_by_customer` e `deferred_by_customer` para a Gênesis.
++Antes elas nunca eram aplicadas (assinatura incompatível). Ao ativar:
++
++- `deferred_by_customer` e `declined` chamam `cancelPendingFollowUps` no turno em que o cliente manifesta a disposição.
++- Há 46 jobs de follow-up pendentes da Gênesis, todos elegíveis. Os que vencem depois de um adiamento ou desistência explícitos passam a ser cancelados.
++- Esse comportamento segue o código existente, mas é uma **decisão de política** que precisa de aprovação antes da publicação. Não foi alterado nenhum job nesta etapa.
++
++## 6. Rollback
++
++Trata-se de uma reversão **conjunta**:
++
++1. Republicar o workflow **CORE** exportado no passo 2.5 (versão 1.0 ao vivo).
++2. Republicar o workflow **EXT** exportado no passo 2.5 (identidade aceita `1.0`).
++3. Verificar um turno de teste sem envio.
++
++A ordem inversa do deploy evita uma lacuna nova. Em rollback, o CORE antigo e a EXT antiga precisam voltar juntos,
++senão a combinação mista é recusada pelas mesmas regras acima.
++
++Não há migração de banco nesta publicação. O rollback é só de workflows.
++
++## 7. Itens que este runbook não cobre
++
++- A `migration` `supabase/migrations_pending_review/turn_queue_lifecycle_v1.sql` referenciada no manifesto é de outra frente. Não faz parte deste contrato.
++- A revisão do rótulo `core_revision` no script de build é metadado; não altera comportamento.

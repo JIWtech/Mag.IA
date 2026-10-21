@@ -72,10 +72,9 @@ async function prepare(input, { bytes, mime, downloadError = null, binaryResult 
   return { result, calls, prepared };
 }
 
-async function finalize(preparedItem, uploadResponse = { statusCode: 201 }, { headStatus = 200, headSize, rows, patchRows = 1 } = {}) {
+async function finalize(preparedItem, uploadResponse = { statusCode: 201 }, { headStatus = 200, headSize, confirmation } = {}) {
   const calls = [];
-  const storedRaw = rows === undefined ? { trace_id: 'trace-kept', media: { status: 'pending' } } : rows;
-  let patch = null;
+  let rpcPayload = null;
   const fn = new AsyncFunction('$json', '$env', '$binary', '$', finalizeCode);
   const result = await fn.call({
     helpers: {
@@ -84,13 +83,15 @@ async function finalize(preparedItem, uploadResponse = { statusCode: 201 }, { he
         if (request.method === 'HEAD') {
           return { statusCode: headStatus, headers: { 'content-length': String(headSize ?? preparedItem.json.media_ingestion.expectedSize) } };
         }
-        if (request.method === 'GET') {
-          if (Array.isArray(storedRaw)) return storedRaw;
-          return [{ id: preparedItem.json.media_ingestion.event_id, raw_payload: storedRaw }];
-        }
-        if (request.method === 'PATCH') {
-          patch = request.body;
-          return patchRows === 1 ? [{ id: preparedItem.json.media_ingestion.event_id, ...request.body }] : [];
+        if (request.method === 'POST' && /\/rpc\/magia_confirm_whatsapp_media$/.test(request.url)) {
+          rpcPayload = request.body;
+          if (confirmation !== undefined) return confirmation;
+          return [{
+            event_id: preparedItem.json.media_ingestion.event_id,
+            applied: true,
+            reason: 'confirmed',
+            stored_media: request.body.p_media,
+          }];
         }
         throw new Error(`Unexpected ${request.method}`);
       },
@@ -99,7 +100,7 @@ async function finalize(preparedItem, uploadResponse = { statusCode: 201 }, { he
     assert.equal(name, 'Preparar Mídia WhatsApp');
     return { item: preparedItem };
   });
-  return { result, calls, patch };
+  return { result, calls, rpcPayload };
 }
 
 function workflow() {
@@ -230,11 +231,11 @@ test('pipeline 17: two inbound images retain distinct event-scoped paths', async
 
 test('pipeline 18: successful upload plus exact HEAD size becomes stored', async () => {
   const prepared = await prepare(inbound('image'), { bytes: JPEG, mime: 'image/jpeg' });
-  const { result, patch } = await finalize(prepared.result);
+  const { result, rpcPayload } = await finalize(prepared.result);
   assert.equal(result.json.media_ingestion.media.status, 'stored');
   assert.equal(result.json.media_ingestion.media.verified, true);
   assert.equal(result.json.media_ingestion.media.storedSize, JPEG.length);
-  assert.equal(patch.raw_payload.media.status, 'stored');
+  assert.equal(rpcPayload.p_media.status, 'stored');
 });
 
 test('pipeline 19: failed upload never becomes stored', async () => {
@@ -258,17 +259,20 @@ test('pipeline 21: failed HEAD never becomes stored', async () => {
   assert.equal(result.json.media_ingestion.media.verified, false);
 });
 
-test('pipeline 22: finalizer preserves unrelated raw payload fields', async () => {
+test('pipeline 22: finalizer delegates the atomic merge to the RPC without reading raw payload', async () => {
   const prepared = await prepare(inbound('image'), { bytes: JPEG, mime: 'image/jpeg' });
-  const { patch } = await finalize(prepared.result, { statusCode: 201 }, { rows: { trace_id: 'keep-me', audio_processing: { status: 'transcribed' } } });
-  assert.equal(patch.raw_payload.trace_id, 'keep-me');
-  assert.equal(patch.raw_payload.audio_processing.status, 'transcribed');
-  assert.equal(patch.raw_payload.media.status, 'stored');
+  const { calls, rpcPayload } = await finalize(prepared.result);
+  assert.ok(calls.some((call) => call.method === 'POST' && /\/rpc\/magia_confirm_whatsapp_media$/.test(call.url)));
+  assert.ok(!calls.some((call) => call.method === 'GET' || call.method === 'PATCH'));
+  assert.equal(rpcPayload.p_media.status, 'stored');
+  assert.equal(Object.hasOwn(rpcPayload, 'raw_payload'), false);
 });
 
 test('pipeline 23: scope mismatch is reported instead of patching another event', async () => {
   const prepared = await prepare(inbound('image'), { bytes: JPEG, mime: 'image/jpeg' });
-  const { result } = await finalize(prepared.result, { statusCode: 201 }, { rows: [] });
+  const { result } = await finalize(prepared.result, { statusCode: 201 }, {
+    confirmation: [{ applied: false, reason: 'event_scope_mismatch', stored_media: null }],
+  });
   assert.equal(result.json.media_ingestion.media.status, 'persistence_error');
   assert.equal(result.json.media_ingestion.media.verified, false);
 });

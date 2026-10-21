@@ -1,0 +1,5392 @@
+diff --git a/app/src/LandingPage.jsx b/app/src/LandingPage.jsx
+index c131313..1098b0a 100644
+--- a/app/src/LandingPage.jsx
++++ b/app/src/LandingPage.jsx
+@@ -1,54 +1,274 @@
+-import React, { useEffect, useState } from 'react';
++import React, { useEffect, useRef, useState } from 'react';
+ import {
+   ArrowRight,
++  ArrowUpRight,
+   BarChart3,
+-  Bot,
+   Building2,
+-  CalendarCheck,
+   CalendarDays,
+   Check,
+-  CheckCircle2,
+-  Clock,
+-  Clock3,
+   DollarSign,
+-  FileSpreadsheet,
+-  Flame,
+-  HelpCircle,
+   KanbanSquare,
+   Layers,
+   Lock,
+   LogOut,
++  Menu,
+   MessageCircle,
+-  PhoneCall,
+   Rocket,
+-  Search,
+-  Send,
+   ShieldCheck,
+-  Sparkles,
+-  TrendingDown,
+   TrendingUp,
+-  UserCheck,
+-  UsersRound,
++  UserRound,
++  X,
+   Zap,
+ } from 'lucide-react';
+ import noriaLogo from './assets/noria_logo.png';
+-import noriaHeroMockup from './assets/noria_hero_mockup.jpg';
+ import noriaConversasPreview from './assets/noria_conversas_preview.jpg';
+-import noriaConnectedEcosystem from './assets/noria_connected_ecosystem.jpg';
+-import noriaFeaturesMockup from './assets/noria_features_mockup.jpg';
+-import noriaBrandEcosystem from './assets/noria_brand_ecosystem.jpg';
+-import noriaCostReduction from './assets/noria_cost_reduction.jpg';
+-import dashboardAndConversationImage from './assets/Gemini_Generated_Image_d690hrd690hrd690.jpg';
+-import settingsInterfaceImage from './assets/Gemini_Generated_Image_ygl2jfygl2jfygl2.jpg';
+-import conversationInterfaceImage from './assets/Gemini_Generated_Image_yu95g1yu95g1yu95.jpg';
+ import { isSessionBootstrapped, clearSessionBootstrapped } from './app/appStorage.js';
+ import { signOut } from './services/auth/authService.js';
++import { SavingsSimulator } from './features/landing/SavingsSimulator.jsx';
++import {
++  useInView,
++  usePrefersReducedMotion,
++  useScrollProgressVar,
++  useTweenedNumber,
++} from './features/landing/useLandingMotion.js';
++
++const NAV_LINKS = [
++  { id: 'operacao', label: 'Operação' },
++  { id: 'calculadora', label: 'Economia' },
++  { id: 'ecossistema', label: 'Ecossistema' },
++  { id: 'modulos', label: 'Módulos' },
++  { id: 'seguranca', label: 'Segurança' },
++];
++
++const PROOF_POINTS = [
++  { value: '< 3s', label: 'Tempo médio de resposta no WhatsApp' },
++  { value: '24/7', label: 'Atendimento à noite e nos finais de semana' },
++  { value: 'Kanban', label: 'Funil de vendas atualizado em tempo real' },
++  { value: 'Handoff', label: 'Humanizado para a equipe na hora de fechar' },
++];
++
++const PIPELINE_METRICS = [
++  { value: 1253, format: (v) => Math.round(v).toLocaleString('pt-BR'), label: 'Oportunidades', delta: '+18% de conversão mensal' },
++  { value: 312, format: (v) => Math.round(v).toLocaleString('pt-BR'), label: 'Reuniões & visitas', delta: '+24% de comparecimento' },
++  { value: 2.48, format: (v) => `R$ ${v.toFixed(2).replace('.', ',')}M`, label: 'Receita prevista', delta: 'Pipeline em tempo real' },
++];
++
++const FLOW_STEPS = [
++  {
++    title: 'A mensagem chega',
++    text: 'Múltiplos números de WhatsApp da empresa e o Telegram centralizados em uma única tela.',
++  },
++  {
++    title: 'A IA qualifica',
++    text: 'Nome, interesse e entrada coletados automaticamente. Em concessionárias: veículo, ano e forma de pagamento.',
++  },
++  {
++    title: 'O painel organiza',
++    text: 'Conversas viram cards no Kanban, o test-drive é agendado e follow-ups automáticos evitam que o cliente esfrie.',
++  },
++  {
++    title: 'Sua equipe fecha',
++    text: 'O vendedor recebe o lead com nome, telefone e interesse já qualificados e entra só na hora de fechar negócio.',
++  },
++];
++
++const ECOSYSTEM = [
++  { code: 'SDR', icon: UserRound, text: 'Prospecção automatizada e qualificação de leads com inteligência artificial humanizada.' },
++  { code: 'Pipeline', icon: TrendingUp, text: 'Oportunidades organizadas por valor de proposta e probabilidade de fechamento.' },
++  { code: 'Flow', icon: KanbanSquare, text: 'Processos, tarefas e etapas comerciais em Kanban, com clareza e velocidade.' },
++  { code: 'Agenda', icon: CalendarDays, text: 'Agendamentos integrados e controle de horários de visitas, reuniões e atendimentos.' },
++  { code: 'Finance', icon: DollarSign, text: 'Sinais de pagamento, controle financeiro e histórico de propostas em um só lugar.' },
++  { code: 'Intelligence', icon: BarChart3, text: 'Dashboards de conversão e horários de pico para decisões estratégicas.' },
++];
++
++const MODULE_TABS = [
++  {
++    id: 'conversas',
++    icon: MessageCircle,
++    label: 'Central de Conversas',
++    kicker: 'Atendimento ágil',
++    title: 'Toda a comunicação da sua empresa em uma tela',
++    text: 'Acompanhe a IA respondendo em tempo real no WhatsApp e no Telegram, leia áudios transcritos sem precisar escutar e assuma o controle com um clique.',
++    perks: [
++      'Áudios de clientes transcritos em texto automaticamente',
++      'Envio de fotos, anexos e localização oficial',
++      'Histórico completo de conversas por cliente',
++    ],
++  },
++  {
++    id: 'kanban',
++    icon: KanbanSquare,
++    label: 'Kanban de Vendas',
++    kicker: 'Gestão de oportunidades',
++    title: 'Um funil visual para nunca mais perder um lead qualificado',
++    text: 'Organize contatos por etapa comercial, arraste cards com facilidade e configure alertas automáticos de retorno.',
++    perks: [
++      'Classificação automática de leads frios, mornos e quentes',
++      'Atribuição de responsável por negócio',
++      'Sinal de pagamento e registro de propostas',
++    ],
++  },
++  {
++    id: 'dashboard',
++    icon: Layers,
++    label: 'Métricas & Dashboard',
++    kicker: 'Controle gerencial',
++    title: 'Métricas claras sobre o desempenho do atendimento',
++    text: 'Saiba quantos clientes entraram em contato, quais canais mais convertem, os horários de pico e quanto tempo sua empresa leva para atender.',
++    perks: [
++      'Gráficos de volume diário e taxa de conversão',
++      'Identificação dos horários com mais mensagens',
++      'Relatórios exportáveis com 1 clique',
++    ],
++  },
++  {
++    id: 'configuracoes',
++    icon: Building2,
++    label: 'Multiempresa & Equipe',
++    kicker: 'Estrutura empresarial',
++    title: 'Filiais, marcas e equipes separadas na mesma infraestrutura',
++    text: 'Cada empresa possui seus próprios contatos, canais, agentes humanos e regras comerciais exclusivas.',
++    perks: [
++      'Permissões granulares de acesso por atendente',
++      'Catálogo de produtos e serviços individualizado',
++      'Políticas de atendimento e horários de funcionamento customizados',
++    ],
++  },
++];
++
++const PILLARS = [
++  { icon: ShieldCheck, title: 'Segura', text: 'Isolamento rigoroso por empresa, criptografia e conformidade com a LGPD.' },
++  { icon: Zap, title: 'Rápida', text: 'Tempo de resposta médio inferior a 3 segundos no WhatsApp.' },
++  { icon: Layers, title: 'Integrada', text: 'Conversas, equipe, funil, agendamentos e métricas em um único ecossistema.' },
++  { icon: Rocket, title: 'Escalável', text: 'Do negócio local às redes com múltiplas filiais e dezenas de atendentes.' },
++];
++
++const KANBAN_COLUMNS = [
++  { stage: 'Novos Leads', cards: [{ name: 'Lead', note: 'Test drive', temp: 'morno' }] },
++  { stage: 'Em Atendimento', cards: [{ name: 'Lead', note: 'Peças em estoque', temp: 'frio' }] },
++  { stage: 'Financiamento', cards: [{ name: 'Lead', note: 'Follow-up agendado', temp: 'morno' }] },
++  { stage: 'Visita Agendada', cards: [{ name: 'Lead', note: 'SUV automático', temp: 'quente' }] },
++  { stage: 'Fechamento', cards: [] },
++];
++
++const PEAK_HOURS = [22, 38, 64, 90, 72, 48, 80, 96, 58, 30];
++
++function SectionHead({ index, label, title, children }) {
++  return (
++    <header className="lp-section-head" data-reveal>
++      <span className="lp-kicker">
++        <span className="lp-kicker-index">{index}</span>
++        {label}
++      </span>
++      <h2 className="lp-h2">{title}</h2>
++      {children && <p className="lp-lead">{children}</p>}
++    </header>
++  );
++}
++
++function CountUpMetric({ metric, reducedMotion }) {
++  const ref = useRef(null);
++  const inView = useInView(ref, { threshold: 0.6, once: true });
++  const value = useTweenedNumber(inView ? metric.value : 0, { duration: 1400, from: reducedMotion ? metric.value : 0, disabled: reducedMotion });
++  return (
++    <div className="lp-metric" ref={ref}>
++      <dt>{metric.label}</dt>
++      <dd>
++        <strong>{metric.format(value)}</strong>
++        <span>{metric.delta}</span>
++      </dd>
++    </div>
++  );
++}
++
++function ModuleVisual({ id }) {
++  if (id === 'conversas') {
++    return (
++      <img
++        src={noriaConversasPreview}
++        alt="Central de Conversas NORIA com painel de atendimento e chat de WhatsApp"
++        className="lp-module-img"
++        loading="lazy"
++      />
++    );
++  }
++
++  if (id === 'kanban') {
++    return (
++      <div className="lp-kanban">
++        {KANBAN_COLUMNS.map((column) => (
++          <div className="lp-kanban-col" key={column.stage}>
++            <div className="lp-kanban-head">{column.stage}</div>
++            {column.cards.map((card) => (
++              <div className="lp-kanban-card" key={card.note}>
++                <span className="lp-kanban-line" />
++                <span>{card.note}</span>
++                <span className={`lp-temp lp-temp--${card.temp}`}>{card.temp}</span>
++              </div>
++            ))}
++            {column.cards.length === 0 && <div className="lp-kanban-empty">Arraste para fechar</div>}
++          </div>
++        ))}
++      </div>
++    );
++  }
++
++  if (id === 'dashboard') {
++    return (
++      <div className="lp-dash">
++        <div className="lp-dash-kpis">
++          {['Conversas ativas', 'Aguardando equipe', 'Agendamentos'].map((label) => (
++            <div key={label}><span>{label}</span><span className="lp-kanban-line lp-kanban-line--lg" /></div>
++          ))}
++        </div>
++        <div className="lp-dash-chart">
++          <span className="lp-dash-chart-title">Horários de pico</span>
++          <div className="lp-dash-bars">
++            {PEAK_HOURS.map((height, i) => (
++              <span key={i} style={{ '--h': `${height}%`, '--i': i }} className={height > 85 ? 'is-peak' : ''} />
++            ))}
++          </div>
++        </div>
++      </div>
++    );
++  }
++
++  return (
++    <div className="lp-tenants">
++      <div className="lp-tenants-core">
++        <Layers size={16} />
++        <span>Infraestrutura NORIA</span>
++      </div>
++      <div className="lp-tenants-grid">
++        {['Empresa A', 'Empresa B', 'Empresa C'].map((name) => (
++          <div className="lp-tenant" key={name}>
++            <strong>{name}</strong>
++            <ul>
++              <li>Contatos</li>
++              <li>Canais</li>
++              <li>Agentes</li>
++              <li>Regras comerciais</li>
++            </ul>
++          </div>
++        ))}
++      </div>
++    </div>
++  );
++}
+ 
+ export function HomePage() {
+   const [activeTab, setActiveTab] = useState('conversas');
+-  const [attendantCount, setAttendantCount] = useState(2);
+-  const [avgSalary, setAvgSalary] = useState(2400);
+   const [hasSession, setHasSession] = useState(false);
++  const [scrolled, setScrolled] = useState(false);
++  const [activeSection, setActiveSection] = useState('');
++  const [menuOpen, setMenuOpen] = useState(false);
++  const reducedMotion = usePrefersReducedMotion();
++
++  const wrapperRef = useRef(null);
++  const heroRef = useRef(null);
++  const flowRef = useRef(null);
++
++  useScrollProgressVar(flowRef, { disabled: reducedMotion, start: 0.75, end: 0.6 });
+ 
+   useEffect(() => {
+     setHasSession(isSessionBootstrapped());
+@@ -64,6 +284,67 @@ export function HomePage() {
+     };
+   }, []);
+ 
++  // Navbar: estado de rolagem e inclinação do produto no hero, num único listener.
++  useEffect(() => {
++    let frame = 0;
++    const update = () => {
++      frame = 0;
++      const y = window.scrollY;
++      setScrolled(y > 8);
++      if (heroRef.current && !reducedMotion) {
++        heroRef.current.style.setProperty('--hero-progress', Math.min(1, y / 520).toFixed(4));
++      }
++    };
++    const onScroll = () => {
++      if (!frame) frame = requestAnimationFrame(update);
++    };
++    update();
++    window.addEventListener('scroll', onScroll, { passive: true });
++    return () => {
++      if (frame) cancelAnimationFrame(frame);
++      window.removeEventListener('scroll', onScroll);
++    };
++  }, [reducedMotion]);
++
++  // Seção ativa na navbar.
++  useEffect(() => {
++    if (typeof IntersectionObserver === 'undefined') return undefined;
++    const sections = NAV_LINKS.map((link) => document.getElementById(link.id)).filter(Boolean);
++    const observer = new IntersectionObserver(
++      (entries) => {
++        entries.forEach((entry) => {
++          if (entry.isIntersecting) setActiveSection(entry.target.id);
++        });
++      },
++      { rootMargin: '-45% 0px -50% 0px' },
++    );
++    sections.forEach((section) => observer.observe(section));
++    return () => observer.disconnect();
++  }, []);
++
++  // Revelação progressiva: só esconde conteúdo quando há JS e movimento permitido.
++  useEffect(() => {
++    const root = wrapperRef.current;
++    if (!root || reducedMotion || typeof IntersectionObserver === 'undefined') return undefined;
++    root.classList.add('lp-motion');
++    const observer = new IntersectionObserver(
++      (entries) => {
++        entries.forEach((entry) => {
++          if (entry.isIntersecting) {
++            entry.target.classList.add('is-visible');
++            observer.unobserve(entry.target);
++          }
++        });
++      },
++      { threshold: 0.15, rootMargin: '0px 0px -8% 0px' },
++    );
++    root.querySelectorAll('[data-reveal]').forEach((node) => observer.observe(node));
++    return () => {
++      observer.disconnect();
++      root.classList.remove('lp-motion');
++    };
++  }, [reducedMotion]);
++
+   const goTo = (search) => {
+     if (typeof window !== 'undefined') {
+       window.location.assign(`${window.location.pathname}${search}`);
+@@ -76,936 +357,322 @@ export function HomePage() {
+     await signOut();
+   };
+ 
+-  // Cálculos financeiros realistas (CLT no Brasil com encargos, benefícios e infraestrutura ~1.75x o salário bruto)
+-  const costPerAttendant = Math.round(avgSalary * 1.75);
+-  const totalMonthlyCostManual = attendantCount * costPerAttendant;
+-  const totalYearlyCostManual = totalMonthlyCostManual * 12;
+-
+-  // Economia estimada automatizando a triagem, qualificação e suporte primário
+-  const estimatedSavingsMonthly = Math.round(totalMonthlyCostManual * 0.72);
+-  const estimatedSavingsYearly = estimatedSavingsMonthly * 12;
++  const currentTab = MODULE_TABS.find((tab) => tab.id === activeTab) ?? MODULE_TABS[0];
+ 
+   return (
+-    <div className="home-wrapper">
+-      {/* Luz ambiente e background modernista no estilo Openbox */}
+-      <div className="home-ambient-glow glow-top" aria-hidden="true" />
+-      <div className="home-ambient-glow glow-accent" aria-hidden="true" />
+-      <div className="home-grid-pattern" aria-hidden="true" />
+-
+-      {/* Top Banner quando logado */}
+-      {hasSession && (
+-        <div className="home-session-banner">
+-          <span>Você já possui uma sessão ativa na plataforma.</span>
+-          <button type="button" onClick={() => goTo('?app=1')}>
+-            Ir para o Dashboard <ArrowRight size={14} />
+-          </button>
+-        </div>
+-      )}
+-
+-      {/* HEADER / NAVBAR FIXA */}
+-      <header className="home-navbar">
+-        <div className="home-nav-container">
+-          <a className="home-nav-brand" href="#inicio">
+-            <img src={noriaLogo} alt="NORIA" className="home-nav-logo" />
+-            <div className="home-brand-text">
+-              <span className="home-brand-name">NORIA</span>
+-              <span className="home-brand-sub">Inteligência Operacional</span>
+-            </div>
++    <div className="home-wrapper" ref={wrapperRef}>
++      <header className={`lp-nav ${scrolled ? 'is-scrolled' : ''} ${menuOpen ? 'is-open' : ''}`}>
++        {hasSession && (
++          <div className="lp-session-banner">
++            <span>Você já possui uma sessão ativa na plataforma.</span>
++            <button type="button" onClick={handleSignOut}>
++              <LogOut size={13} /> Sair
++            </button>
++          </div>
++        )}
++        <div className="lp-container lp-nav-inner">
++          <a className="lp-brand" href="#inicio" aria-label="NORIA, início" onClick={() => setMenuOpen(false)}>
++            <img src={noriaLogo} alt="NORIA" className="lp-brand-logo" />
+           </a>
+ 
+-          <nav className="home-nav-menu" aria-label="Navegação da página">
+-            <a href="#calculadora">Calculadora de Salário</a>
+-            <a href="#ecossistema">Ecossistema</a>
+-            <a href="#solucoes">Soluções</a>
+-            <a href="#demonstracao">Demonstração Real</a>
+-            <a href="#modulos">Módulos</a>
+-            <a href="#seguranca">Segurança</a>
++          <nav className="lp-nav-links" aria-label="Navegação da página">
++            {NAV_LINKS.map((link) => (
++              <a
++                key={link.id}
++                href={`#${link.id}`}
++                className={activeSection === link.id ? 'is-active' : ''}
++                aria-current={activeSection === link.id ? 'true' : undefined}
++                onClick={() => setMenuOpen(false)}
++              >
++                {link.label}
++              </a>
++            ))}
+           </nav>
+ 
+-          <div className="home-nav-actions">
+-            {hasSession ? (
+-              <>
+-                <button
+-                  className="home-nav-btn-secondary"
+-                  type="button"
+-                  onClick={handleSignOut}
+-                >
+-                  <LogOut size={14} /> Sair
+-                </button>
+-                <button
+-                  className="home-nav-btn-primary"
+-                  type="button"
+-                  onClick={() => goTo('?app=1')}
+-                >
+-                  Abrir Dashboard <ArrowRight size={15} />
+-                </button>
+-              </>
+-            ) : (
+-              <>
+-                <button
+-                  className="home-nav-btn-secondary"
+-                  type="button"
+-                  onClick={() => goTo('?auth=login')}
+-                >
+-                  Entrar
+-                </button>
+-                <button
+-                  className="home-nav-btn-primary"
+-                  type="button"
+-                  onClick={() => goTo('?app=1')}
+-                >
+-                  Acessar Plataforma <ArrowRight size={15} />
+-                </button>
+-              </>
+-            )}
+-          </div>
+-        </div>
+-      </header>
+-
+-      {/* HERO SECTION COM HEADLINE OFICIAL E GANCHO DE SALÁRIO */}
+-      <section id="inicio" className="home-hero-section">
+-        <div className="home-hero-content">
+-          {/* Eyebrow Comercial de Alto Impacto */}
+-          <div className="home-hero-eyebrow">
+-            <span className="home-eyebrow-pill">
+-              <Sparkles size={14} className="home-pulse-icon" />
+-              Impacto Financeiro & ROI
+-            </span>
+-            <span className="home-eyebrow-text">
+-              Quanto você paga hoje de salário pra quem responde o WhatsApp da sua empresa?
+-            </span>
+-          </div>
+-
+-          {/* HEADLINE PRINCIPAL REQUISITADA */}
+-          <h1 className="home-hero-headline">
+-            Atenda mais rápido. Organize seus clientes.{' '}
+-            <span className="home-headline-highlight">Venda mais com inteligência artificial.</span>
+-          </h1>
+-
+-          {/* SUBHEADLINE OFICIAL */}
+-          <p className="home-hero-subhead">
+-            Centralize WhatsApp, atendimento, CRM e automações em uma única plataforma. Sua IA
+-            atende, sua equipe acompanha e nenhuma oportunidade fica esquecida.
+-          </p>
+-
+-          {/* AÇÕES DE CONVERSÃO */}
+-          <div className="home-hero-ctas">
++          <div className="lp-nav-actions">
++            <button className="lp-btn lp-btn--primary" type="button" onClick={() => goTo('?app=1')}>
++              {hasSession ? 'Abrir dashboard' : 'Acessar plataforma'} <ArrowRight size={15} />
++            </button>
+             <button
+-              className="home-btn-hero-primary"
++              className="lp-menu-toggle"
+               type="button"
+-              onClick={() => goTo('?app=1')}
++              aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'}
++              aria-expanded={menuOpen}
++              onClick={() => setMenuOpen((open) => !open)}
+             >
+-              <Zap size={18} />
+-              Ver a Plataforma em Ação
+-              <ArrowRight size={18} />
++              {menuOpen ? <X size={20} /> : <Menu size={20} />}
+             </button>
+-            <a className="home-btn-hero-secondary" href="#calculadora">
+-              <DollarSign size={18} />
+-              Simular Economia da Minha Equipe
+-            </a>
+-          </div>
+-
+-          {/* PROVA SOCIAL / BENEFÍCIOS RÁPIDOS */}
+-          <div className="home-trust-badges">
+-            <div className="home-trust-item">
+-              <CheckCircle2 size={16} className="text-emerald" />
+-              <span>Resposta em menos de 3s</span>
+-            </div>
+-            <div className="home-trust-item">
+-              <CheckCircle2 size={16} className="text-emerald" />
+-              <span>Atendimento 24/7 sem interrupção</span>
+-            </div>
+-            <div className="home-trust-item">
+-              <CheckCircle2 size={16} className="text-emerald" />
+-              <span>Kanban de vendas em tempo real</span>
+-            </div>
+-            <div className="home-trust-item">
+-              <CheckCircle2 size={16} className="text-emerald" />
+-              <span>Handoff humanizado para sua equipe</span>
+-            </div>
+           </div>
+         </div>
++      </header>
+ 
+-        {/* HERO WINDOW COM A PRÉVIA WIDESCREEN REAL DO PRODUTO */}
+-        <div className="home-hero-showcase">
+-          <div className="home-showcase-window">
+-            <div className="window-header-bar">
+-              <div className="window-dots">
+-                <span className="dot red" />
+-                <span className="dot yellow" />
+-                <span className="dot green" />
+-              </div>
+-              <div className="window-address-bar">
+-                <Lock size={12} className="text-emerald" />
+-                <span>app.noria.com.br/central-conversas</span>
+-              </div>
+-              <div className="window-status-pill">
+-                <span className="status-live-dot" />
+-                <span>WhatsApp Oficial • Ao Vivo</span>
+-              </div>
+-            </div>
+-
+-            <div className="window-image-canvas">
+-              <img
+-                src={noriaConversasPreview}
+-                alt="Central de Atendimento e Conversas NORIA em Tempo Real"
+-                className="hero-widescreen-img"
+-              />
+-              <div className="window-float-tag tag-left">
+-                <span className="live-pulse-green" />
+-                <div>
+-                  <strong>19 Conversas Ativas</strong>
+-                  <small>IA qualificando em tempo real</small>
+-                </div>
+-              </div>
+-              <div className="window-float-tag tag-right">
+-                <Flame size={16} className="text-amber" />
+-                <div>
+-                  <strong>Lead Quente: Carlos Mendes</strong>
+-                  <small>Simulação de SUV Automático</small>
+-                </div>
+-              </div>
+-            </div>
+-          </div>
+-        </div>
+-      </section>
+-
+-      {/* SEÇÃO SPOTLIGHT 3D: "A INTELIGÊNCIA QUE MOVE O SEU NEGÓCIO" */}
+-      <section className="home-spotlight-section">
+-        <div className="home-section-container">
+-          <div className="spotlight-grid">
+-            <div className="spotlight-copy">
+-              <span className="home-pill-badge">Inteligência em Movimento</span>
+-              <h2>A inteligência que move o seu negócio.</h2>
+-              <p className="spotlight-subtitle">
+-                Uma nova forma de conectar sua operação: da primeira mensagem enviada no WhatsApp até o
+-                fechamento do contrato e emissão de propostas.
++      <main>
++        {/* HERO */}
++        <section id="inicio" className="lp-hero" ref={heroRef}>
++          <div className="lp-container lp-hero-grid">
++            <div className="lp-hero-copy">
++              <p className="lp-hero-kicker lp-rise" style={{ '--d': 0 }}>
++                WhatsApp oficial · CRM · Automação com IA
+               </p>
+-
+-              <div className="spotlight-metrics-row">
+-                <div className="spotlight-metric-card">
+-                  <span className="metric-number">1.253</span>
+-                  <span className="metric-tagline">Oportunidades</span>
+-                  <small className="metric-sub">+18% de conversão mensal</small>
+-                </div>
+-                <div className="spotlight-metric-card">
+-                  <span className="metric-number">312</span>
+-                  <span className="metric-tagline">Reuniões & visitas</span>
+-                  <small className="metric-sub">+24% de comparecimento</small>
+-                </div>
+-                <div className="spotlight-metric-card">
+-                  <span className="metric-number">R$ 2,48M</span>
+-                  <span className="metric-tagline">Receita prevista</span>
+-                  <small className="metric-sub">Pipeline em tempo real</small>
+-                </div>
+-              </div>
+-
+-              <div className="spotlight-bullet-points">
+-                <div className="spotlight-bullet">
+-                  <CheckCircle2 size={18} className="text-cyan" />
+-                  <span>Centralize múltiplos números de WhatsApp da empresa em uma única tela</span>
+-                </div>
+-                <div className="spotlight-bullet">
+-                  <CheckCircle2 size={18} className="text-cyan" />
+-                  <span>Seus vendedores recebem o lead com nome, telefone e interesse já qualificados</span>
+-                </div>
+-                <div className="spotlight-bullet">
+-                  <CheckCircle2 size={18} className="text-cyan" />
+-                  <span>Follow-ups automáticos programados para não deixar nenhum cliente esfriar</span>
+-                </div>
++              <h1 className="lp-h1">
++                <span className="lp-line"><span className="lp-rise" style={{ '--d': 1 }}>Atenda mais rápido,</span></span>
++                <span className="lp-line"><span className="lp-rise" style={{ '--d': 2 }}>organize seus clientes</span></span>
++                <span className="lp-line lp-line--em">
++                  <em className="lp-rise" style={{ '--d': 3 }}>
++                    e venda mais com <span className="lp-nowrap">inteligência artificial</span>
++                  </em>
++                </span>
++              </h1>
++              <p className="lp-hero-sub lp-rise" style={{ '--d': 4 }}>
++                Centralize WhatsApp, atendimento, CRM e automações em uma única plataforma. Sua IA
++                atende, sua equipe acompanha e nenhuma oportunidade fica esquecida.
++              </p>
++              <div className="lp-hero-ctas lp-rise" style={{ '--d': 5 }}>
++                <button className="lp-btn lp-btn--primary lp-btn--lg" type="button" onClick={() => goTo('?app=1')}>
++                  Ver a plataforma em ação <ArrowRight size={18} />
++                </button>
++                <a className="lp-btn lp-btn--quiet lp-btn--lg" href="#calculadora">
++                  Simular economia da minha equipe
++                </a>
+               </div>
+-
+-              <button className="spotlight-cta-btn" type="button" onClick={() => goTo('?app=1')}>
+-                Conhecer o Sistema Completo <ArrowRight size={16} />
+-              </button>
+             </div>
+ 
+-            <div className="spotlight-poster-col">
+-              <div className="spotlight-poster-frame">
++            <figure className="lp-stage">
++              <div className="lp-stage-frame">
+                 <img
+-                  src={noriaHeroMockup}
+-                  alt="Poster 3D NORIA - Laptop e Smartphone"
+-                  className="spotlight-poster-img"
++                  src={noriaConversasPreview}
++                  alt="Central de Atendimento e Conversas da plataforma NORIA"
++                  className="lp-stage-img"
++                  fetchpriority="high"
+                 />
+               </div>
+-            </div>
++              <figcaption className="lp-stage-caption lp-mono">Central de Conversas · tela da plataforma</figcaption>
++            </figure>
+           </div>
+-        </div>
+-      </section>
+-
+-      {/* CALCULADORA COMERCIAL / GANCHO DO SALÁRIO & EFICIÊNCIA OPERACIONAL */}
+-      <section id="calculadora" className="home-calc-section">
+-        <div className="home-section-container">
+-          {/* BANNER OFICIAL DE EFICIÊNCIA OPERACIONAL (IMAGEM OFICIAL NORIA) */}
+-          <div className="home-cost-reduction-banner">
+-            <div className="cost-reduction-visual">
+-              <div className="cost-reduction-frame">
+-                <img
+-                  src={noriaCostReduction}
+-                  alt="Eficiência Operacional: Sua operação pode custar menos. Muito menos. Até 60% de redução potencial"
+-                  className="cost-reduction-img"
+-                />
+-              </div>
+-            </div>
+ 
+-            <div className="cost-reduction-copy">
+-              <span className="home-pill-badge">
+-                <TrendingDown size={14} /> Eficiência Operacional Comprovada
+-              </span>
+-              <h2>
+-                Sua operação pode custar menos.{' '}
+-                <span className="home-headline-highlight">Muito menos.</span>
+-              </h2>
+-              <div className="cost-reduction-tagline">
+-                <span className="reduction-percent">Até 60%</span>
+-                <span className="reduction-label">de redução potencial de custo operacional</span>
+-              </div>
+-              <p className="cost-reduction-desc">
+-                Automatize atendimentos repetitivos, otimize o trabalho da equipe e reduza a necessidade de novas
+-                contratações com a inteligência artificial da <strong>NORIA</strong>.
+-              </p>
++          <div className="lp-container">
++            <ul className="lp-proof">
++              {PROOF_POINTS.map((point, i) => (
++                <li key={point.value} className="lp-rise" style={{ '--d': 6 + i * 0.5 }}>
++                  <strong>{point.value}</strong>
++                  <span>{point.label}</span>
++                </li>
++              ))}
++            </ul>
++          </div>
++        </section>
++
++        {/* 01 OPERAÇÃO */}
++        <section id="operacao" className="lp-section">
++          <div className="lp-container lp-split">
++            <div className="lp-split-aside">
++              <SectionHead index="01" label="Operação" title={<>A inteligência que <em>move o seu negócio.</em></>}>
++                Da primeira mensagem no WhatsApp até o fechamento do contrato e a emissão da proposta.
++              </SectionHead>
++            </div>
+ 
+-              <div className="cost-reduction-perks">
+-                <div className="reduction-perk-item">
+-                  <CheckCircle2 size={18} className="text-cyan" />
+-                  <div>
+-                    <strong>Menos tarefas manuais:</strong>
+-                    <span>Triagem imediata de dúvidas frequentes, estoque e horários sem ocupar atendentes.</span>
+-                  </div>
+-                </div>
+-                <div className="reduction-perk-item">
+-                  <CheckCircle2 size={18} className="text-cyan" />
+-                  <div>
+-                    <strong>Mais atendimentos por funcionário:</strong>
+-                    <span>Sua equipe foca apenas nos leads quentes e prontos para fechamento de negócio.</span>
+-                  </div>
+-                </div>
+-                <div className="reduction-perk-item">
+-                  <CheckCircle2 size={18} className="text-cyan" />
++            <ol className="lp-flow" ref={flowRef}>
++              {FLOW_STEPS.map((step, i) => (
++                <li key={step.title} data-reveal style={{ '--d': i }}>
++                  <span className="lp-flow-index">{String(i + 1).padStart(2, '0')}</span>
+                   <div>
+-                    <strong>Crescimento com estrutura mais enxuta:</strong>
+-                    <span>Multiplique o volume de clientes atendidos sem inflar a folha de pagamento.</span>
++                    <h3>{step.title}</h3>
++                    <p>{step.text}</p>
+                   </div>
+-                </div>
+-              </div>
+-
+-              <a className="cost-reduction-cta" href="#simulador-valores">
+-                Simular economia na calculadora <ArrowRight size={16} />
+-              </a>
+-            </div>
++                </li>
++              ))}
++            </ol>
+           </div>
+ 
+-          <div id="simulador-valores" className="home-calc-intro">
+-            <span className="home-pill-badge">Simulador Interativo</span>
+-            <h2>Quanto custa manter o WhatsApp da sua empresa sem a NORIA?</h2>
+-            <p>
+-              Compare o custo operacional de manter funcionários dedicados apenas a digitar respostas
+-              manuais versus uma operação automatizada e focada em fechamento.
+-            </p>
++          <div className="lp-container">
++            <div className="lp-ledger" data-reveal>
++              <span className="lp-ledger-label lp-mono">Exemplo do painel de pipeline</span>
++              <dl>
++                {PIPELINE_METRICS.map((metric) => (
++                  <CountUpMetric key={metric.label} metric={metric} reducedMotion={reducedMotion} />
++                ))}
++              </dl>
++            </div>
+           </div>
+-
+-          <div className="home-calc-card">
+-            {/* Controles da Calculadora */}
+-            <div className="calc-controls">
+-              <div className="control-group">
+-                <label htmlFor="attendant-range">
+-                  <span>Quantas pessoas respondem o WhatsApp da sua empresa?</span>
+-                  <strong>{attendantCount} {attendantCount === 1 ? 'pessoa' : 'pessoas'}</strong>
+-                </label>
+-                <input
+-                  id="attendant-range"
+-                  type="range"
+-                  min="1"
+-                  max="12"
+-                  value={attendantCount}
+-                  onChange={(e) => setAttendantCount(Number(e.target.value))}
+-                  className="calc-slider"
+-                />
+-                <div className="slider-ticks">
+-                  <span>1</span>
+-                  <span>3</span>
+-                  <span>6</span>
+-                  <span>9</span>
+-                  <span>12+</span>
+-                </div>
+-              </div>
+-
+-              <div className="control-group">
+-                <label htmlFor="salary-range">
+-                  <span>Média salarial bruta por atendente (R$):</span>
+-                  <strong>
+-                    {avgSalary.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })}
+-                  </strong>
+-                </label>
+-                <input
+-                  id="salary-range"
+-                  type="range"
+-                  min="1500"
+-                  max="6000"
+-                  step="100"
+-                  value={avgSalary}
+-                  onChange={(e) => setAvgSalary(Number(e.target.value))}
+-                  className="calc-slider"
+-                />
+-                <small className="calc-note">
+-                  *Considerando encargos trabalhistas, benefícios e infraestrutura média de mercado (1.75x o salário).
+-                </small>
+-              </div>
+-
+-              <div className="calc-summary-pill">
+-                <Clock size={16} />
+-                <span>
+-                  Sua equipe perde cerca de <strong>{(attendantCount * 4.5).toFixed(0)} horas diárias</strong> respondendo
+-                  dúvidas repetidas que a IA responderia em segundos.
+-                </span>
++        </section>
++
++        {/* 02 ECONOMIA */}
++        <section id="calculadora" className="lp-section lp-section--sunken">
++          <div className="lp-container">
++            <div className="lp-cost-head">
++              <SectionHead
++                index="02"
++                label="Economia"
++                title="Quanto você paga hoje de salário pra quem responde o WhatsApp da sua empresa?"
++              >
++                Sua operação pode custar menos. Muito menos. Automatize atendimentos repetitivos, otimize o trabalho
++                da equipe e reduza a necessidade de novas contratações.
++              </SectionHead>
++              <div className="lp-cost-figure" data-reveal>
++                <span className="lp-cost-figure-pre">até</span>
++                <strong>60%</strong>
++                <span>de redução potencial de custo operacional</span>
+               </div>
+             </div>
+ 
+-            {/* Resultado Comparativo */}
+-            <div className="calc-results-comparison">
+-              <div className="calc-column manual-column">
+-                <div className="col-badge badge-warning">Atendimento Manual Atual</div>
+-                <h3>
+-                  {totalMonthlyCostManual.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })}
+-                  <small>/mês</small>
+-                </h3>
+-                <span className="yearly-tag">
+-                  {totalYearlyCostManual.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })} ao ano
+-                </span>
+-
+-                <ul className="calc-feature-list negative">
+-                  <li>
+-                    <span className="cross">✕</span>
+-                    Demora de 15 a 45 min para responder
+-                  </li>
+-                  <li>
+-                    <span className="cross">✕</span>
+-                    Sem atendimento à noite ou finais de semana
+-                  </li>
+-                  <li>
+-                    <span className="cross">✕</span>
+-                    Leads e orçamentos esquecidos sem follow-up
+-                  </li>
+-                  <li>
+-                    <span className="cross">✕</span>
+-                    Vendedores perdem tempo qualificando curiosos
+-                  </li>
+-                </ul>
+-              </div>
+-
+-              <div className="calc-column noria-column">
+-                <div className="col-badge badge-success">Com a NORIA / Mag.IA</div>
+-                <div className="economy-highlight">
+-                  <span className="econ-label">Economia estimada</span>
+-                  <h3>
+-                    {estimatedSavingsMonthly.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })}
+-                    <small>/mês</small>
+-                  </h3>
+-                  <span className="yearly-saved">
+-                    Economia de até {estimatedSavingsYearly.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })} por ano
+-                  </span>
+-                </div>
+-
+-                <ul className="calc-feature-list positive">
+-                  <li>
+-                    <Check size={16} className="text-emerald" />
+-                    Resposta em 3 segundos, 24 horas por dia
+-                  </li>
+-                  <li>
+-                    <Check size={16} className="text-emerald" />
+-                    Qualificação automática de nome, interesse e entrada
+-                  </li>
+-                  <li>
+-                    <Check size={16} className="text-emerald" />
+-                    Kanban visual de vendas com follow-ups programados
+-                  </li>
+-                  <li>
+-                    <Check size={16} className="text-emerald" />
+-                    Sua equipe humana só entra na hora de fechar negócio
+-                  </li>
+-                </ul>
+-
+-                <button
+-                  className="calc-cta-button"
+-                  type="button"
+-                  onClick={() => goTo('?app=1')}
+-                >
+-                  Começar a Economizar Agora <ArrowRight size={16} />
+-                </button>
+-              </div>
++            <div data-reveal>
++              <SavingsSimulator onStart={() => goTo('?app=1')} />
+             </div>
+           </div>
+-        </div>
+-      </section>
+-
+-      {/* SEÇÃO ECOSSISTEMA NORIA: "TUDO CONECTADO. TUDO EM MOVIMENTO." (BASEADA NA IMAGEM OFICIAL) */}
+-      <section id="ecossistema" className="home-ecosystem-feature-section">
+-        <div className="home-section-container">
+-          <div className="section-header-centered">
+-            <span className="home-pill-badge">Ecossistema Completo</span>
+-            <h2>Tudo conectado. Tudo em movimento.</h2>
+-            <p>
+-              Uma plataforma completa para gerenciar sua operação do início ao resultado.
+-              Sem ferramentas soltas, sem perder mensagens entre o WhatsApp e a equipe.
+-            </p>
+-          </div>
+-
+-          <div className="home-ecosystem-dual-layout">
+-            <div className="ecosystem-image-wrapper">
+-              <img
+-                src={noriaConnectedEcosystem}
+-                alt="Ecossistema NORIA - Diagrama de conexão do Laptop e Smartphone com SDR, Pipeline, Kanban, Agenda, Financeiro e Inteligência"
+-                className="ecosystem-diagram-img"
+-              />
++        </section>
++
++        {/* 03 ECOSSISTEMA */}
++        <section id="ecossistema" className="lp-section">
++          <div className="lp-container lp-split">
++            <div className="lp-split-aside">
++              <SectionHead index="03" label="Ecossistema" title={<>Tudo conectado. <em>Tudo em movimento.</em></>}>
++                Menos ferramentas, mais inteligência. Substitua planilhas perdidas, CRM desconectado e atendentes
++                sobrecarregados por um sistema único.
++              </SectionHead>
+             </div>
+ 
+-            <div className="ecosystem-grid-cards">
+-              <div className="ecosystem-item-card">
+-                <div className="eco-card-header">
+-                  <span className="eco-icon-badge cyan"><Bot size={20} /></span>
+-                  <h4>NORIA SDR</h4>
+-                </div>
+-                <p>Prospecção automatizada e qualificação de leads com inteligência artificial humanizada.</p>
+-              </div>
+-
+-              <div className="ecosystem-item-card">
+-                <div className="eco-card-header">
+-                  <span className="eco-icon-badge violet"><TrendingUp size={20} /></span>
+-                  <h4>NORIA PIPELINE</h4>
+-                </div>
+-                <p>Visualize e gerencie oportunidades por valor de proposta e probabilidade de fechamento.</p>
+-              </div>
+-
+-              <div className="ecosystem-item-card">
+-                <div className="eco-card-header">
+-                  <span className="eco-icon-badge blue"><KanbanSquare size={20} /></span>
+-                  <h4>NORIA FLOW (KANBAN)</h4>
+-                </div>
+-                <p>Acompanhe processos, tarefas e etapas comerciais com clareza, velocidade e produtividade.</p>
+-              </div>
+-
+-              <div className="ecosystem-item-card">
+-                <div className="eco-card-header">
+-                  <span className="eco-icon-badge green"><CalendarDays size={20} /></span>
+-                  <h4>NORIA AGENDA</h4>
+-                </div>
+-                <p>Agendamentos integrados e controle de horários de visitas, reuniões e atendimentos.</p>
+-              </div>
+-
+-              <div className="ecosystem-item-card">
+-                <div className="eco-card-header">
+-                  <span className="eco-icon-badge amber"><DollarSign size={20} /></span>
+-                  <h4>NORIA FINANCE</h4>
+-                </div>
+-                <p>Controle financeiro, sinais de pagamento e histórico de propostas em um só lugar.</p>
+-              </div>
+-
+-              <div className="ecosystem-item-card">
+-                <div className="eco-card-header">
+-                  <span className="eco-icon-badge purple"><BarChart3 size={20} /></span>
+-                  <h4>NORIA INTELLIGENCE</h4>
+-                </div>
+-                <p>Dashboards completos para decisões estratégicas, horários de pico e taxas de conversão.</p>
+-              </div>
+-            </div>
++            <ul className="lp-eco">
++              {ECOSYSTEM.map(({ code, icon: Icon, text }, i) => (
++                <li key={code} data-reveal style={{ '--d': i * 0.6 }}>
++                  <span className="lp-eco-index lp-mono">{String(i + 1).padStart(2, '0')}</span>
++                  <span className="lp-eco-name">
++                    <small>NORIA</small>
++                    {code}
++                  </span>
++                  <p>{text}</p>
++                  <Icon size={20} className="lp-eco-icon" />
++                </li>
++              ))}
++            </ul>
+           </div>
+-        </div>
+-      </section>
+-
+-      {/* SEÇÃO "MENOS FERRAMENTAS. MAIS INTELIGÊNCIA." (BASEADA NA IMAGEM OFICIAL) */}
+-      <section className="home-less-tools-section">
+-        <div className="home-section-container">
+-          <div className="less-tools-grid">
+-            <div className="less-tools-copy">
+-              <span className="home-pill-badge">Eficiência Real</span>
+-              <h2>Menos ferramentas.<br /><span className="text-gradient-cyan">Mais inteligência.</span></h2>
+-              <p className="less-tools-intro">
+-                Substitua planilhas perdidas, CRM desconectado e atendentes sobrecarregados por um
+-                sistema único e fluido.
+-              </p>
+-
+-              <div className="pillars-benefit-list">
+-                <div className="benefit-item">
+-                  <div className="benefit-icon-circle"><UsersRound size={20} /></div>
+-                  <div>
+-                    <strong>Conecte pessoas</strong>
+-                    <p>Centralize relacionamentos, canais de conversa e equipes em um só lugar.</p>
+-                  </div>
+-                </div>
+-
+-                <div className="benefit-item">
+-                  <div className="benefit-icon-circle"><Zap size={20} /></div>
+-                  <div>
+-                    <strong>Automatize processos</strong>
+-                    <p>Reduza tarefas repetitivas, tire dúvidas básicas e ganhe tempo para fechar vendas.</p>
+-                  </div>
+-                </div>
+-
+-                <div className="benefit-item">
+-                  <div className="benefit-icon-circle"><TrendingUp size={20} /></div>
+-                  <div>
+-                    <strong>Acompanhe oportunidades</strong>
+-                    <p>Tenha visibilidade total do seu pipeline de clientes e avance com foco total.</p>
+-                  </div>
+-                </div>
+-
+-                <div className="benefit-item">
+-                  <div className="benefit-icon-circle"><BarChart3 size={20} /></div>
+-                  <div>
+-                    <strong>Transforme dados em decisões</strong>
+-                    <p>Dashboards inteligentes e relatórios rápidos para escolhas mais assertivas.</p>
+-                  </div>
+-                </div>
++        </section>
++
++        {/* 04 MÓDULOS */}
++        <section id="modulos" className="lp-section lp-section--sunken">
++          <div className="lp-container">
++            <div className="lp-modules-head">
++              <SectionHead index="04" label="Tour da plataforma" title="Conheça cada detalhe da sua nova central." />
++              <div className="lp-tabs" role="tablist" aria-label="Módulos da plataforma" data-reveal>
++                {MODULE_TABS.map(({ id, icon: Icon, label }) => (
++                  <button
++                    key={id}
++                    type="button"
++                    role="tab"
++                    id={`tab-${id}`}
++                    aria-selected={activeTab === id}
++                    aria-controls="lp-tab-panel"
++                    className={`lp-tab ${activeTab === id ? 'is-active' : ''}`}
++                    onClick={() => setActiveTab(id)}
++                  >
++                    <Icon size={16} /> {label}
++                  </button>
++                ))}
+               </div>
+             </div>
+ 
+-            <div className="less-tools-visual">
+-              <div className="mockup-frame-glass">
+-                <img
+-                  src={noriaFeaturesMockup}
+-                  alt="Menos ferramentas, mais inteligência - Interface NORIA"
+-                  className="less-tools-img"
+-                />
+-              </div>
+-            </div>
+-          </div>
+-        </div>
+-      </section>
+-
+-      {/* DEMONSTRAÇÃO REAL DO PRODUTO: CONVERSAS + ATENDIMENTO (BASEADA NA IMAGEM OFICIAL DO USUÁRIO) */}
+-      <section id="demonstracao" className="home-real-demo-section">
+-        <div className="home-section-container">
+-          <div className="section-header-centered">
+-            <span className="home-pill-badge">Operação Comprovada</span>
+-            <h2>Veja o atendimento em ação na prática</h2>
+-            <p>
+-              Exemplo real em concessionárias e empresas de serviços: enquanto a IA qualifica o veículo,
+-              ano e entrada, o painel organiza as conversas e agenda o test-drive para o vendedor.
+-            </p>
+-          </div>
+-
+-          <div className="real-demo-frame">
+-            <img
+-              src={noriaConversasPreview}
+-              alt="Prévia real do painel Aurora Veículos e do chat WhatsApp com Carlos Mendes"
+-              className="real-demo-img"
+-            />
+-            <div className="demo-caption-bar">
+-              <div className="caption-metric">
+-                <span className="dot green" />
+-                <strong>19 Conversas Ativas</strong>
+-              </div>
+-              <div className="caption-metric">
+-                <span className="dot yellow" />
+-                <strong>02 Aguardando Equipe Humana</strong>
+-              </div>
+-              <div className="caption-metric">
+-                <span className="dot blue" />
+-                <strong>09 Agendamentos Confirmados</strong>
++            <div
++              className="lp-tab-panel"
++              id="lp-tab-panel"
++              role="tabpanel"
++              aria-labelledby={`tab-${currentTab.id}`}
++              key={currentTab.id}
++            >
++              <div className="lp-tab-copy">
++                <span className="lp-tab-kicker">{currentTab.kicker}</span>
++                <h3>{currentTab.title}</h3>
++                <p>{currentTab.text}</p>
++                <ul>
++                  {currentTab.perks.map((perk) => (
++                    <li key={perk}><Check size={15} /> {perk}</li>
++                  ))}
++                </ul>
++                <button className="lp-link" type="button" onClick={() => goTo('?app=1')}>
++                  Abrir na plataforma <ArrowUpRight size={15} />
++                </button>
+               </div>
++              <figure className="lp-tab-visual">
++                <ModuleVisual id={currentTab.id} />
++                <figcaption className="lp-mono">
++                  {currentTab.id === 'conversas' ? 'Tela da plataforma' : 'Representação ilustrativa da interface'}
++                </figcaption>
++              </figure>
+             </div>
+           </div>
+-        </div>
+-      </section>
+-
+-      {/* OS 4 PILARES DA MARCA NORIA (BASEADO NO BRAND BOOK OFICIAL DO USUÁRIO) */}
+-      <section id="solucoes" className="home-pillars-brand-section">
+-        <div className="home-section-container">
+-          <div className="section-header-centered">
+-            <span className="home-pill-badge">Padrão de Excelência</span>
+-            <h2>Construída para empresas que não podem parar</h2>
+-            <p>
+-              Os quatro princípios que tornam a NORIA a escolha de operações de alta performance.
+-            </p>
+-          </div>
+-
+-          <div className="brand-pillars-grid">
+-            <div className="brand-pillar-card">
+-              <div className="pillar-num-badge">01</div>
+-              <ShieldCheck size={28} className="text-cyan" />
+-              <h3>SEGURA</h3>
+-              <p>Proteção de dados com criptografia de ponta a ponta, isolamento rigoroso por empresa e conformidade LGPD.</p>
+-            </div>
+-
+-            <div className="brand-pillar-card">
+-              <div className="pillar-num-badge">02</div>
+-              <Zap size={28} className="text-cyan" />
+-              <h3>RÁPIDA</h3>
+-              <p>Automação que acelera sua operação com tempo de resposta médio inferior a 3 segundos no WhatsApp.</p>
++        </section>
++
++        {/* 05 SEGURANÇA */}
++        <section id="seguranca" className="lp-section">
++          <div className="lp-container lp-trust">
++            <div className="lp-trust-statement">
++              <SectionHead index="05" label="Confiabilidade" title="Construída para empresas que não podem parar.">
++                Isolamento rigoroso entre empresas, criptografia em trânsito e em repouso, backups automatizados e
++                conformidade estrita com as políticas do WhatsApp e a LGPD.
++              </SectionHead>
++              <ul className="lp-security-list" data-reveal>
++                <li><Lock size={15} /> Criptografia de ponta a ponta</li>
++                <li><ShieldCheck size={15} /> Isolamento de dados por empresa</li>
++                <li><Building2 size={15} /> Servidores de alta disponibilidade</li>
++              </ul>
+             </div>
+ 
+-            <div className="brand-pillar-card">
+-              <div className="pillar-num-badge">03</div>
+-              <Layers size={28} className="text-cyan" />
+-              <h3>INTEGRADA</h3>
+-              <p>Tudo conectado em um único ecossistema: conversas, equipe, funil de vendas, agendamentos e métricas.</p>
+-            </div>
+-
+-            <div className="brand-pillar-card">
+-              <div className="pillar-num-badge">04</div>
+-              <Rocket size={28} className="text-cyan" />
+-              <h3>ESCALÁVEL</h3>
+-              <p>Do pequeno negócio local às grandes redes com múltiplas filiais e dezenas de atendentes.</p>
+-            </div>
+-          </div>
+-        </div>
+-      </section>
+-
+-      {/* SHOWCASE INTERATIVO DOS MÓDULOS */}
+-      <section id="modulos" className="home-modules-section">
+-        <div className="home-section-container">
+-          <div className="section-header-centered">
+-            <span className="home-pill-badge">Tour da Plataforma</span>
+-            <h2>Conheça cada detalhe da sua nova central</h2>
+-            <p>
+-              Alterne entre os módulos e veja como a interface foi projetada para dar clareza e agilidade ao seu dia a dia.
+-            </p>
+-          </div>
+-
+-          <div className="home-tabs-nav">
+-            <button
+-              type="button"
+-              className={`home-tab-btn ${activeTab === 'conversas' ? 'active' : ''}`}
+-              onClick={() => setActiveTab('conversas')}
+-            >
+-              <MessageCircle size={16} /> Central de Conversas
+-            </button>
+-            <button
+-              type="button"
+-              className={`home-tab-btn ${activeTab === 'kanban' ? 'active' : ''}`}
+-              onClick={() => setActiveTab('kanban')}
+-            >
+-              <KanbanSquare size={16} /> Kanban de Vendas
+-            </button>
+-            <button
+-              type="button"
+-              className={`home-tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
+-              onClick={() => setActiveTab('dashboard')}
+-            >
+-              <Layers size={16} /> Métricas & Dashboard
+-            </button>
+-            <button
+-              type="button"
+-              className={`home-tab-btn ${activeTab === 'configuracoes' ? 'active' : ''}`}
+-              onClick={() => setActiveTab('configuracoes')}
+-            >
+-              <Building2 size={16} /> Multiempresa & Equipe
+-            </button>
++            <ul className="lp-pillars">
++              {PILLARS.map(({ icon: Icon, title, text }, i) => (
++                <li key={title} data-reveal style={{ '--d': i * 0.6 }}>
++                  <Icon size={22} />
++                  <h3>{title}</h3>
++                  <p>{text}</p>
++                </li>
++              ))}
++            </ul>
+           </div>
+-
+-          <div className="home-tab-display">
+-            {activeTab === 'conversas' && (
+-              <div className="tab-showcase-item">
+-                <div className="tab-showcase-text">
+-                  <div className="badge-tag">Atendimento Ágil</div>
+-                  <h3>Toda a comunicação da sua empresa em uma tela inteligente</h3>
+-                  <p>
+-                    Acesse todas as conversas ativas do WhatsApp e Telegram. Acompanhe a IA respondendo em
+-                    tempo real, leia áudios transcritos sem precisar escutar e assuma o controle com apenas um clique.
+-                  </p>
+-                  <ul className="check-perks">
+-                    <li><Check size={16} /> Áudios de clientes transcritos em texto automaticamente</li>
+-                    <li><Check size={16} /> Envio de fotos, anexos e localização oficial</li>
+-                    <li><Check size={16} /> Histórico completo de conversas por cliente</li>
+-                  </ul>
+-                  <button className="home-tab-cta" type="button" onClick={() => goTo('?app=1')}>
+-                    Testar Central de Conversas <ArrowRight size={15} />
+-                  </button>
+-                </div>
+-                <div className="tab-showcase-visual">
+-                  <img
+-                    src={conversationInterfaceImage}
+-                    alt="Interface da Central de Conversas"
+-                    className="tab-image-preview"
+-                  />
+-                </div>
+-              </div>
+-            )}
+-
+-            {activeTab === 'kanban' && (
+-              <div className="tab-showcase-item">
+-                <div className="tab-showcase-text">
+-                  <div className="badge-tag">Gestão de Oportunidades</div>
+-                  <h3>Funil visual para nunca mais perder um lead qualificado</h3>
+-                  <p>
+-                    Organize contatos por etapas comerciais: Novos Leads, Em Atendimento, Financiamento,
+-                    Visita Agendada ou Fechamento. Arraste cards com facilidade e configure alertas automáticos de retorno.
+-                  </p>
+-                  <ul className="check-perks">
+-                    <li><Check size={16} /> Classificação automática de leads frios, mornos e quentes</li>
+-                    <li><Check size={16} /> Atribuição de responsável por negócio</li>
+-                    <li><Check size={16} /> Sinal de pagamento e registro de propostas</li>
+-                  </ul>
+-                  <button className="home-tab-cta" type="button" onClick={() => goTo('?app=1')}>
+-                    Ver o Kanban na Prática <ArrowRight size={15} />
+-                  </button>
+-                </div>
+-                <div className="tab-showcase-visual">
+-                  <img
+-                    src={dashboardAndConversationImage}
+-                    alt="Visão de Kanban e Oportunidades"
+-                    className="tab-image-preview"
+-                  />
+-                </div>
+-              </div>
+-            )}
+-
+-            {activeTab === 'dashboard' && (
+-              <div className="tab-showcase-item">
+-                <div className="tab-showcase-text">
+-                  <div className="badge-tag">Controle Gerencial</div>
+-                  <h3>Métricas claras sobre o desempenho do seu atendimento</h3>
+-                  <p>
+-                    Saiba quantos clientes entraram em contato, quais canais mais convertem, horários de pico
+-                    e quanto tempo sua empresa leva para atender. Decisões baseadas em números reais.
+-                  </p>
+-                  <ul className="check-perks">
+-                    <li><Check size={16} /> Gráficos de volume diário e taxa de conversão</li>
+-                    <li><Check size={16} /> Identificação dos horários com mais mensagens</li>
+-                    <li><Check size={16} /> Relatórios exportáveis com 1 clique</li>
+-                  </ul>
+-                  <button className="home-tab-cta" type="button" onClick={() => goTo('?app=1')}>
+-                    Acessar o Painel de Métricas <ArrowRight size={15} />
+-                  </button>
+-                </div>
+-                <div className="tab-showcase-visual">
+-                  <img
+-                    src={dashboardAndConversationImage}
+-                    alt="Dashboard de métricas e atendimento"
+-                    className="tab-image-preview"
+-                  />
+-                </div>
+-              </div>
+-            )}
+-
+-            {activeTab === 'configuracoes' && (
+-              <div className="tab-showcase-item">
+-                <div className="tab-showcase-text">
+-                  <div className="badge-tag">Estrutura Empresarial</div>
+-                  <h3>Arquitetura Multi-Tenant: gerencie filiais e equipes separadas</h3>
+-                  <p>
+-                    Tenha múltiplos clientes, filiais ou marcas sob uma mesma infraestrutura. Cada empresa
+-                    possui seus próprios contatos, canais, agentes humanos e regras comerciais exclusivas.
+-                  </p>
+-                  <ul className="check-perks">
+-                    <li><Check size={16} /> Permissões granulares de acesso por atendente</li>
+-                    <li><Check size={16} /> Catálogo de produtos e serviços individualizado</li>
+-                    <li><Check size={16} /> Políticas de atendimento e horários de funcionamento customizados</li>
+-                  </ul>
+-                  <button className="home-tab-cta" type="button" onClick={() => goTo('?app=1')}>
+-                    Explorar Gestão de Empresas <ArrowRight size={15} />
+-                  </button>
+-                </div>
+-                <div className="tab-showcase-visual">
+-                  <img
+-                    src={settingsInterfaceImage}
+-                    alt="Gestão de empresas e configurações"
+-                    className="tab-image-preview"
+-                  />
+-                </div>
+-              </div>
+-            )}
+-          </div>
+-        </div>
+-      </section>
+-
+-      {/* SEGURANÇA E CONFIABILIDADE */}
+-      <section id="seguranca" className="home-security-section">
+-        <div className="home-section-container">
+-          <div className="home-security-card">
+-            <div className="security-icon-large">
+-              <ShieldCheck size={38} />
+-            </div>
+-            <div className="security-content">
+-              <span className="home-pill-badge">Confiabilidade Corporativa</span>
+-              <h2>Seus dados protegidos com segurança de nível bancário</h2>
+-              <p>
+-                A plataforma opera com isolamento rigoroso entre empresas, criptografia em trânsito e em repouso,
+-                backups automatizados e conformidade estrita com as políticas do WhatsApp e LGPD.
++        </section>
++
++        {/* CTA FINAL */}
++        <section className="lp-final">
++          <div className="lp-container lp-final-inner" data-reveal>
++            <h2 className="lp-h2">
++              Pare de perder vendas por <em>demora no WhatsApp.</em>
++            </h2>
++            <div className="lp-final-side">
++              <p className="lp-lead">
++                Junte-se às empresas que já automatizaram a qualificação de clientes e aceleraram o fechamento com a NORIA.
+               </p>
+-              <div className="security-badges-row">
+-                <span><Lock size={15} /> Criptografia de Ponta a Ponta</span>
+-                <span><CheckCircle2 size={15} /> Isolamento de Dados por Tenant</span>
+-                <span><Building2 size={15} /> Servidores de Alta Disponibilidade</span>
++              <div className="lp-final-actions">
++                <button className="lp-btn lp-btn--primary lp-btn--lg" type="button" onClick={() => goTo('?app=1')}>
++                  Explorar a plataforma <ArrowRight size={18} />
++                </button>
++                <a className="lp-btn lp-btn--quiet lp-btn--lg" href="#calculadora">
++                  Refazer a simulação
++                </a>
+               </div>
++              <p className="lp-final-note lp-mono">Configuração rápida · Sem burocracia · Suporte comercial dedicado</p>
+             </div>
+           </div>
+-        </div>
+-      </section>
+-
+-      {/* CTA FINAL DE ALTA CONVERSÃO */}
+-      <section className="home-final-cta-section">
+-        <div className="home-final-cta-card">
+-          <div className="final-cta-glow" aria-hidden="true" />
+-          <span className="home-pill-badge">Transforme seu Atendimento</span>
+-          <h2>Pare de perder vendas por demora no WhatsApp.</h2>
+-          <p>
+-            Junte-se às empresas que já automatizaram a qualificação de clientes e aceleraram o fechamento
+-            com a plataforma NORIA.
+-          </p>
+-
+-          <div className="home-final-actions">
+-            <button
+-              className="home-btn-final-primary"
+-              type="button"
+-              onClick={() => goTo('?app=1')}
+-            >
+-              Explorar a Plataforma Agora <ArrowRight size={18} />
+-            </button>
+-            <button
+-              className="home-btn-final-secondary"
+-              type="button"
+-              onClick={() => goTo('?auth=login')}
+-            >
+-              Já sou cliente • Fazer Login
+-            </button>
++        </section>
++      </main>
++
++      <footer className="lp-footer">
++        <div className="lp-container lp-footer-inner">
++          <div className="lp-footer-brand">
++            <img src={noriaLogo} alt="NORIA" className="lp-footer-logo" />
++            <p>A plataforma para unificar WhatsApp, atendimento inteligente, CRM e vendas.</p>
+           </div>
+-
+-          <small className="final-subnote">
+-            Configuração rápida • Sem burocracia • Suporte comercial dedicado
+-          </small>
+-        </div>
+-      </section>
+-
+-      {/* FOOTER CORPORATIVO */}
+-      <footer className="home-footer-section">
+-        <div className="home-footer-container">
+-          <div className="home-footer-brand">
+-            <img src={noriaLogo} alt="NORIA" className="home-footer-logo" />
+-            <span className="footer-tagline">NORIA • Inteligência em Movimento</span>
+-            <p className="footer-desc">
+-              A plataforma definitiva para unificar WhatsApp, atendimento inteligente, CRM e vendas.
+-            </p>
+-          </div>
+-
+-          <div className="home-footer-links-grid">
+-            <div className="footer-col">
++          <nav className="lp-footer-cols" aria-label="Rodapé">
++            <div>
+               <h4>Produto</h4>
+-              <a href="#ecossistema">Ecossistema</a>
+-              <a href="#solucoes">Central de WhatsApp</a>
+-              <a href="#calculadora">Calculadora de Salário</a>
+-              <a href="#demonstracao">Demonstração Real</a>
+-              <a href="#modulos">Multiempresa</a>
++              {NAV_LINKS.map((link) => (
++                <a key={link.id} href={`#${link.id}`}>{link.label}</a>
++              ))}
+             </div>
+-
+-            <div className="footer-col">
+-              <h4>Empresa</h4>
+-              <button type="button" onClick={() => goTo('?app=1')}>Demonstração</button>
+-              <button type="button" onClick={() => goTo('?auth=login')}>Área do Cliente</button>
+-              <a href="#seguranca">Segurança & LGPD</a>
+-            </div>
+-
+-            <div className="footer-col">
+-              <h4>Acesso Rápido</h4>
+-              <button className="footer-login-link" type="button" onClick={() => goTo('?auth=login')}>
+-                Fazer Login na Plataforma →
+-              </button>
++            <div>
++              <h4>Acesso</h4>
++              <button type="button" onClick={() => goTo('?app=1')}>Área do cliente</button>
+             </div>
+-          </div>
++          </nav>
+         </div>
+-
+-        <div className="home-footer-bottom">
+-          <p>© {new Date().getFullYear()} NORIA / Mag.IA. Todos os direitos reservados.</p>
++        <div className="lp-container lp-footer-bottom">
++          <span>© {new Date().getFullYear()} NORIA / Mag.IA. Todos os direitos reservados.</span>
++          <span className="lp-mono">Inteligência em movimento</span>
+         </div>
+       </footer>
+     </div>
+diff --git a/app/src/features/landing/SavingsSimulator.jsx b/app/src/features/landing/SavingsSimulator.jsx
+new file mode 100644
+index 0000000..d529d56
+--- /dev/null
++++ b/app/src/features/landing/SavingsSimulator.jsx
+@@ -0,0 +1,266 @@
++import React, { useCallback, useEffect, useRef, useState } from 'react';
++import { ArrowRight, Pause, RotateCcw } from 'lucide-react';
++import {
++  computeSavings,
++  DEMO_SCENARIOS,
++  maxManualMonthly,
++  SAVINGS_ASSUMPTIONS,
++  SLIDER_LIMITS,
++} from './savingsModel.js';
++import { useInView, usePrefersReducedMotion, useTweenedNumber } from './useLandingMotion.js';
++
++const TWEEN_MS = 1500;
++const HOLD_MS = 2600;
++
++const formatBRL = (value) =>
++  Math.round(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
++
++const formatMultiplier = (value) => value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
++
++const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
++
++const snap = (value, step) => Math.round(value / step) * step;
++
++const COMPARISON = [
++  { topic: 'Tempo de resposta', today: '15 a 45 minutos', noria: '3 segundos' },
++  { topic: 'Cobertura', today: 'Sem atendimento à noite e nos finais de semana', noria: '24 horas por dia' },
++  { topic: 'Follow-up', today: 'Leads e orçamentos esquecidos', noria: 'Follow-ups programados no Kanban' },
++  { topic: 'Qualificação', today: 'Vendedores perdem tempo com curiosos', noria: 'IA coleta nome, interesse e entrada' },
++];
++
++function Slider({ id, label, display, value, limits, onUserInput }) {
++  const fill = ((value - limits.min) / (limits.max - limits.min)) * 100;
++  return (
++    <div className="sim-control">
++      <label htmlFor={id}>
++        <span>{label}</span>
++        <strong className="lp-mono">{display}</strong>
++      </label>
++      <input
++        id={id}
++        type="range"
++        min={limits.min}
++        max={limits.max}
++        step={limits.step}
++        value={value}
++        className="sim-slider"
++        style={{ '--fill': `${fill}%` }}
++        onPointerDown={() => onUserInput(null)}
++        onKeyDown={() => onUserInput(null)}
++        onChange={(event) => onUserInput(Number(event.target.value))}
++      />
++    </div>
++  );
++}
++
++export function SavingsSimulator({ onStart }) {
++  const rootRef = useRef(null);
++  const inView = useInView(rootRef, { threshold: 0.35 });
++  const reducedMotion = usePrefersReducedMotion();
++
++  const [inputs, setInputs] = useState(DEMO_SCENARIOS[0]);
++  const [demoActive, setDemoActive] = useState(true);
++  const [scenarioIndex, setScenarioIndex] = useState(0);
++
++  const inputsRef = useRef(inputs);
++  inputsRef.current = inputs;
++  const scenarioRef = useRef(0);
++  // Bloqueio síncrono: um frame já agendado da demonstração nunca sobrescreve o visitante.
++  const userControlRef = useRef(false);
++
++  const demoRunning = demoActive && inView && !reducedMotion;
++
++  useEffect(() => {
++    if (!demoRunning) return undefined;
++    let cancelled = false;
++    let frame = 0;
++    let timer = 0;
++
++    const goTo = (index) => {
++      const from = inputsRef.current;
++      const to = DEMO_SCENARIOS[index];
++      const startedAt = performance.now();
++      const tick = (now) => {
++        if (cancelled || userControlRef.current) return;
++        const t = Math.min(1, (now - startedAt) / TWEEN_MS);
++        const eased = easeInOut(t);
++        const next = {
++          attendants: Math.round(from.attendants + (to.attendants - from.attendants) * eased),
++          salary: snap(from.salary + (to.salary - from.salary) * eased, SLIDER_LIMITS.salary.step),
++        };
++        const current = inputsRef.current;
++        if (next.attendants !== current.attendants || next.salary !== current.salary) setInputs(next);
++        if (t < 1) {
++          frame = requestAnimationFrame(tick);
++        } else {
++          scenarioRef.current = index;
++          setScenarioIndex(index);
++          timer = window.setTimeout(() => goTo((index + 1) % DEMO_SCENARIOS.length), HOLD_MS);
++        }
++      };
++      frame = requestAnimationFrame(tick);
++    };
++
++    // Retoma do cenário atual: segura nele antes de avançar.
++    timer = window.setTimeout(() => goTo((scenarioRef.current + 1) % DEMO_SCENARIOS.length), HOLD_MS);
++
++    return () => {
++      cancelled = true;
++      cancelAnimationFrame(frame);
++      window.clearTimeout(timer);
++    };
++  }, [demoRunning]);
++
++  const takeControl = useCallback((field, value) => {
++    userControlRef.current = true;
++    setDemoActive(false);
++    if (value !== null) setInputs((prev) => ({ ...prev, [field]: value }));
++  }, []);
++
++  const restartDemo = () => {
++    userControlRef.current = false;
++    scenarioRef.current = 0;
++    setScenarioIndex(0);
++    setInputs(DEMO_SCENARIOS[0]);
++    setDemoActive(true);
++  };
++
++  const result = computeSavings(inputs);
++  const scaleMax = maxManualMonthly();
++  const tweenOptions = { duration: 450, disabled: reducedMotion };
++  const manualMonthly = useTweenedNumber(result.manualMonthly, tweenOptions);
++  const manualYearly = useTweenedNumber(result.manualYearly, tweenOptions);
++  const savingsMonthly = useTweenedNumber(result.savingsMonthly, tweenOptions);
++  const savingsYearly = useTweenedNumber(result.savingsYearly, tweenOptions);
++  const withNoriaMonthly = useTweenedNumber(result.withNoriaMonthly, tweenOptions);
++
++  // Comprimento total em escala de raiz (equipes pequenas continuam visíveis);
++  // a divisão "Com NORIA" é linear sobre o mesmo comprimento, então as duas
++  // barras permanecem proporcionais entre si.
++  const totalWidth = Math.sqrt(Math.min(1, manualMonthly / scaleMax)) * 100;
++  const share = (value) => (manualMonthly > 0 ? value / manualMonthly : 0);
++  const pct = (value) => `${(totalWidth * share(value)).toFixed(2)}%`;
++
++  let status;
++  if (reducedMotion) status = 'Ajuste os valores para simular a sua operação';
++  else if (demoActive) status = `Demonstração automática · cenário ${scenarioIndex + 1} de ${DEMO_SCENARIOS.length}`;
++  else status = 'Você está no controle da simulação';
++
++  return (
++    <div className={`sim ${demoRunning ? 'is-demo' : ''}`} ref={rootRef}>
++      <div className="sim-status">
++        <span className="sim-status-label">
++          <span className="sim-status-dot" aria-hidden="true" />
++          Simulação interativa
++          <span className="sim-status-sep" aria-hidden="true">/</span>
++          <span aria-live="polite">{status}</span>
++        </span>
++        {!reducedMotion && (
++          demoActive ? (
++            <button type="button" className="sim-status-btn" onClick={() => takeControl('attendants', null)}>
++              <Pause size={13} /> Pausar
++            </button>
++          ) : (
++            <button type="button" className="sim-status-btn" onClick={restartDemo}>
++              <RotateCcw size={13} /> Reiniciar demonstração
++            </button>
++          )
++        )}
++      </div>
++
++      <div className="sim-grid">
++        <div className="sim-area sim-area--params">
++          <span className="sim-step"><b>1</b> Sua equipe hoje</span>
++          <Slider
++            id="attendant-range"
++            label="Pessoas respondendo o WhatsApp"
++            display={`${result.attendants} ${result.attendants === 1 ? 'pessoa' : 'pessoas'}`}
++            value={inputs.attendants}
++            limits={SLIDER_LIMITS.attendants}
++            onUserInput={(value) => takeControl('attendants', value)}
++          />
++          <Slider
++            id="salary-range"
++            label="Salário bruto médio"
++            display={formatBRL(result.salary)}
++            value={inputs.salary}
++            limits={SLIDER_LIMITS.salary}
++            onUserInput={(value) => takeControl('salary', value)}
++          />
++          <p className="sim-hours">
++            <strong className="lp-mono">{Math.round(result.repetitiveHoursPerDay)} h/dia</strong>
++            da equipe respondendo dúvidas repetidas que a IA responderia em segundos.
++          </p>
++        </div>
++
++        <div className="sim-area sim-area--current">
++          <span className="sim-step"><b>2</b> Atendimento tradicional</span>
++          <p className="sim-figure sim-figure--current">
++            {formatBRL(manualMonthly)}<small>/mês</small>
++          </p>
++          <p className="sim-sub">{formatBRL(manualYearly)} por ano</p>
++          <p className="sim-detail">
++            {formatBRL(result.costPerAttendant)} por atendente: salário × {formatMultiplier(SAVINGS_ASSUMPTIONS.laborCostMultiplier)} de
++            encargos, benefícios e infraestrutura.
++          </p>
++        </div>
++
++        <div className="sim-area sim-area--noria">
++          <span className="sim-step"><b>3</b> Economia estimada com a NORIA</span>
++          <p className="sim-figure sim-figure--savings">
++            {formatBRL(savingsMonthly)}<small>/mês</small>
++          </p>
++          <p className="sim-sub sim-sub--positive">até {formatBRL(savingsYearly)} por ano</p>
++          <button className="lp-btn lp-btn--primary lp-btn--lg sim-cta" type="button" onClick={onStart}>
++            Quero economizar {formatBRL(result.savingsMonthly)}/mês <ArrowRight size={17} />
++          </button>
++        </div>
++
++        <div className="sim-bars" aria-hidden="true">
++          <div className="sim-bar-row">
++            <span className="sim-bar-label">Hoje</span>
++            <div className="sim-bar-track">
++              <span className="sim-bar sim-bar--current" style={{ width: pct(manualMonthly) }} />
++            </div>
++            <span className="sim-bar-value lp-mono">{formatBRL(manualMonthly)}</span>
++          </div>
++          <div className="sim-bar-row">
++            <span className="sim-bar-label">Com NORIA</span>
++            <div className="sim-bar-track">
++              <span className="sim-bar sim-bar--noria" style={{ width: pct(withNoriaMonthly) }} />
++              <span className="sim-bar sim-bar--saved" style={{ width: pct(savingsMonthly) }} />
++            </div>
++            <span className="sim-bar-value lp-mono">{formatBRL(withNoriaMonthly)}</span>
++          </div>
++        </div>
++      </div>
++
++      <dl className="sim-compare">
++        <div className="sim-compare-head" aria-hidden="true">
++          <span />
++          <span>Hoje</span>
++          <span>Com NORIA</span>
++        </div>
++        {COMPARISON.map((row) => (
++          <div className="sim-compare-row" key={row.topic}>
++            <dt>{row.topic}</dt>
++            <dd className="sim-compare-today">{row.today}</dd>
++            <dd className="sim-compare-noria">{row.noria}</dd>
++          </div>
++        ))}
++      </dl>
++
++      <p className="sim-assumptions">
++        Premissas da simulação: custo por atendente igual ao salário × {formatMultiplier(SAVINGS_ASSUMPTIONS.laborCostMultiplier)};
++        a IA assume {Math.round(SAVINGS_ASSUMPTIONS.automatableShare * 100)}% do atendimento repetitivo;
++        {' '}{formatMultiplier(SAVINGS_ASSUMPTIONS.repetitiveHoursPerAttendant)} h/dia de perguntas repetidas por atendente.
++        {result.includesNoriaCost
++          ? ` Inclui o custo da NORIA de ${formatBRL(result.noriaMonthly)}/mês.`
++          : ' Valor da assinatura NORIA não incluído.'}
++        {' '}Os cenários automáticos são exemplos; o resultado depende das características de cada operação.
++      </p>
++    </div>
++  );
++}
++
++export default SavingsSimulator;
+diff --git a/app/src/features/landing/savingsModel.js b/app/src/features/landing/savingsModel.js
+new file mode 100644
+index 0000000..299c9d4
+--- /dev/null
++++ b/app/src/features/landing/savingsModel.js
+@@ -0,0 +1,69 @@
++// Modelo da simulação de economia da landing page.
++// Todas as premissas ficam aqui para que a interface (sliders, valores, barras
++// e CTA) leia um único estado e uma única fórmula.
++
++const readPositiveNumber = (value) => {
++  const parsed = Number(value);
++  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
++};
++
++const env = (typeof import.meta !== 'undefined' && import.meta.env) || {};
++
++export const SAVINGS_ASSUMPTIONS = Object.freeze({
++  // Encargos trabalhistas, benefícios e infraestrutura sobre o salário bruto (CLT).
++  laborCostMultiplier: 1.75,
++  // Parcela do atendimento repetitivo assumida pela IA. Igual ao teto comunicado
++  // na página ("até 60% de redução potencial"); não é garantia de resultado.
++  automatableShare: 0.6,
++  // Horas diárias que cada atendente gasta com perguntas repetidas.
++  repetitiveHoursPerAttendant: 4.5,
++  // Custo mensal da NORIA, quando configurado (VITE_NORIA_MONTHLY_COST).
++  // Sem valor configurado, a simulação mostra a economia bruta e avisa isso.
++  noriaMonthlyCost: readPositiveNumber(env.VITE_NORIA_MONTHLY_COST),
++});
++
++export const SLIDER_LIMITS = Object.freeze({
++  attendants: { min: 1, max: 12, step: 1 },
++  salary: { min: 1500, max: 6000, step: 100 },
++});
++
++// Cenários da demonstração automática: exemplos de interação, não dados comerciais.
++export const DEMO_SCENARIOS = Object.freeze([
++  { attendants: 2, salary: 2400 },
++  { attendants: 3, salary: 3000 },
++  { attendants: 5, salary: 3500 },
++]);
++
++const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
++
++export function computeSavings({ attendants, salary }, assumptions = SAVINGS_ASSUMPTIONS) {
++  const people = clamp(Math.round(Number(attendants) || 0), SLIDER_LIMITS.attendants.min, SLIDER_LIMITS.attendants.max);
++  const grossSalary = clamp(Number(salary) || 0, SLIDER_LIMITS.salary.min, SLIDER_LIMITS.salary.max);
++
++  const costPerAttendant = Math.round(grossSalary * assumptions.laborCostMultiplier);
++  const manualMonthly = people * costPerAttendant;
++  const automatedMonthly = Math.round(manualMonthly * assumptions.automatableShare);
++  const noriaMonthly = assumptions.noriaMonthlyCost ?? null;
++  const withNoriaMonthly = manualMonthly - automatedMonthly + (noriaMonthly ?? 0);
++  const savingsMonthly = Math.max(0, manualMonthly - withNoriaMonthly);
++
++  return {
++    attendants: people,
++    salary: grossSalary,
++    costPerAttendant,
++    manualMonthly,
++    manualYearly: manualMonthly * 12,
++    withNoriaMonthly,
++    noriaMonthly,
++    includesNoriaCost: noriaMonthly !== null,
++    savingsMonthly,
++    savingsYearly: savingsMonthly * 12,
++    savingsShare: manualMonthly > 0 ? savingsMonthly / manualMonthly : 0,
++    repetitiveHoursPerDay: people * assumptions.repetitiveHoursPerAttendant,
++  };
++}
++
++// Maior custo manual possível nos limites dos sliders: escala comum das barras.
++export function maxManualMonthly(assumptions = SAVINGS_ASSUMPTIONS) {
++  return SLIDER_LIMITS.attendants.max * Math.round(SLIDER_LIMITS.salary.max * assumptions.laborCostMultiplier);
++}
+diff --git a/app/src/features/landing/useLandingMotion.js b/app/src/features/landing/useLandingMotion.js
+new file mode 100644
+index 0000000..4c17a19
+--- /dev/null
++++ b/app/src/features/landing/useLandingMotion.js
+@@ -0,0 +1,112 @@
++import { useEffect, useRef, useState } from 'react';
++
++const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
++
++export function usePrefersReducedMotion() {
++  const [reduced, setReduced] = useState(() =>
++    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
++      ? window.matchMedia(REDUCED_MOTION_QUERY).matches
++      : false,
++  );
++
++  useEffect(() => {
++    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
++    const query = window.matchMedia(REDUCED_MOTION_QUERY);
++    const onChange = () => setReduced(query.matches);
++    query.addEventListener('change', onChange);
++    return () => query.removeEventListener('change', onChange);
++  }, []);
++
++  return reduced;
++}
++
++// Informa se o elemento está na área visível. `once` mantém true após a primeira entrada.
++export function useInView(ref, { threshold = 0.25, once = false } = {}) {
++  const [inView, setInView] = useState(false);
++
++  useEffect(() => {
++    const node = ref.current;
++    if (!node || typeof IntersectionObserver === 'undefined') {
++      setInView(true);
++      return undefined;
++    }
++    const observer = new IntersectionObserver(
++      ([entry]) => {
++        if (entry.isIntersecting) {
++          setInView(true);
++          if (once) observer.disconnect();
++        } else if (!once) {
++          setInView(false);
++        }
++      },
++      { threshold },
++    );
++    observer.observe(node);
++    return () => observer.disconnect();
++  }, [ref, threshold, once]);
++
++  return inView;
++}
++
++const easeOutCubic = (t) => 1 - (1 - t) ** 3;
++
++// Transição numérica suave até `target`; o valor final é sempre exatamente `target`.
++export function useTweenedNumber(target, { duration = 600, disabled = false, from } = {}) {
++  const [value, setValue] = useState(from ?? target);
++  const valueRef = useRef(value);
++
++  useEffect(() => {
++    if (disabled || typeof requestAnimationFrame === 'undefined') {
++      valueRef.current = target;
++      setValue(target);
++      return undefined;
++    }
++    const start = valueRef.current;
++    if (start === target) return undefined;
++    const startedAt = performance.now();
++    let frame;
++    const tick = (now) => {
++      const progress = Math.min(1, (now - startedAt) / duration);
++      const next = progress === 1 ? target : start + (target - start) * easeOutCubic(progress);
++      valueRef.current = next;
++      setValue(next);
++      if (progress < 1) frame = requestAnimationFrame(tick);
++    };
++    frame = requestAnimationFrame(tick);
++    return () => cancelAnimationFrame(frame);
++  }, [target, duration, disabled]);
++
++  return value;
++}
++
++// Escreve em `--progress` (0 a 1) quanto do elemento já atravessou a viewport.
++export function useScrollProgressVar(ref, { disabled = false, start = 1, end = 0.35 } = {}) {
++  useEffect(() => {
++    const node = ref.current;
++    if (!node || disabled || typeof window === 'undefined') {
++      node?.style.setProperty('--progress', '1');
++      return undefined;
++    }
++    let frame = 0;
++    const update = () => {
++      frame = 0;
++      const rect = node.getBoundingClientRect();
++      const viewport = window.innerHeight || 1;
++      const startY = viewport * start;
++      const endY = viewport * end - rect.height;
++      const raw = (startY - rect.top) / Math.max(1, startY - endY);
++      node.style.setProperty('--progress', Math.min(1, Math.max(0, raw)).toFixed(4));
++    };
++    const onScroll = () => {
++      if (!frame) frame = requestAnimationFrame(update);
++    };
++    update();
++    window.addEventListener('scroll', onScroll, { passive: true });
++    window.addEventListener('resize', onScroll);
++    return () => {
++      if (frame) cancelAnimationFrame(frame);
++      window.removeEventListener('scroll', onScroll);
++      window.removeEventListener('resize', onScroll);
++    };
++  }, [ref, disabled, start, end]);
++}
+diff --git a/app/src/landing.css b/app/src/landing.css
+index 123cfe7..d7bc9c1 100644
+--- a/app/src/landing.css
++++ b/app/src/landing.css
+@@ -1,24 +1,9 @@
+ /* ==========================================================================
+-   NORIA / Mag.IA — LANDING PAGE (Estilo Openbox B2B Comercial Moderno)
++   NORIA / Mag.IA — Landing page comercial
++   Tokens do sistema (styles/base/tokens.css): Source Sans 3 como fonte
++   padrão, Newsreader itálico para ênfase editorial e mono para números.
+    ========================================================================== */
+ 
+-:root {
+-  --home-bg: #070b12;
+-  --home-card-bg: #0d1422;
+-  --home-card-hover: #121c2e;
+-  --home-border: rgba(255, 255, 255, 0.08);
+-  --home-border-hover: rgba(0, 212, 255, 0.3);
+-  --home-text-main: #f8fafc;
+-  --home-text-muted: #94a3b8;
+-  --home-text-dim: #64748b;
+-  --home-cyan: #00d4ff;
+-  --home-cyan-glow: rgba(0, 212, 255, 0.25);
+-  --home-blue: #2563eb;
+-  --home-emerald: #10b981;
+-  --home-emerald-glow: rgba(16, 185, 129, 0.25);
+-  --home-amber: #f59e0b;
+-}
+-
+ html.home-view,
+ body.home-view {
+   height: auto !important;
+@@ -27,1874 +12,1913 @@ body.home-view {
+   overflow-x: hidden !important;
+ }
+ 
++html.home-view {
++  scroll-behavior: smooth;
++  scroll-padding-top: 84px;
++}
++
+ #root {
+   min-height: 100%;
+ }
+ 
+ .home-wrapper {
++  --lp-bg: var(--bg, #0B1220);
++  --lp-bg-deep: var(--surface-sunken, #070d18);
++  --lp-surface: var(--surface, #0f182b);
++  --lp-surface-2: var(--surface-soft, #142036);
++  --lp-surface-3: var(--surface-elevated, #1a2944);
++  --lp-text: var(--text, #F2F4F7);
++  --lp-muted: var(--muted, #8b9cb5);
++  --lp-dim: #6f809a;
++  --lp-line: var(--line, rgba(242, 244, 247, 0.08));
++  --lp-line-strong: var(--line-strong, rgba(242, 244, 247, 0.16));
++  --lp-accent: var(--brand, #00E0FF);
++  --lp-accent-ink: #03141c;
++  --lp-accent-soft: rgba(0, 224, 255, 0.1);
++  --lp-green: var(--green, #34d399);
++  --lp-amber: var(--amber, #fbbf24);
++  --lp-max: 1680px;
++  --lp-gutter: clamp(20px, 4.5vw, 88px);
++  --lp-nav-h: 68px;
++  --lp-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
++
+   position: relative;
+   min-height: 100vh;
+   width: 100%;
+-  background-color: var(--home-bg);
+-  color: var(--home-text-main);
+-  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+-  overflow-x: hidden;
+-  line-height: 1.5;
++  background: var(--lp-bg);
++  color: var(--lp-text);
++  font-family: var(--font-sans);
++  font-size: 17px;
++  line-height: 1.55;
++  overflow-x: clip;
++  -webkit-font-smoothing: antialiased;
+ }
+ 
+-/* Fundo e Efeitos de Luz Ambiente */
+-.home-ambient-glow {
+-  position: absolute;
+-  pointer-events: none;
+-  border-radius: 50%;
+-  filter: blur(120px);
+-  z-index: 0;
++.home-wrapper *,
++.home-wrapper *::before,
++.home-wrapper *::after {
++  box-sizing: border-box;
+ }
+ 
+-.glow-top {
+-  top: -150px;
+-  left: 50%;
+-  transform: translateX(-50%);
+-  width: 900px;
+-  height: 500px;
+-  background: radial-gradient(circle, rgba(0, 212, 255, 0.12) 0%, rgba(37, 99, 235, 0.08) 50%, transparent 80%);
++:where(.home-wrapper) :where(h1, h2, h3, h4, p, ul, ol, dl, dd, figure) {
++  margin: 0;
++  padding: 0;
+ }
+ 
+-.glow-accent {
+-  top: 900px;
+-  right: -100px;
+-  width: 600px;
+-  height: 600px;
+-  background: radial-gradient(circle, rgba(16, 185, 129, 0.08) 0%, rgba(99, 102, 241, 0.05) 50%, transparent 80%);
++:where(.home-wrapper) :where(ul, ol) {
++  list-style: none;
+ }
+ 
+-.home-grid-pattern {
+-  position: absolute;
+-  inset: 0;
+-  height: 1200px;
+-  background-image: linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+-  background-size: 64px 64px;
+-  mask-image: radial-gradient(ellipse at top center, black 20%, transparent 80%);
+-  -webkit-mask-image: radial-gradient(ellipse at top center, black 20%, transparent 80%);
+-  pointer-events: none;
+-  z-index: 0;
+-}
+-
+-/* Banner de Sessão Ativa */
+-.home-session-banner {
+-  background: linear-gradient(90deg, rgba(0, 212, 255, 0.15) 0%, rgba(37, 99, 235, 0.15) 100%);
+-  border-bottom: 1px solid rgba(0, 212, 255, 0.3);
+-  padding: 8px 24px;
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
+-  gap: 16px;
+-  font-size: 0.85rem;
+-  font-weight: 600;
+-  color: #e2e8f0;
+-  position: relative;
+-  z-index: 101;
++:where(.home-wrapper) a {
++  color: inherit;
++  text-decoration: none;
+ }
+ 
+-.home-session-banner button {
+-  background: none;
+-  border: none;
+-  color: var(--home-cyan);
+-  font-weight: 700;
+-  font-size: 0.85rem;
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 6px;
+-  cursor: pointer;
+-  padding: 0;
+-  text-decoration: underline;
++.home-wrapper em {
++  font-family: var(--font-serif);
++  font-style: italic;
++  font-weight: 400;
++  color: var(--lp-accent);
++  letter-spacing: -0.01em;
+ }
+ 
+-.home-session-banner button:hover {
+-  color: #fff;
++.home-wrapper :focus-visible {
++  outline: 2px solid var(--lp-accent);
++  outline-offset: 3px;
++  border-radius: 6px;
+ }
+ 
+-/* ==========================================================================
+-   NAVBAR FIXA (ESTILO OPENBOX)
+-   ========================================================================== */
+-.home-navbar {
+-  position: sticky;
+-  top: 0;
+-  z-index: 100;
+-  backdrop-filter: blur(16px);
+-  -webkit-backdrop-filter: blur(16px);
+-  background-color: rgba(7, 11, 18, 0.82);
+-  border-bottom: 1px solid var(--home-border);
+-  padding: 14px 24px;
++.lp-mono {
++  font-family: var(--font-mono);
++  font-variant-numeric: tabular-nums;
+ }
+ 
+-.home-nav-container {
+-  max-width: 1240px;
++.lp-container {
++  width: 100%;
++  max-width: var(--lp-max);
+   margin: 0 auto;
+-  display: flex;
+-  align-items: center;
+-  justify-content: space-between;
+-  gap: 24px;
++  padding: 0 var(--lp-gutter);
+ }
+ 
+-.home-nav-brand {
+-  display: flex;
+-  align-items: center;
+-  gap: 12px;
+-  text-decoration: none;
+-  color: inherit;
+-}
++/* ---------- Botões ---------- */
+ 
+-.home-nav-logo {
+-  height: 34px;
+-  width: auto;
+-  object-fit: contain;
++.lp-btn {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  gap: 8px;
++  height: 40px;
++  padding: 0 16px;
++  border-radius: 999px;
++  border: 1px solid transparent;
++  font: inherit;
++  font-size: 15px;
++  font-weight: 600;
++  white-space: nowrap;
++  cursor: pointer;
++  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+ }
+ 
+-.home-brand-text {
+-  display: flex;
+-  flex-direction: column;
++.lp-btn svg {
++  transition: transform 0.25s var(--lp-ease);
+ }
+ 
+-.home-brand-name {
+-  font-weight: 800;
+-  font-size: 1.15rem;
+-  letter-spacing: -0.02em;
+-  color: #fff;
+-  line-height: 1.1;
++.lp-btn:hover svg {
++  transform: translateX(3px);
+ }
+ 
+-.home-brand-sub {
+-  font-size: 0.72rem;
+-  font-weight: 600;
+-  color: var(--home-cyan);
+-  letter-spacing: 0.05em;
+-  text-transform: uppercase;
++.lp-btn--lg {
++  height: 52px;
++  padding: 0 24px;
++  font-size: 16px;
+ }
+ 
+-.home-nav-menu {
+-  display: flex;
+-  align-items: center;
+-  gap: 24px;
++.lp-btn--primary {
++  background: var(--lp-accent);
++  color: var(--lp-accent-ink);
+ }
+ 
+-.home-nav-menu a {
+-  text-decoration: none;
+-  color: var(--home-text-muted);
+-  font-size: 0.88rem;
+-  font-weight: 600;
+-  transition: color 0.2s ease;
++.lp-btn--primary:hover {
++  background: #66ecff;
+ }
+ 
+-.home-nav-menu a:hover {
+-  color: #fff;
++.lp-btn--quiet {
++  background: transparent;
++  color: var(--lp-text);
++  border-color: var(--lp-line-strong);
+ }
+ 
+-.home-nav-actions {
+-  display: flex;
+-  align-items: center;
+-  gap: 12px;
++.lp-btn--quiet:hover {
++  border-color: var(--lp-text);
+ }
+ 
+-.home-nav-btn-secondary {
++.lp-link {
+   display: inline-flex;
+   align-items: center;
+   gap: 6px;
+-  background: transparent;
+-  border: 1px solid var(--home-border);
+-  color: var(--home-text-main);
+-  padding: 8px 18px;
+-  border-radius: 8px;
+-  font-size: 0.88rem;
++  padding: 0 0 2px;
++  background: none;
++  border: 0;
++  border-bottom: 1px solid var(--lp-line-strong);
++  color: var(--lp-text);
++  font: inherit;
+   font-weight: 600;
+   cursor: pointer;
+-  transition: all 0.2s ease;
++  transition: border-color 0.2s ease, color 0.2s ease;
+ }
+ 
+-.home-nav-btn-secondary:hover {
+-  background: rgba(255, 255, 255, 0.05);
+-  border-color: rgba(255, 255, 255, 0.2);
++.lp-link:hover {
++  color: var(--lp-accent);
++  border-color: var(--lp-accent);
+ }
+ 
+-.home-nav-btn-primary {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 8px;
+-  background: linear-gradient(135deg, #00d4ff 0%, #0077ff 100%);
+-  color: #060e1d;
+-  font-weight: 700;
+-  padding: 8px 18px;
+-  border-radius: 8px;
+-  border: none;
+-  font-size: 0.88rem;
+-  cursor: pointer;
+-  box-shadow: 0 4px 14px var(--home-cyan-glow);
+-  transition: all 0.2s ease;
++/* ---------- Navbar fixa ---------- */
++
++.lp-nav {
++  position: fixed;
++  top: 0;
++  left: 0;
++  right: 0;
++  z-index: 60;
++  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+ }
+ 
+-.home-nav-btn-primary:hover {
+-  transform: translateY(-1px);
+-  box-shadow: 0 6px 20px rgba(0, 212, 255, 0.4);
++.lp-nav.is-scrolled,
++.lp-nav.is-open {
++  background: rgba(7, 13, 24, 0.82);
++  backdrop-filter: blur(14px) saturate(140%);
++  -webkit-backdrop-filter: blur(14px) saturate(140%);
++  box-shadow: 0 1px 0 var(--lp-line);
+ }
+ 
+-/* ==========================================================================
+-   HERO SECTION
+-   ========================================================================== */
+-.home-hero-section {
+-  position: relative;
+-  z-index: 1;
+-  max-width: 1240px;
+-  margin: 0 auto;
+-  padding: 70px 24px 80px;
++.lp-session-banner {
+   display: flex;
+-  flex-direction: column;
+   align-items: center;
+-  text-align: center;
++  justify-content: center;
++  gap: 12px;
++  padding: 6px var(--lp-gutter);
++  background: var(--lp-surface);
++  color: var(--lp-muted);
++  font-size: 13px;
+ }
+ 
+-.home-hero-content {
+-  max-width: 900px;
+-  display: flex;
+-  flex-direction: column;
++.lp-session-banner button {
++  display: inline-flex;
+   align-items: center;
++  gap: 6px;
++  padding: 0;
++  background: none;
++  border: 0;
++  color: var(--lp-text);
++  font: inherit;
++  font-weight: 600;
++  cursor: pointer;
+ }
+ 
+-.home-hero-eyebrow {
+-  display: inline-flex;
++.lp-nav-inner {
++  display: flex;
+   align-items: center;
+-  gap: 10px;
+-  padding: 6px 14px;
+-  border-radius: 100px;
+-  background: rgba(0, 212, 255, 0.08);
+-  border: 1px solid rgba(0, 212, 255, 0.25);
+-  margin-bottom: 24px;
+-  box-shadow: 0 2px 10px rgba(0, 212, 255, 0.1);
++  justify-content: space-between;
++  gap: 24px;
++  height: var(--lp-nav-h);
+ }
+ 
+-.home-eyebrow-pill {
+-  display: inline-flex;
++.lp-brand {
++  display: flex;
+   align-items: center;
+-  gap: 6px;
+-  background: var(--home-cyan);
+-  color: #060e1d;
+-  font-size: 0.76rem;
+-  font-weight: 800;
+-  padding: 3px 8px;
+-  border-radius: 100px;
+-  text-transform: uppercase;
++  flex-shrink: 0;
+ }
+ 
+-.home-eyebrow-text {
+-  font-size: 0.88rem;
+-  font-weight: 700;
+-  color: #e2e8f0;
++.lp-brand-logo {
++  display: block;
++  height: 32px;
++  width: auto;
+ }
+ 
+-.home-hero-headline {
+-  font-size: clamp(2.4rem, 4.5vw, 3.8rem);
+-  font-weight: 800;
+-  letter-spacing: -0.04em;
+-  line-height: 1.15;
+-  color: #ffffff;
+-  margin: 0 0 20px 0;
++.lp-nav-links {
++  display: flex;
++  gap: 4px;
++  font-size: 15px;
+ }
+ 
+-.home-headline-highlight {
+-  background: linear-gradient(135deg, #00d4ff 0%, #38bdf8 50%, #818cf8 100%);
+-  -webkit-background-clip: text;
+-  -webkit-text-fill-color: transparent;
++.lp-nav-links a {
++  position: relative;
++  padding: 8px 14px;
++  color: var(--lp-muted);
++  transition: color 0.2s ease;
+ }
+ 
+-.home-hero-subhead {
+-  font-size: clamp(1.05rem, 1.8vw, 1.25rem);
+-  color: var(--home-text-muted);
+-  max-width: 760px;
+-  line-height: 1.6;
+-  margin: 0 0 36px 0;
++.lp-nav-links a::after {
++  content: '';
++  position: absolute;
++  left: 50%;
++  bottom: 2px;
++  width: 4px;
++  height: 4px;
++  margin-left: -2px;
++  border-radius: 50%;
++  background: var(--lp-accent);
++  transform: scale(0);
++  transition: transform 0.3s var(--lp-ease);
++}
++
++.lp-nav-links a:hover,
++.lp-nav-links a.is-active {
++  color: var(--lp-text);
++}
++
++.lp-nav-links a.is-active::after {
++  transform: scale(1);
+ }
+ 
+-.home-hero-ctas {
++.lp-nav-actions {
+   display: flex;
+-  flex-wrap: wrap;
+-  gap: 16px;
+-  justify-content: center;
+-  margin-bottom: 38px;
++  align-items: center;
++  gap: 8px;
+ }
+ 
+-.home-btn-hero-primary {
+-  display: inline-flex;
++.lp-menu-toggle {
++  display: none;
++  width: 40px;
++  height: 40px;
+   align-items: center;
+-  gap: 10px;
+-  background: linear-gradient(135deg, #00d4ff 0%, #0077ff 100%);
+-  color: #040d1c;
+-  font-size: 1.05rem;
+-  font-weight: 800;
+-  padding: 16px 32px;
+-  border-radius: 12px;
+-  border: none;
++  justify-content: center;
++  padding: 0;
++  border: 1px solid var(--lp-line-strong);
++  border-radius: 50%;
++  background: transparent;
++  color: var(--lp-text);
+   cursor: pointer;
+-  box-shadow: 0 8px 26px var(--home-cyan-glow);
+-  transition: all 0.25s ease;
+ }
+ 
+-.home-btn-hero-primary:hover {
+-  transform: translateY(-2px);
+-  box-shadow: 0 12px 34px rgba(0, 212, 255, 0.45);
++/* ---------- Hero ---------- */
++
++.lp-hero {
++  --hero-progress: 0;
++  padding: calc(var(--lp-nav-h) + clamp(28px, 4.5vw, 72px)) 0 clamp(64px, 7vw, 112px);
++  overflow: clip;
+ }
+ 
+-.home-btn-hero-secondary {
+-  display: inline-flex;
++.lp-hero-grid {
++  display: grid;
++  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+   align-items: center;
+-  gap: 10px;
+-  background: rgba(255, 255, 255, 0.05);
+-  border: 1px solid var(--home-border);
+-  color: #fff;
+-  font-size: 1.05rem;
+-  font-weight: 700;
+-  padding: 16px 28px;
+-  border-radius: 12px;
+-  text-decoration: none;
+-  cursor: pointer;
+-  transition: all 0.2s ease;
++  gap: clamp(32px, 4vw, 80px);
+ }
+ 
+-.home-btn-hero-secondary:hover {
+-  background: rgba(255, 255, 255, 0.1);
+-  border-color: rgba(255, 255, 255, 0.25);
+-  transform: translateY(-2px);
++.lp-hero-kicker {
++  margin-bottom: clamp(20px, 2vw, 32px);
++  font-family: var(--font-mono);
++  font-size: 12px;
++  letter-spacing: 0.14em;
++  text-transform: uppercase;
++  color: var(--lp-muted);
+ }
+ 
+-.home-trust-badges {
+-  display: flex;
+-  flex-wrap: wrap;
+-  justify-content: center;
+-  gap: 20px 28px;
+-  font-size: 0.88rem;
+-  color: var(--home-text-muted);
++.lp-h1 {
++  font-size: clamp(40px, 3.5vw, 76px);
++  line-height: 1.02;
++  letter-spacing: -0.035em;
++  text-wrap: balance;
+ }
+ 
+-.home-trust-item {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 8px;
++.lp-line {
++  display: block;
++  clip-path: inset(-0.4em -100vw 0 -100vw);
++  padding-bottom: 0.1em;
++  margin-bottom: -0.1em;
+ }
+ 
+-.text-emerald { color: var(--home-emerald); }
+-.text-amber { color: var(--home-amber); }
+-.text-cyan { color: var(--home-cyan); }
++.lp-line > * {
++  display: inline-block;
++}
+ 
+-/* ==========================================================================
+-   HERO SHOWCASE / WINDOW GLASSMORPHIC (WIDESCREEN REAL DO PRODUTO)
+-   ========================================================================== */
+-.home-hero-showcase {
+-  width: 100%;
+-  max-width: 1180px;
+-  margin-top: 44px;
+-  position: relative;
+-  z-index: 2;
++.lp-line:nth-child(1) {
++  font-weight: 700;
+ }
+ 
+-.home-showcase-window {
+-  background: #090e18;
+-  border: 1px solid rgba(0, 212, 255, 0.35);
+-  border-radius: 18px;
+-  overflow: hidden;
+-  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.8), 0 0 50px rgba(0, 212, 255, 0.18);
++.lp-line:nth-child(2) {
++  font-weight: 300;
++  color: #c9d2df;
+ }
+ 
+-.window-header-bar {
+-  background: #070b13;
+-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+-  padding: 12px 20px;
+-  display: flex;
+-  align-items: center;
+-  justify-content: space-between;
+-  gap: 16px;
++.lp-line--em em {
++  font-size: 1.04em;
++  line-height: 1.06;
++  letter-spacing: -0.02em;
++}
++
++.lp-hero-sub {
++  max-width: 540px;
++  margin-top: clamp(24px, 2.4vw, 36px);
++  color: var(--lp-muted);
++  font-size: clamp(17px, 1.25vw, 20px);
+ }
+ 
+-.window-dots {
++.lp-hero-ctas {
+   display: flex;
+-  align-items: center;
+-  gap: 8px;
++  flex-wrap: wrap;
++  gap: 12px;
++  margin-top: clamp(28px, 3vw, 44px);
+ }
+ 
+-.window-dots .dot {
+-  width: 11px;
+-  height: 11px;
+-  border-radius: 50%;
++/* Palco do produto: sangra até a borda direita da tela e endireita com o scroll */
++
++.lp-stage {
++  position: relative;
++  margin-right: calc(-1 * (var(--lp-gutter) + max(0px, (100vw - var(--lp-max)) / 2)));
++  perspective: 2200px;
++}
++
++.lp-stage-frame {
++  border-radius: 16px 0 0 16px;
++  overflow: hidden;
++  background: var(--lp-bg-deep);
++  box-shadow:
++    0 0 0 1px var(--lp-line-strong),
++    0 50px 100px -40px rgba(0, 0, 0, 0.9);
++  transform-origin: 0% 50%;
++  transform:
++    rotateY(calc((1 - var(--hero-progress)) * -10deg))
++    rotateX(calc((1 - var(--hero-progress)) * 4deg))
++    scale(calc(0.96 + var(--hero-progress) * 0.04));
++  will-change: transform;
++}
++
++.lp-stage-img {
++  display: block;
++  width: 100%;
++  height: auto;
++  aspect-ratio: 1024 / 508;
+ }
+ 
+-.window-dots .dot.red { background: #ef4444; }
+-.window-dots .dot.yellow { background: #f59e0b; }
+-.window-dots .dot.green { background: #10b981; }
++.lp-stage-caption {
++  margin-top: 14px;
++  font-size: 12px;
++  color: var(--lp-dim);
++  letter-spacing: 0.04em;
++}
+ 
+-.window-address-bar {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 8px;
+-  background: rgba(255, 255, 255, 0.04);
+-  border: 1px solid rgba(255, 255, 255, 0.08);
+-  padding: 5px 18px;
+-  border-radius: 8px;
+-  font-size: 0.8rem;
+-  color: #94a3b8;
+-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
++/* Prova rápida */
++
++.lp-proof {
++  display: grid;
++  grid-template-columns: repeat(4, minmax(0, 1fr));
++  gap: clamp(20px, 3vw, 56px);
++  margin-top: clamp(56px, 6vw, 96px);
+ }
+ 
+-.window-status-pill {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 8px;
+-  font-size: 0.78rem;
++.lp-proof strong {
++  display: block;
++  font-size: clamp(26px, 2.2vw, 36px);
+   font-weight: 700;
+-  color: #10b981;
+-  background: rgba(16, 185, 129, 0.12);
+-  border: 1px solid rgba(16, 185, 129, 0.3);
+-  padding: 4px 12px;
+-  border-radius: 100px;
++  letter-spacing: -0.02em;
++  line-height: 1.1;
+ }
+ 
+-.status-live-dot {
+-  width: 8px;
+-  height: 8px;
+-  border-radius: 50%;
+-  background: #10b981;
+-  box-shadow: 0 0 8px #10b981;
+-  animation: liveDotPulse 2s infinite ease-in-out;
++.lp-proof span {
++  display: block;
++  max-width: 240px;
++  margin-top: 6px;
++  font-size: 15px;
++  line-height: 1.45;
++  color: var(--lp-muted);
+ }
+ 
+-@keyframes liveDotPulse {
+-  0%, 100% { opacity: 1; transform: scale(1); }
+-  50% { opacity: 0.4; transform: scale(0.85); }
++/* ---------- Seções ---------- */
++
++.lp-section {
++  padding: clamp(88px, 9vw, 152px) 0;
+ }
+ 
+-.window-image-canvas {
+-  position: relative;
+-  width: 100%;
+-  background: #04070e;
+-  line-height: 0;
++.lp-section--sunken {
++  background: var(--lp-bg-deep);
+ }
+ 
+-.hero-widescreen-img {
+-  width: 100%;
+-  height: auto;
+-  display: block;
+-  object-fit: cover;
+-  border-radius: 0 0 16px 16px;
++.lp-section-head {
++  max-width: 820px;
+ }
+ 
+-.window-float-tag {
+-  position: absolute;
+-  display: flex;
++.lp-kicker {
++  display: inline-flex;
+   align-items: center;
+   gap: 12px;
+-  background: rgba(9, 14, 25, 0.92);
+-  backdrop-filter: blur(14px);
+-  -webkit-backdrop-filter: blur(14px);
+-  border: 1px solid rgba(255, 255, 255, 0.12);
+-  padding: 12px 18px;
+-  border-radius: 12px;
+-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+-  text-align: left;
+-  line-height: 1.35;
+-  pointer-events: none;
+-}
+-
+-.window-float-tag.tag-left {
+-  bottom: 24px;
+-  left: 24px;
+-  border-left: 3px solid #10b981;
++  margin-bottom: 22px;
++  font-family: var(--font-mono);
++  font-size: 12px;
++  letter-spacing: 0.14em;
++  text-transform: uppercase;
++  color: var(--lp-muted);
+ }
+ 
+-.window-float-tag.tag-right {
+-  bottom: 24px;
+-  right: 24px;
+-  border-left: 3px solid #f59e0b;
++.lp-kicker-index {
++  color: var(--lp-accent);
+ }
+ 
+-.live-pulse-green {
+-  width: 10px;
+-  height: 10px;
+-  border-radius: 50%;
+-  background: #10b981;
+-  box-shadow: 0 0 10px #10b981;
+-  flex-shrink: 0;
++.lp-kicker-index::after {
++  content: '/';
++  margin-left: 12px;
++  color: var(--lp-dim);
+ }
+ 
+-.window-float-tag strong {
+-  display: block;
+-  font-size: 0.92rem;
+-  color: #ffffff;
++.lp-h2 {
++  font-size: clamp(34px, 3.7vw, 66px);
+   font-weight: 700;
++  line-height: 1.04;
++  letter-spacing: -0.032em;
++  text-wrap: balance;
+ }
+ 
+-.window-float-tag small {
+-  display: block;
+-  font-size: 0.76rem;
+-  color: #94a3b8;
++.lp-lead {
++  margin-top: 22px;
++  max-width: 620px;
++  color: var(--lp-muted);
++  font-size: clamp(17px, 1.3vw, 20px);
++  text-wrap: pretty;
+ }
+ 
+-/* ==========================================================================
+-   SEÇÃO SPOTLIGHT 3D: "A INTELIGÊNCIA QUE MOVE O SEU NEGÓCIO"
+-   ========================================================================== */
+-.home-spotlight-section {
+-  position: relative;
+-  z-index: 1;
+-  padding: 100px 24px;
+-  background: linear-gradient(180deg, rgba(7, 11, 18, 0.4) 0%, rgba(13, 20, 36, 0.6) 50%, rgba(7, 11, 18, 0.4) 100%);
+-}
++/* Layout editorial: título fixo à esquerda, conteúdo à direita */
+ 
+-.spotlight-grid {
++.lp-split {
+   display: grid;
+-  grid-template-columns: 1.15fr 0.85fr;
+-  gap: 50px;
+-  align-items: center;
++  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
++  gap: clamp(40px, 6vw, 128px);
++  align-items: start;
+ }
+ 
+-.spotlight-copy {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 16px;
+-  text-align: left;
++.lp-split-aside {
++  position: sticky;
++  top: calc(var(--lp-nav-h) + 48px);
+ }
+ 
+-.spotlight-copy h2 {
+-  font-size: clamp(2.1rem, 3.5vw, 3rem);
+-  font-weight: 800;
+-  color: #ffffff;
+-  line-height: 1.15;
+-  margin: 0;
+-  letter-spacing: -0.03em;
++/* 01 Fluxo com trilho de progresso ligado ao scroll */
++
++.lp-flow {
++  --progress: 0;
++  position: relative;
++  padding-left: 44px;
+ }
+ 
+-.spotlight-subtitle {
+-  font-size: 1.08rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.6;
+-  margin: 0;
++.lp-flow::before,
++.lp-flow::after {
++  content: '';
++  position: absolute;
++  left: 6px;
++  top: 14px;
++  bottom: 14px;
++  width: 1px;
++  background: var(--lp-line-strong);
+ }
+ 
+-.spotlight-metrics-row {
++.lp-flow::after {
++  width: 2px;
++  left: 5.5px;
++  background: var(--lp-accent);
++  transform-origin: top;
++  transform: scaleY(var(--progress));
++}
++
++.lp-flow li {
++  position: relative;
+   display: grid;
+-  grid-template-columns: repeat(3, 1fr);
++  grid-template-columns: 88px minmax(0, 1fr);
+   gap: 16px;
+-  margin: 10px 0;
++  padding-bottom: clamp(36px, 4vw, 64px);
+ }
+ 
+-.spotlight-metric-card {
+-  background: var(--home-card-bg);
+-  border: 1px solid var(--home-border);
+-  border-radius: 12px;
+-  padding: 16px 14px;
+-  display: flex;
+-  flex-direction: column;
+-  gap: 4px;
+-  border-left: 3px solid var(--home-cyan);
++.lp-flow li:last-child {
++  padding-bottom: 0;
+ }
+ 
+-.metric-number {
+-  font-size: 1.5rem;
+-  font-weight: 800;
+-  color: #ffffff;
+-  letter-spacing: -0.02em;
++.lp-flow li::before {
++  content: '';
++  position: absolute;
++  left: -44px;
++  top: 8px;
++  width: 13px;
++  height: 13px;
++  border-radius: 50%;
++  background: var(--lp-bg);
++  box-shadow: inset 0 0 0 1px var(--lp-line-strong);
++  transition: background-color 0.5s ease, box-shadow 0.5s ease;
++  z-index: 1;
+ }
+ 
+-.metric-tagline {
+-  font-size: 0.8rem;
+-  font-weight: 700;
+-  color: var(--home-cyan);
+-  text-transform: uppercase;
+-  letter-spacing: 0.03em;
++.lp-flow li.is-visible::before {
++  background: var(--lp-accent);
++  box-shadow: 0 0 0 5px var(--lp-bg), inset 0 0 0 1px var(--lp-accent);
+ }
+ 
+-.metric-sub {
+-  font-size: 0.72rem;
+-  color: var(--home-text-dim);
++.lp-flow-index {
++  font-family: var(--font-serif);
++  font-style: italic;
++  font-size: clamp(44px, 4vw, 64px);
++  line-height: 0.9;
++  color: var(--lp-dim);
+ }
+ 
+-.spotlight-bullet-points {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 12px;
+-  margin: 6px 0 14px;
++.lp-flow h3 {
++  font-size: clamp(22px, 1.8vw, 28px);
++  font-weight: 700;
++  letter-spacing: -0.015em;
+ }
+ 
+-.spotlight-bullet {
+-  display: flex;
+-  align-items: center;
+-  gap: 10px;
+-  font-size: 0.92rem;
+-  color: #e2e8f0;
+-  font-weight: 500;
++.lp-flow p {
++  max-width: 520px;
++  margin-top: 10px;
++  color: var(--lp-muted);
+ }
+ 
+-.spotlight-cta-btn {
+-  align-self: flex-start;
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 8px;
+-  background: rgba(0, 212, 255, 0.1);
+-  border: 1px solid rgba(0, 212, 255, 0.3);
+-  color: var(--home-cyan);
+-  padding: 12px 24px;
+-  border-radius: 8px;
+-  font-weight: 700;
+-  font-size: 0.95rem;
+-  cursor: pointer;
+-  transition: all 0.2s ease;
+-}
++/* Métricas do painel com contagem */
+ 
+-.spotlight-cta-btn:hover {
+-  background: rgba(0, 212, 255, 0.2);
+-  border-color: var(--home-cyan);
+-  color: #ffffff;
+-  transform: translateY(-2px);
++.lp-ledger {
++  margin-top: clamp(72px, 8vw, 128px);
++  padding: clamp(28px, 3.4vw, 56px);
++  border-radius: 24px;
++  background: var(--lp-surface);
+ }
+ 
+-.spotlight-poster-col {
+-  display: flex;
+-  justify-content: center;
+-  align-items: center;
++.lp-ledger-label {
++  display: block;
++  font-size: 12px;
++  letter-spacing: 0.12em;
++  text-transform: uppercase;
++  color: var(--lp-dim);
+ }
+ 
+-.spotlight-poster-frame {
+-  width: 100%;
+-  max-width: 440px;
+-  border-radius: 20px;
+-  overflow: hidden;
+-  border: 1px solid rgba(0, 212, 255, 0.3);
+-  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.7), 0 0 40px rgba(0, 212, 255, 0.2);
+-  background: #03060c;
++.lp-ledger dl {
++  display: grid;
++  grid-template-columns: repeat(3, minmax(0, 1fr));
++  gap: 32px;
++  margin-top: 28px;
+ }
+ 
+-.spotlight-poster-img {
+-  width: 100%;
+-  height: auto;
+-  display: block;
+-  object-fit: cover;
+-  transition: transform 0.5s ease;
++.lp-metric dt {
++  font-size: 15px;
++  color: var(--lp-muted);
+ }
+ 
+-.spotlight-poster-frame:hover .spotlight-poster-img {
+-  transform: scale(1.02);
++.lp-metric dd strong {
++  display: block;
++  margin-top: 8px;
++  font-size: clamp(44px, 5.2vw, 96px);
++  font-weight: 700;
++  line-height: 1;
++  letter-spacing: -0.045em;
++  font-variant-numeric: tabular-nums;
+ }
+ 
+-/* ==========================================================================
+-   SEÇÃO CALCULADORA / IMPACTO SALARIAL
+-   ========================================================================== */
+-.home-calc-section {
+-  position: relative;
+-  z-index: 1;
+-  padding: 100px 24px;
+-  background: linear-gradient(180deg, transparent 0%, rgba(13, 20, 34, 0.6) 50%, transparent 100%);
++.lp-metric dd span {
++  display: block;
++  margin-top: 12px;
++  font-size: 14px;
++  color: var(--lp-green);
+ }
+ 
+-.home-section-container {
+-  max-width: 1240px;
+-  margin: 0 auto;
+-}
++/* ---------- 02 Economia ---------- */
+ 
+-/* ==========================================================================
+-   BANNER DE EFICIÊNCIA OPERACIONAL (IMAGEM OFICIAL NORIA)
+-   ========================================================================== */
+-.home-cost-reduction-banner {
+-  background: linear-gradient(135deg, rgba(13, 20, 34, 0.88) 0%, rgba(7, 11, 18, 0.95) 100%);
+-  border: 1px solid rgba(0, 212, 255, 0.3);
+-  border-radius: 22px;
+-  padding: 44px;
+-  margin-bottom: 70px;
++.lp-cost-head {
+   display: grid;
+-  grid-template-columns: 1fr 1.15fr;
+-  gap: 48px;
+-  align-items: center;
+-  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.65), 0 0 40px rgba(0, 212, 255, 0.12);
++  grid-template-columns: minmax(0, 1fr) auto;
++  align-items: end;
++  gap: 40px clamp(40px, 6vw, 120px);
++  margin-bottom: clamp(48px, 5vw, 80px);
+ }
+ 
+-.cost-reduction-visual {
+-  display: flex;
+-  justify-content: center;
+-  align-items: center;
++.lp-cost-figure {
++  display: grid;
++  justify-items: start;
++  max-width: 340px;
+ }
+ 
+-.cost-reduction-frame {
+-  width: 100%;
+-  max-width: 520px;
+-  border-radius: 18px;
+-  overflow: hidden;
+-  border: 1px solid rgba(0, 212, 255, 0.3);
+-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 30px rgba(0, 212, 255, 0.18);
+-  transition: all 0.35s ease;
+-  background: #060a12;
++.lp-cost-figure-pre {
++  font-family: var(--font-serif);
++  font-style: italic;
++  font-size: clamp(24px, 2vw, 34px);
++  color: var(--lp-muted);
+ }
+ 
+-.cost-reduction-frame:hover {
+-  transform: translateY(-3px) scale(1.015);
+-  border-color: rgba(0, 212, 255, 0.5);
+-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 40px rgba(0, 212, 255, 0.3);
++.lp-cost-figure strong {
++  font-size: clamp(104px, 12vw, 224px);
++  font-weight: 700;
++  line-height: 0.82;
++  letter-spacing: -0.06em;
++  color: var(--lp-accent);
+ }
+ 
+-.cost-reduction-img {
+-  width: 100%;
+-  height: auto;
+-  display: block;
+-  object-fit: cover;
++.lp-cost-figure > span:last-child {
++  margin-top: 16px;
++  font-size: 15px;
++  color: var(--lp-muted);
+ }
+ 
+-.cost-reduction-copy {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 16px;
+-  text-align: left;
+-}
++/* Simulador */
+ 
+-.cost-reduction-copy h2 {
+-  font-size: clamp(2rem, 3.2vw, 2.7rem);
+-  font-weight: 800;
+-  color: #ffffff;
+-  line-height: 1.18;
+-  margin: 0;
+-  letter-spacing: -0.03em;
++.sim {
++  padding: clamp(16px, 1.6vw, 24px);
++  border-radius: 28px;
++  background: var(--lp-surface);
+ }
+ 
+-.cost-reduction-tagline {
++.sim-status {
+   display: flex;
+-  align-items: baseline;
+-  gap: 12px;
++  align-items: center;
++  justify-content: space-between;
+   flex-wrap: wrap;
++  gap: 12px;
++  padding: 4px 8px 18px;
++  font-family: var(--font-mono);
++  font-size: 12px;
++  letter-spacing: 0.04em;
++  color: var(--lp-muted);
+ }
+ 
+-.reduction-percent {
+-  font-size: 1.6rem;
+-  font-weight: 800;
+-  color: var(--home-cyan);
+-}
+-
+-.reduction-label {
+-  font-size: 1rem;
+-  color: #cbd5e1;
+-  font-weight: 600;
++.sim-status-label {
++  display: inline-flex;
++  align-items: center;
++  flex-wrap: wrap;
++  gap: 10px;
+ }
+ 
+-.cost-reduction-desc {
+-  font-size: 1.05rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.6;
+-  margin: 0;
++.sim-status-sep {
++  color: var(--lp-dim);
+ }
+ 
+-.cost-reduction-perks {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 14px;
+-  margin: 8px 0;
++.sim-status-dot {
++  width: 8px;
++  height: 8px;
++  border-radius: 50%;
++  background: var(--lp-dim);
+ }
+ 
+-.reduction-perk-item {
+-  display: flex;
+-  align-items: flex-start;
+-  gap: 12px;
+-  font-size: 0.92rem;
+-  color: #e2e8f0;
+-  line-height: 1.45;
++.sim.is-demo .sim-status-dot {
++  background: var(--lp-accent);
++  animation: sim-pulse 1.8s ease-in-out infinite;
+ }
+ 
+-.reduction-perk-item svg {
+-  flex-shrink: 0;
+-  margin-top: 3px;
++@keyframes sim-pulse {
++  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 224, 255, 0.45); }
++  50% { box-shadow: 0 0 0 6px rgba(0, 224, 255, 0); }
+ }
+ 
+-.reduction-perk-item strong {
+-  display: inline;
+-  color: #ffffff;
+-  margin-right: 6px;
++.sim-status-btn {
++  display: inline-flex;
++  align-items: center;
++  gap: 6px;
++  height: 30px;
++  padding: 0 12px;
++  border: 1px solid var(--lp-line-strong);
++  border-radius: 999px;
++  background: transparent;
++  color: var(--lp-text);
++  font: inherit;
++  cursor: pointer;
++  transition: border-color 0.2s ease;
+ }
+ 
+-.reduction-perk-item span {
+-  color: var(--home-text-muted);
++.sim-status-btn:hover {
++  border-color: var(--lp-text);
+ }
+ 
+-.cost-reduction-cta {
+-  align-self: flex-start;
+-  display: inline-flex;
+-  align-items: center;
++.sim-grid {
++  display: grid;
++  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.15fr);
++  grid-template-rows: auto auto;
+   gap: 8px;
+-  background: rgba(0, 212, 255, 0.12);
+-  border: 1px solid rgba(0, 212, 255, 0.35);
+-  color: var(--home-cyan);
+-  padding: 12px 24px;
+-  border-radius: 10px;
+-  font-weight: 700;
+-  font-size: 0.92rem;
+-  text-decoration: none;
+-  cursor: pointer;
+-  transition: all 0.25s ease;
+-  margin-top: 6px;
+ }
+ 
+-.cost-reduction-cta:hover {
+-  background: var(--home-cyan);
+-  color: #060e1d;
+-  transform: translateY(-2px);
+-  box-shadow: 0 6px 20px var(--home-cyan-glow);
++.sim-area {
++  position: relative;
++  display: flex;
++  flex-direction: column;
++  padding: clamp(24px, 2.4vw, 40px);
++  border-radius: 20px;
+ }
+ 
+-@media (max-width: 960px) {
+-  .home-cost-reduction-banner {
+-    grid-template-columns: 1fr;
+-    padding: 30px 20px;
+-    gap: 32px;
+-  }
++.sim-area--params {
++  grid-row: 1 / 3;
++  gap: 32px;
++  background: var(--lp-bg);
+ }
+ 
+-.home-calc-intro {
+-  text-align: center;
+-  max-width: 780px;
+-  margin: 0 auto 50px;
++.sim-area--current {
++  background: var(--lp-surface-2);
+ }
+ 
+-.home-pill-badge {
+-  display: inline-block;
+-  font-size: 0.78rem;
+-  font-weight: 800;
+-  text-transform: uppercase;
+-  color: var(--home-cyan);
+-  background: rgba(0, 212, 255, 0.1);
+-  border: 1px solid rgba(0, 212, 255, 0.25);
+-  padding: 4px 14px;
+-  border-radius: 100px;
+-  letter-spacing: 0.05em;
+-  margin-bottom: 16px;
++.sim-area--noria {
++  background: linear-gradient(160deg, rgba(0, 224, 255, 0.14), rgba(0, 224, 255, 0.04) 70%);
++  box-shadow: inset 0 0 0 1px rgba(0, 224, 255, 0.22);
+ }
+ 
+-.home-calc-intro h2, .section-header-centered h2 {
+-  font-size: clamp(2rem, 3.2vw, 2.8rem);
+-  font-weight: 800;
+-  letter-spacing: -0.03em;
+-  color: #fff;
+-  margin: 0 0 16px 0;
+-  line-height: 1.2;
++/* Conectores entre as três áreas */
++.sim-area--current::before,
++.sim-area--noria::before {
++  content: '';
++  position: absolute;
++  left: -20px;
++  top: 44px;
++  width: 32px;
++  height: 32px;
++  border-radius: 50%;
++  background: var(--lp-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2300E0FF' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14M13 6l6 6-6 6'/%3E%3C/svg%3E") center / 14px no-repeat;
++  box-shadow: 0 0 0 4px var(--lp-surface);
++  z-index: 2;
+ }
+ 
+-.home-calc-intro p, .section-header-centered p {
+-  font-size: 1.05rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.6;
+-  margin: 0;
++.sim-step {
++  display: inline-flex;
++  align-items: center;
++  gap: 10px;
++  font-size: 14px;
++  font-weight: 600;
++  color: var(--lp-muted);
+ }
+ 
+-.home-calc-card {
+-  background: var(--home-card-bg);
+-  border: 1px solid var(--home-border);
+-  border-radius: 20px;
+-  padding: 38px;
+-  display: grid;
+-  grid-template-columns: 1fr 1fr;
+-  gap: 36px;
+-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
++.sim-step b {
++  display: inline-grid;
++  place-items: center;
++  width: 24px;
++  height: 24px;
++  border-radius: 50%;
++  background: var(--lp-surface-3);
++  font-family: var(--font-mono);
++  font-size: 12px;
++  font-weight: 500;
++  color: var(--lp-text);
+ }
+ 
+-.calc-controls {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 28px;
+-  justify-content: center;
++.sim-area--noria .sim-step b {
++  background: var(--lp-accent);
++  color: var(--lp-accent-ink);
+ }
+ 
+-.control-group label {
++.sim-control label {
+   display: flex;
+-  align-items: center;
+   justify-content: space-between;
+-  font-size: 0.95rem;
+-  font-weight: 600;
+-  color: #e2e8f0;
+-  margin-bottom: 12px;
++  align-items: baseline;
++  gap: 16px;
++  margin-bottom: 16px;
++  font-size: 15px;
++  color: var(--lp-muted);
+ }
+ 
+-.control-group label strong {
+-  font-size: 1.15rem;
+-  color: var(--home-cyan);
++.sim-control label strong {
++  font-size: 18px;
++  font-weight: 500;
++  color: var(--lp-text);
++  white-space: nowrap;
+ }
+ 
+-.calc-slider {
++.sim-slider {
++  --fill: 0%;
+   width: 100%;
+-  height: 8px;
+-  border-radius: 6px;
+-  background: #1e293b;
+-  outline: none;
++  height: 6px;
++  margin: 0;
++  border-radius: 999px;
++  background: linear-gradient(to right, var(--lp-accent) var(--fill), var(--lp-surface-3) var(--fill));
++  appearance: none;
+   -webkit-appearance: none;
+   cursor: pointer;
+ }
+ 
+-.calc-slider::-webkit-slider-thumb {
++.sim-slider::-webkit-slider-thumb {
+   -webkit-appearance: none;
+-  appearance: none;
+-  width: 22px;
+-  height: 22px;
++  width: 24px;
++  height: 24px;
+   border-radius: 50%;
+-  background: var(--home-cyan);
+-  box-shadow: 0 0 10px var(--home-cyan-glow);
+-  cursor: pointer;
+-  transition: transform 0.15s ease;
++  background: var(--lp-text);
++  border: 5px solid var(--lp-accent);
++  cursor: grab;
++  transition: transform 0.2s var(--lp-ease);
++}
++
++.sim-slider::-moz-range-thumb {
++  width: 14px;
++  height: 14px;
++  border-radius: 50%;
++  background: var(--lp-text);
++  border: 5px solid var(--lp-accent);
++  cursor: grab;
+ }
+ 
+-.calc-slider::-webkit-slider-thumb:hover {
++.sim-slider:active::-webkit-slider-thumb,
++.sim-slider:hover::-webkit-slider-thumb {
+   transform: scale(1.15);
+ }
+ 
+-.slider-ticks {
+-  display: flex;
+-  justify-content: space-between;
+-  font-size: 0.75rem;
+-  color: var(--home-text-dim);
+-  margin-top: 8px;
++.sim.is-demo .sim-slider::-webkit-slider-thumb {
++  animation: sim-pulse 1.8s ease-in-out infinite;
+ }
+ 
+-.calc-note {
++.sim-hours {
++  margin-top: auto;
++  font-size: 15px;
++  color: var(--lp-muted);
++}
++
++.sim-hours strong {
+   display: block;
+-  font-size: 0.74rem;
+-  color: var(--home-text-dim);
+-  margin-top: 8px;
++  margin-bottom: 4px;
++  font-size: 22px;
++  font-weight: 500;
++  color: var(--lp-amber);
+ }
+ 
+-.calc-summary-pill {
+-  display: flex;
+-  align-items: flex-start;
+-  gap: 12px;
+-  padding: 14px 18px;
+-  border-radius: 10px;
+-  background: rgba(255, 255, 255, 0.03);
+-  border: 1px solid var(--home-border);
+-  font-size: 0.85rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.45;
++.sim-figure {
++  margin-top: 20px;
++  font-size: clamp(38px, 3.6vw, 68px);
++  font-weight: 700;
++  line-height: 1;
++  letter-spacing: -0.04em;
++  font-variant-numeric: tabular-nums;
++  white-space: nowrap;
+ }
+ 
+-.calc-summary-pill svg {
+-  color: var(--home-cyan);
+-  flex-shrink: 0;
+-  margin-top: 2px;
++.sim-figure small {
++  margin-left: 6px;
++  font-size: 0.3em;
++  font-weight: 500;
++  letter-spacing: 0;
++  color: var(--lp-muted);
+ }
+ 
+-.calc-summary-pill strong {
+-  color: #fff;
++.sim-figure--current {
++  color: #d5dce7;
+ }
+ 
+-/* Resultados Comparativos */
+-.calc-results-comparison {
+-  display: grid;
+-  grid-template-columns: 1fr 1fr;
+-  gap: 18px;
++.sim-figure--savings {
++  color: var(--lp-accent);
+ }
+ 
+-.calc-column {
+-  padding: 24px;
+-  border-radius: 14px;
+-  display: flex;
+-  flex-direction: column;
++.sim-sub {
++  margin-top: 10px;
++  font-size: 16px;
++  color: var(--lp-muted);
++  font-variant-numeric: tabular-nums;
+ }
+ 
+-.manual-column {
+-  background: rgba(239, 68, 68, 0.04);
+-  border: 1px solid rgba(239, 68, 68, 0.18);
++.sim-sub--positive {
++  color: var(--lp-green);
+ }
+ 
+-.col-badge {
+-  font-size: 0.72rem;
+-  font-weight: 800;
+-  text-transform: uppercase;
+-  padding: 3px 8px;
+-  border-radius: 4px;
+-  align-self: flex-start;
+-  margin-bottom: 12px;
++.sim-detail {
++  margin-top: auto;
++  padding-top: 24px;
++  font-size: 14px;
++  color: var(--lp-dim);
+ }
+ 
+-.badge-warning {
+-  background: rgba(239, 68, 68, 0.15);
+-  color: #f87171;
++.sim-cta {
++  align-self: flex-start;
++  margin-top: auto;
++  font-variant-numeric: tabular-nums;
+ }
+ 
+-.badge-success {
+-  background: rgba(16, 185, 129, 0.18);
+-  color: #34d399;
++.sim-area--noria .sim-sub {
++  margin-bottom: 24px;
+ }
+ 
+-.manual-column h3 {
+-  font-size: 1.7rem;
+-  font-weight: 800;
+-  color: #fff;
+-  margin: 0;
++/* Barras comparativas: mesma escala para os dois cenários */
++
++.sim-bars {
++  grid-column: 2 / 4;
++  display: grid;
++  gap: 14px;
++  padding: 24px clamp(24px, 2.4vw, 40px);
++  border-radius: 20px;
++  background: var(--lp-bg);
+ }
+ 
+-.manual-column h3 small, .noria-column h3 small {
+-  font-size: 0.9rem;
+-  color: var(--home-text-dim);
+-  font-weight: 600;
++.sim-bar-row {
++  display: grid;
++  grid-template-columns: 96px minmax(0, 1fr) 120px;
++  align-items: center;
++  gap: 16px;
+ }
+ 
+-.yearly-tag {
+-  font-size: 0.78rem;
+-  color: #ef4444;
+-  margin-top: 4px;
+-  margin-bottom: 18px;
++.sim-bar-label {
++  font-size: 14px;
++  color: var(--lp-muted);
+ }
+ 
+-.noria-column {
+-  background: rgba(16, 185, 129, 0.08);
+-  border: 1px solid rgba(16, 185, 129, 0.35);
+-  box-shadow: 0 10px 30px rgba(16, 185, 129, 0.1);
++.sim-bar-track {
++  display: flex;
++  height: 14px;
++  border-radius: 999px;
++  background: var(--lp-surface);
++  overflow: hidden;
+ }
+ 
+-.economy-highlight {
+-  margin-bottom: 18px;
++.sim-bar {
++  height: 100%;
++  transition: width 0.35s var(--lp-ease);
+ }
+ 
+-.econ-label {
+-  display: block;
+-  font-size: 0.8rem;
+-  color: #34d399;
+-  font-weight: 700;
+-  text-transform: uppercase;
++.sim-bar--current {
++  border-radius: 999px;
++  background: #5c6c86;
+ }
+ 
+-.noria-column h3 {
+-  font-size: 1.7rem;
+-  font-weight: 800;
+-  color: #10b981;
+-  margin: 2px 0 0 0;
++.sim-bar--noria {
++  border-radius: 999px 0 0 999px;
++  background: var(--lp-accent);
+ }
+ 
+-.yearly-saved {
+-  display: block;
+-  font-size: 0.78rem;
+-  color: #34d399;
+-  font-weight: 600;
+-  margin-top: 4px;
++.sim-bar--saved {
++  background: repeating-linear-gradient(
++    -45deg,
++    rgba(52, 211, 153, 0.55) 0 5px,
++    rgba(52, 211, 153, 0.12) 5px 10px
++  );
++  border-radius: 0 999px 999px 0;
+ }
+ 
+-.calc-feature-list {
+-  list-style: none;
+-  padding: 0;
+-  margin: 0 0 20px 0;
+-  display: flex;
+-  flex-direction: column;
+-  gap: 10px;
+-  font-size: 0.82rem;
++.sim-bar-value {
++  font-size: 14px;
++  text-align: right;
++  color: var(--lp-text);
+ }
+ 
+-.calc-feature-list li {
+-  display: flex;
+-  align-items: flex-start;
+-  gap: 8px;
+-  line-height: 1.4;
++/* Comparação qualitativa */
++
++.sim-compare {
++  margin-top: 8px;
++  padding: 8px clamp(24px, 2.4vw, 40px) 4px;
+ }
+ 
+-.calc-feature-list.negative li {
+-  color: #cbd5e1;
++.sim-compare-head,
++.sim-compare-row {
++  display: grid;
++  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) minmax(0, 1.2fr);
++  gap: 24px;
++  padding: 16px 0;
+ }
+ 
+-.calc-feature-list.positive li {
+-  color: #f1f5f9;
+-  font-weight: 500;
++.sim-compare-head {
++  padding-bottom: 8px;
++  font-family: var(--font-mono);
++  font-size: 12px;
++  letter-spacing: 0.1em;
++  text-transform: uppercase;
++  color: var(--lp-dim);
+ }
+ 
+-.calc-feature-list .cross {
+-  color: #ef4444;
+-  font-weight: bold;
++.sim-compare-row {
++  border-top: 1px solid var(--lp-line);
++  font-size: 15.5px;
+ }
+ 
+-.calc-cta-button {
+-  margin-top: auto;
+-  display: inline-flex;
+-  align-items: center;
+-  justify-content: center;
+-  gap: 8px;
+-  background: var(--home-emerald);
+-  color: #04130d;
+-  font-weight: 800;
+-  font-size: 0.88rem;
+-  padding: 10px 18px;
+-  border-radius: 8px;
+-  border: none;
+-  cursor: pointer;
+-  box-shadow: 0 4px 14px var(--home-emerald-glow);
+-  transition: all 0.2s ease;
++.sim-compare-row dt {
++  font-weight: 600;
+ }
+ 
+-.calc-cta-button:hover {
+-  background: #34d399;
+-  transform: translateY(-2px);
+-  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
++.sim-compare-today {
++  color: var(--lp-muted);
+ }
+ 
+-/* ==========================================================================
+-   SEÇÃO ECOSSISTEMA NORIA (DIAGRAMA + CARDS CONECTADOS)
+-   ========================================================================== */
+-.home-ecosystem-feature-section {
++.sim-compare-noria {
+   position: relative;
+-  z-index: 1;
+-  padding: 90px 24px;
+-  background: linear-gradient(180deg, transparent 0%, rgba(13, 20, 36, 0.4) 50%, transparent 100%);
++  padding-left: 18px;
+ }
+ 
+-.home-ecosystem-dual-layout {
+-  display: grid;
+-  grid-template-columns: 1.15fr 1fr;
+-  gap: 40px;
+-  align-items: center;
++.sim-compare-noria::before {
++  content: '';
++  position: absolute;
++  left: 0;
++  top: 0.6em;
++  width: 7px;
++  height: 7px;
++  border-radius: 50%;
++  background: var(--lp-accent);
+ }
+ 
+-.ecosystem-image-wrapper {
+-  background: var(--home-card-bg);
+-  border: 1px solid var(--home-border);
+-  border-radius: 20px;
+-  overflow: hidden;
+-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
++.sim-assumptions {
++  padding: 16px clamp(24px, 2.4vw, 40px) 8px;
++  font-size: 13px;
++  line-height: 1.6;
++  color: var(--lp-dim);
+ }
+ 
+-.ecosystem-diagram-img {
+-  width: 100%;
+-  height: auto;
+-  display: block;
+-  object-fit: cover;
+-}
++/* ---------- 03 Ecossistema: índice editorial ---------- */
+ 
+-.ecosystem-grid-cards {
++.lp-eco li {
++  position: relative;
+   display: grid;
+-  grid-template-columns: 1fr 1fr;
+-  gap: 16px;
+-}
+-
+-.ecosystem-item-card {
+-  background: var(--home-card-bg);
+-  border: 1px solid var(--home-border);
+-  border-radius: 14px;
+-  padding: 20px;
+-  transition: all 0.25s ease;
++  grid-template-columns: 48px minmax(0, 0.9fr) minmax(0, 1.3fr) 24px;
++  align-items: center;
++  gap: 24px;
++  padding: clamp(22px, 2vw, 32px) 12px;
++  border-bottom: 1px solid var(--lp-line);
++  transition: background-color 0.3s ease;
+ }
+ 
+-.ecosystem-item-card:hover {
+-  transform: translateY(-3px);
+-  border-color: var(--home-border-hover);
+-  background: var(--home-card-hover);
++.lp-eco li:first-child {
++  border-top: 1px solid var(--lp-line);
+ }
+ 
+-.eco-card-header {
+-  display: flex;
+-  align-items: center;
+-  gap: 10px;
+-  margin-bottom: 8px;
++.lp-eco li:hover {
++  background: linear-gradient(90deg, var(--lp-accent-soft), transparent 70%);
+ }
+ 
+-.eco-card-header h4 {
+-  margin: 0;
+-  font-size: 0.9rem;
+-  font-weight: 800;
+-  color: #fff;
+-  letter-spacing: -0.01em;
++.lp-eco-index {
++  font-size: 13px;
++  color: var(--lp-dim);
+ }
+ 
+-.eco-icon-badge {
+-  width: 34px;
+-  height: 34px;
+-  border-radius: 8px;
++.lp-eco-name {
+   display: flex;
+-  align-items: center;
+-  justify-content: center;
++  flex-direction: column;
++  font-size: clamp(28px, 2.6vw, 44px);
++  font-weight: 700;
++  line-height: 1;
++  letter-spacing: -0.03em;
++  transition: transform 0.4s var(--lp-ease), color 0.3s ease;
+ }
+ 
+-.eco-icon-badge.cyan { background: rgba(0, 212, 255, 0.12); color: var(--home-cyan); }
+-.eco-icon-badge.violet { background: rgba(129, 140, 248, 0.12); color: #818cf8; }
+-.eco-icon-badge.blue { background: rgba(37, 99, 235, 0.15); color: #60a5fa; }
+-.eco-icon-badge.green { background: rgba(16, 185, 129, 0.12); color: var(--home-emerald); }
+-.eco-icon-badge.amber { background: rgba(245, 158, 11, 0.12); color: var(--home-amber); }
+-.eco-icon-badge.purple { background: rgba(168, 85, 247, 0.12); color: #c084fc; }
+-
+-.ecosystem-item-card p {
+-  margin: 0;
+-  font-size: 0.8rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.45;
++.lp-eco-name small {
++  margin-bottom: 6px;
++  font-family: var(--font-mono);
++  font-size: 11px;
++  font-weight: 400;
++  letter-spacing: 0.16em;
++  color: var(--lp-dim);
+ }
+ 
+-/* ==========================================================================
+-   SEÇÃO "MENOS FERRAMENTAS. MAIS INTELIGÊNCIA."
+-   ========================================================================== */
+-.home-less-tools-section {
+-  position: relative;
+-  z-index: 1;
+-  padding: 90px 24px;
++.lp-eco li:hover .lp-eco-name {
++  transform: translateX(10px);
++  color: var(--lp-accent);
+ }
+ 
+-.less-tools-grid {
+-  display: grid;
+-  grid-template-columns: 1fr 1fr;
+-  gap: 50px;
+-  align-items: center;
++.lp-eco p {
++  font-size: 15.5px;
++  color: var(--lp-muted);
+ }
+ 
+-.text-gradient-cyan {
+-  background: linear-gradient(135deg, #00d4ff 0%, #38bdf8 100%);
+-  -webkit-background-clip: text;
+-  -webkit-text-fill-color: transparent;
++.lp-eco-icon {
++  color: var(--lp-dim);
++  transition: color 0.3s ease, transform 0.4s var(--lp-ease);
+ }
+ 
+-.less-tools-intro {
+-  font-size: 1.1rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.6;
+-  margin: 16px 0 32px 0;
++.lp-eco li:hover .lp-eco-icon {
++  color: var(--lp-accent);
++  transform: scale(1.15);
+ }
+ 
+-.pillars-benefit-list {
++/* ---------- 04 Módulos ---------- */
++
++.lp-modules-head {
+   display: flex;
+-  flex-direction: column;
+-  gap: 20px;
++  align-items: flex-end;
++  justify-content: space-between;
++  flex-wrap: wrap;
++  gap: 32px;
++  margin-bottom: clamp(36px, 4vw, 56px);
+ }
+ 
+-.benefit-item {
++.lp-tabs {
+   display: flex;
+-  align-items: flex-start;
+-  gap: 16px;
++  gap: 4px;
++  padding: 4px;
++  max-width: 100%;
++  overflow-x: auto;
++  background: var(--lp-surface);
++  border-radius: 999px;
++  scrollbar-width: none;
+ }
+ 
+-.benefit-icon-circle {
+-  width: 44px;
+-  height: 44px;
+-  border-radius: 12px;
+-  background: rgba(0, 212, 255, 0.1);
+-  border: 1px solid rgba(0, 212, 255, 0.25);
+-  color: var(--home-cyan);
+-  display: flex;
++.lp-tab {
++  display: inline-flex;
+   align-items: center;
+-  justify-content: center;
+-  flex-shrink: 0;
++  gap: 8px;
++  height: 42px;
++  padding: 0 18px;
++  border: 0;
++  border-radius: 999px;
++  background: transparent;
++  color: var(--lp-muted);
++  font: inherit;
++  font-size: 15px;
++  font-weight: 600;
++  white-space: nowrap;
++  cursor: pointer;
++  transition: background-color 0.25s ease, color 0.25s ease;
+ }
+ 
+-.benefit-item strong {
+-  display: block;
+-  font-size: 1.05rem;
+-  color: #fff;
+-  margin-bottom: 4px;
++.lp-tab:hover {
++  color: var(--lp-text);
+ }
+ 
+-.benefit-item p {
+-  margin: 0;
+-  font-size: 0.88rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.45;
++.lp-tab.is-active {
++  background: var(--lp-text);
++  color: var(--lp-bg);
+ }
+ 
+-.mockup-frame-glass {
+-  background: var(--home-card-bg);
+-  border: 1px solid var(--home-border);
+-  border-radius: 20px;
+-  overflow: hidden;
+-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6), 0 0 30px rgba(0, 212, 255, 0.1);
++.lp-tab-panel {
++  display: grid;
++  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
++  gap: clamp(32px, 5vw, 96px);
++  align-items: center;
++  animation: lp-panel-in 0.55s var(--lp-ease) both;
+ }
+ 
+-.less-tools-img {
+-  width: 100%;
+-  height: auto;
+-  display: block;
+-  object-fit: cover;
++@keyframes lp-panel-in {
++  from { opacity: 0; transform: translateY(14px); }
++  to { opacity: 1; transform: none; }
+ }
+ 
+-/* ==========================================================================
+-   DEMONSTRAÇÃO REAL (AURORA VEÍCULOS + CARLOS MENDES CHAT)
+-   ========================================================================== */
+-.home-real-demo-section {
+-  position: relative;
+-  z-index: 1;
+-  padding: 90px 24px;
+-  background: rgba(8, 14, 25, 0.6);
++.lp-tab-kicker {
++  font-family: var(--font-mono);
++  font-size: 12px;
++  letter-spacing: 0.12em;
++  text-transform: uppercase;
++  color: var(--lp-accent);
+ }
+ 
+-.real-demo-frame {
+-  max-width: 1100px;
+-  margin: 0 auto;
+-  border-radius: 20px;
+-  overflow: hidden;
+-  border: 1px solid rgba(0, 212, 255, 0.3);
+-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6), 0 0 30px rgba(0, 212, 255, 0.15);
+-  background: #03060d;
++.lp-tab-copy h3 {
++  margin-top: 16px;
++  font-size: clamp(26px, 2.4vw, 40px);
++  font-weight: 700;
++  line-height: 1.1;
++  letter-spacing: -0.025em;
++  text-wrap: balance;
+ }
+ 
+-.real-demo-img {
+-  width: 100%;
+-  height: auto;
+-  display: block;
+-  object-fit: cover;
++.lp-tab-copy p {
++  margin-top: 16px;
++  color: var(--lp-muted);
+ }
+ 
+-.demo-caption-bar {
+-  display: flex;
+-  justify-content: space-around;
+-  flex-wrap: wrap;
+-  gap: 16px;
+-  padding: 16px 24px;
+-  background: rgba(11, 18, 32, 0.95);
+-  border-top: 1px solid var(--home-border);
++.lp-tab-copy ul {
++  display: grid;
++  gap: 12px;
++  margin: 28px 0 32px;
++  font-size: 15.5px;
+ }
+ 
+-.caption-metric {
++.lp-tab-copy li {
+   display: flex;
+-  align-items: center;
+-  gap: 8px;
+-  font-size: 0.88rem;
+-  color: #f1f5f9;
+-}
+-
+-.caption-metric strong {
+-  font-weight: 700;
+-}
+-
+-.dot {
+-  width: 10px;
+-  height: 10px;
+-  border-radius: 50%;
++  gap: 10px;
+ }
+-.dot.green { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
+-.dot.yellow { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+-.dot.blue { background-color: #00d4ff; box-shadow: 0 0 8px #00d4ff; }
+ 
+-/* ==========================================================================
+-   4 PILARES DA MARCA (SEGURA, RÁPIDA, INTEGRADA, ESCALÁVEL)
+-   ========================================================================== */
+-.home-pillars-brand-section {
+-  position: relative;
+-  z-index: 1;
+-  padding: 90px 24px;
++.lp-tab-copy li svg {
++  flex-shrink: 0;
++  margin-top: 4px;
++  color: var(--lp-accent);
+ }
+ 
+-.brand-pillars-grid {
++.lp-tab-visual {
+   display: grid;
+-  grid-template-columns: repeat(4, 1fr);
+-  gap: 20px;
++  gap: 12px;
+ }
+ 
+-.brand-pillar-card {
+-  position: relative;
+-  background: var(--home-card-bg);
+-  border: 1px solid var(--home-border);
+-  border-radius: 16px;
+-  padding: 32px 24px;
++.lp-tab-visual > :first-child {
++  min-height: 380px;
++  padding: 20px;
++  border-radius: 20px;
++  background: var(--lp-bg);
+   display: flex;
+   flex-direction: column;
+-  transition: all 0.25s ease;
++  justify-content: center;
+ }
+ 
+-.brand-pillar-card:hover {
+-  transform: translateY(-4px);
+-  border-color: rgba(0, 212, 255, 0.35);
+-  background: var(--home-card-hover);
++.lp-tab-visual img.lp-module-img {
++  min-height: 0;
++  padding: 0;
++  display: block;
++  width: 100%;
++  height: auto;
++  box-shadow: 0 0 0 1px var(--lp-line-strong);
+ }
+ 
+-.pillar-num-badge {
+-  position: absolute;
+-  top: 20px;
+-  right: 20px;
+-  font-size: 0.8rem;
+-  font-weight: 800;
+-  color: var(--home-text-dim);
+-  letter-spacing: 0.05em;
++.lp-tab-visual figcaption {
++  font-size: 12px;
++  color: var(--lp-dim);
+ }
+ 
+-.brand-pillar-card svg {
+-  margin-bottom: 20px;
+-}
++/* Visual: Kanban */
+ 
+-.brand-pillar-card h3 {
+-  font-size: 1.15rem;
+-  font-weight: 800;
+-  letter-spacing: 0.03em;
+-  color: #fff;
+-  margin: 0 0 10px 0;
++.lp-kanban {
++  display: grid !important;
++  grid-template-columns: repeat(5, minmax(0, 1fr));
++  gap: 8px;
++  align-content: center;
+ }
+ 
+-.brand-pillar-card p {
+-  font-size: 0.88rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.5;
+-  margin: 0;
++.lp-kanban-col {
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++  min-width: 0;
++  min-height: 280px;
++  padding: 10px 8px;
++  border-radius: 12px;
++  background: var(--lp-surface);
+ }
+ 
+-/* ==========================================================================
+-   SHOWCASE DE MÓDULOS (ABAS INTERATIVAS)
+-   ========================================================================== */
+-.home-modules-section {
+-  position: relative;
+-  z-index: 1;
+-  padding: 90px 24px;
+-  background: rgba(10, 15, 26, 0.5);
++.lp-kanban-head {
++  padding: 2px 2px 6px;
++  font-size: 12px;
++  font-weight: 600;
++  color: var(--lp-muted);
+ }
+ 
+-.home-tabs-nav {
++.lp-kanban-card {
+   display: flex;
+-  justify-content: center;
+-  flex-wrap: wrap;
+-  gap: 10px;
+-  margin-bottom: 40px;
++  flex-direction: column;
++  gap: 6px;
++  padding: 10px;
++  border-radius: 8px;
++  background: var(--lp-surface-2);
++  font-size: 12.5px;
++  color: var(--lp-muted);
++  animation: lp-card-in 0.6s var(--lp-ease) both;
+ }
+ 
+-.home-tab-btn {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 8px;
+-  background: var(--home-card-bg);
+-  border: 1px solid var(--home-border);
+-  color: var(--home-text-muted);
+-  font-size: 0.9rem;
+-  font-weight: 700;
+-  padding: 10px 20px;
+-  border-radius: 10px;
+-  cursor: pointer;
+-  transition: all 0.2s ease;
++.lp-kanban-col:nth-child(2) .lp-kanban-card { animation-delay: 0.08s; }
++.lp-kanban-col:nth-child(3) .lp-kanban-card { animation-delay: 0.16s; }
++.lp-kanban-col:nth-child(4) .lp-kanban-card { animation-delay: 0.24s; }
++
++@keyframes lp-card-in {
++  from { opacity: 0; transform: translateY(-10px); }
++  to { opacity: 1; transform: none; }
+ }
+ 
+-.home-tab-btn:hover {
+-  color: #fff;
+-  border-color: rgba(255, 255, 255, 0.2);
++.lp-kanban-line {
++  display: block;
++  width: 70%;
++  height: 8px;
++  border-radius: 4px;
++  background: var(--lp-surface-3);
+ }
+ 
+-.home-tab-btn.active {
+-  background: rgba(0, 212, 255, 0.12);
+-  border-color: var(--home-cyan);
+-  color: #fff;
+-  box-shadow: 0 0 16px rgba(0, 212, 255, 0.2);
++.lp-kanban-line--lg {
++  width: 48%;
++  height: 22px;
++  margin-top: 10px;
+ }
+ 
+-.tab-showcase-item {
+-  background: var(--home-card-bg);
+-  border: 1px solid var(--home-border);
+-  border-radius: 20px;
+-  overflow: hidden;
++.lp-kanban-empty {
++  flex: 1;
+   display: grid;
+-  grid-template-columns: 1fr 1.25fr;
+-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
++  place-items: center;
++  padding: 12px;
++  border: 1px dashed var(--lp-line-strong);
++  border-radius: 8px;
++  font-size: 12px;
++  color: var(--lp-dim);
++  text-align: center;
+ }
+ 
+-.tab-showcase-text {
+-  padding: 44px;
+-  display: flex;
+-  flex-direction: column;
+-  justify-content: center;
++.lp-temp {
++  display: inline-block;
++  width: fit-content;
++  padding: 2px 8px;
++  border-radius: 999px;
++  font-family: var(--font-mono);
++  font-size: 11px;
++  letter-spacing: 0.04em;
++  text-transform: uppercase;
+ }
+ 
+-.badge-tag {
+-  font-size: 0.74rem;
+-  font-weight: 800;
+-  text-transform: uppercase;
+-  color: var(--home-cyan);
+-  margin-bottom: 12px;
++.lp-temp--quente { background: rgba(251, 191, 36, 0.14); color: var(--lp-amber); }
++.lp-temp--morno { background: rgba(0, 224, 255, 0.12); color: var(--lp-accent); }
++.lp-temp--frio { background: rgba(139, 156, 181, 0.16); color: var(--lp-muted); }
++
++/* Visual: Dashboard */
++
++.lp-dash {
++  gap: 12px;
+ }
+ 
+-.tab-showcase-text h3 {
+-  font-size: 1.65rem;
+-  font-weight: 800;
+-  letter-spacing: -0.03em;
+-  color: #fff;
+-  margin: 0 0 14px 0;
+-  line-height: 1.25;
++.lp-dash-kpis {
++  display: grid;
++  grid-template-columns: repeat(3, 1fr);
++  gap: 12px;
+ }
+ 
+-.tab-showcase-text p {
+-  font-size: 0.95rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.6;
+-  margin: 0 0 24px 0;
++.lp-dash-kpis > div {
++  padding: 14px 16px;
++  border-radius: 12px;
++  background: var(--lp-surface);
++  font-size: 12px;
++  color: var(--lp-muted);
+ }
+ 
+-.check-perks {
+-  list-style: none;
+-  padding: 0;
+-  margin: 0 0 30px 0;
+-  display: flex;
+-  flex-direction: column;
+-  gap: 12px;
+-  font-size: 0.88rem;
+-  color: #e2e8f0;
++.lp-dash-chart {
++  margin-top: 12px;
++  padding: 16px;
++  border-radius: 12px;
++  background: var(--lp-surface);
++}
++
++.lp-dash-chart-title {
++  font-size: 12px;
++  color: var(--lp-muted);
+ }
+ 
+-.check-perks li {
++.lp-dash-bars {
+   display: flex;
+-  align-items: center;
+-  gap: 10px;
++  align-items: flex-end;
++  gap: 8px;
++  height: 160px;
++  margin-top: 14px;
+ }
+ 
+-.check-perks svg {
+-  color: var(--home-emerald);
+-  flex-shrink: 0;
++.lp-dash-bars span {
++  flex: 1;
++  height: var(--h);
++  border-radius: 6px 6px 2px 2px;
++  background: var(--lp-surface-3);
++  transform-origin: bottom;
++  animation: lp-bar-grow 0.8s var(--lp-ease) both;
++  animation-delay: calc(var(--i) * 45ms);
+ }
+ 
+-.home-tab-cta {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 8px;
+-  background: linear-gradient(135deg, #00d4ff 0%, #0077ff 100%);
+-  color: #040d1a;
+-  font-weight: 700;
+-  font-size: 0.92rem;
+-  padding: 12px 24px;
+-  border-radius: 8px;
+-  border: none;
+-  cursor: pointer;
+-  align-self: flex-start;
+-  transition: all 0.2s ease;
++.lp-dash-bars span.is-peak {
++  background: var(--lp-accent);
+ }
+ 
+-.home-tab-cta:hover {
+-  transform: translateY(-2px);
+-  box-shadow: 0 6px 20px rgba(0, 212, 255, 0.35);
++@keyframes lp-bar-grow {
++  from { transform: scaleY(0); }
++  to { transform: scaleY(1); }
+ }
+ 
+-.tab-showcase-visual {
+-  background: #05080e;
+-  display: flex;
++/* Visual: Multiempresa */
++
++.lp-tenants {
+   align-items: center;
+-  justify-content: center;
+-  overflow: hidden;
+-  border-left: 1px solid var(--home-border);
++  gap: 28px;
+ }
+ 
+-.tab-image-preview {
+-  width: 100%;
+-  height: 100%;
+-  object-fit: cover;
+-  transition: transform 0.4s ease;
++.lp-tenants-core {
++  position: relative;
++  display: inline-flex;
++  align-items: center;
++  gap: 10px;
++  padding: 12px 20px;
++  border-radius: 999px;
++  background: var(--lp-accent-soft);
++  box-shadow: inset 0 0 0 1px rgba(0, 224, 255, 0.4);
++  font-weight: 600;
++  font-size: 15px;
+ }
+ 
+-.tab-showcase-visual:hover .tab-image-preview {
+-  transform: scale(1.02);
++.lp-tenants-core svg {
++  color: var(--lp-accent);
+ }
+ 
+-/* ==========================================================================
+-   SEGURANÇA E GOVERNANÇA
+-   ========================================================================== */
+-.home-security-section {
+-  position: relative;
+-  z-index: 1;
+-  padding: 60px 24px;
++.lp-tenants-grid {
++  display: grid;
++  grid-template-columns: repeat(3, 1fr);
++  gap: 12px;
++  width: 100%;
+ }
+ 
+-.home-security-card {
+-  background: linear-gradient(135deg, rgba(13, 20, 34, 0.8) 0%, rgba(9, 14, 24, 0.95) 100%);
+-  border: 1px solid var(--home-border);
+-  border-radius: 18px;
+-  padding: 38px 44px;
+-  display: flex;
+-  align-items: center;
+-  gap: 34px;
+-  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
++.lp-tenant {
++  padding: 16px;
++  border-radius: 12px;
++  background: var(--lp-surface);
++  animation: lp-card-in 0.6s var(--lp-ease) both;
+ }
+ 
+-.security-icon-large {
+-  width: 76px;
+-  height: 76px;
+-  border-radius: 18px;
+-  background: rgba(0, 212, 255, 0.1);
+-  color: var(--home-cyan);
+-  border: 1px solid rgba(0, 212, 255, 0.25);
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
+-  flex-shrink: 0;
++.lp-tenant:nth-child(2) { animation-delay: 0.1s; }
++.lp-tenant:nth-child(3) { animation-delay: 0.2s; }
++
++.lp-tenant strong {
++  display: block;
++  margin-bottom: 10px;
++  font-size: 14px;
+ }
+ 
+-.security-content h2 {
+-  font-size: 1.55rem;
+-  font-weight: 800;
+-  color: #fff;
+-  margin: 8px 0 10px 0;
++.lp-tenant ul {
++  display: grid;
++  gap: 6px;
++  font-size: 13px;
++  color: var(--lp-muted);
+ }
+ 
+-.security-content p {
+-  font-size: 0.95rem;
+-  color: var(--home-text-muted);
+-  line-height: 1.6;
+-  margin: 0 0 18px 0;
++/* ---------- 05 Confiabilidade ---------- */
++
++.lp-trust {
++  display: grid;
++  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
++  gap: clamp(48px, 6vw, 128px);
++  align-items: start;
+ }
+ 
+-.security-badges-row {
++.lp-security-list {
+   display: flex;
+   flex-wrap: wrap;
+-  gap: 14px 24px;
+-  font-size: 0.84rem;
+-  font-weight: 600;
+-  color: #e2e8f0;
++  gap: 10px;
++  margin-top: 36px;
+ }
+ 
+-.security-badges-row span {
++.lp-security-list li {
+   display: inline-flex;
+   align-items: center;
+-  gap: 6px;
++  gap: 8px;
++  padding: 10px 16px;
++  border-radius: 999px;
++  background: var(--lp-surface);
++  font-size: 14.5px;
++  font-weight: 600;
+ }
+ 
+-.security-badges-row svg {
+-  color: var(--home-cyan);
++.lp-security-list svg {
++  color: var(--lp-green);
+ }
+ 
+-/* ==========================================================================
+-   CTA FINAL DE ALTA CONVERSÃO
+-   ========================================================================== */
+-.home-final-cta-section {
+-  position: relative;
+-  z-index: 1;
+-  padding: 90px 24px;
++.lp-pillars {
++  display: grid;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++  gap: clamp(36px, 4vw, 64px) clamp(28px, 3vw, 56px);
++  padding-top: 8px;
+ }
+ 
+-.home-final-cta-card {
+-  position: relative;
+-  max-width: 1000px;
+-  margin: 0 auto;
+-  background: radial-gradient(circle at top center, rgba(16, 28, 48, 0.9) 0%, rgba(8, 12, 20, 0.98) 100%);
+-  border: 1px solid rgba(0, 212, 255, 0.25);
+-  border-radius: 24px;
+-  padding: 60px 32px;
+-  text-align: center;
+-  overflow: hidden;
+-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(0, 212, 255, 0.1);
++.lp-pillars svg {
++  color: var(--lp-accent);
+ }
+ 
+-.final-cta-glow {
+-  position: absolute;
+-  top: -100px;
+-  left: 50%;
+-  transform: translateX(-50%);
+-  width: 500px;
+-  height: 250px;
+-  background: radial-gradient(circle, rgba(0, 212, 255, 0.25) 0%, transparent 70%);
+-  pointer-events: none;
++.lp-pillars h3 {
++  margin-top: 18px;
++  font-size: clamp(24px, 2vw, 32px);
++  font-weight: 700;
++  letter-spacing: -0.02em;
+ }
+ 
+-.home-final-cta-card h2 {
+-  font-size: clamp(2rem, 3.5vw, 3rem);
+-  font-weight: 800;
+-  letter-spacing: -0.04em;
+-  color: #fff;
+-  margin: 16px 0 14px 0;
++.lp-pillars p {
++  margin-top: 8px;
++  color: var(--lp-muted);
+ }
+ 
+-.home-final-cta-card p {
+-  font-size: 1.1rem;
+-  color: var(--home-text-muted);
+-  max-width: 650px;
+-  margin: 0 auto 34px;
+-  line-height: 1.6;
+-}
++/* ---------- CTA final ---------- */
+ 
+-.home-final-actions {
+-  display: flex;
+-  flex-wrap: wrap;
+-  gap: 16px;
+-  justify-content: center;
+-  margin-bottom: 20px;
++.lp-final {
++  padding: clamp(96px, 10vw, 168px) 0;
++  background: var(--lp-bg-deep);
+ }
+ 
+-.home-btn-final-primary {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 10px;
+-  background: linear-gradient(135deg, #00d4ff 0%, #0077ff 100%);
+-  color: #040e1d;
+-  font-weight: 800;
+-  font-size: 1.05rem;
+-  padding: 16px 34px;
+-  border-radius: 12px;
+-  border: none;
+-  cursor: pointer;
+-  box-shadow: 0 8px 24px var(--home-cyan-glow);
+-  transition: all 0.2s ease;
++.lp-final-inner {
++  display: grid;
++  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
++  gap: 40px clamp(40px, 6vw, 120px);
++  align-items: end;
+ }
+ 
+-.home-btn-final-primary:hover {
+-  transform: translateY(-2px);
+-  box-shadow: 0 12px 30px rgba(0, 212, 255, 0.45);
++.lp-final .lp-h2 {
++  font-size: clamp(40px, 5.4vw, 104px);
++  line-height: 0.98;
+ }
+ 
+-.home-btn-final-secondary {
+-  display: inline-flex;
+-  align-items: center;
+-  background: rgba(255, 255, 255, 0.05);
+-  border: 1px solid var(--home-border);
+-  color: #fff;
+-  font-weight: 700;
+-  font-size: 1.05rem;
+-  padding: 16px 28px;
+-  border-radius: 12px;
+-  cursor: pointer;
+-  transition: all 0.2s ease;
++.lp-final .lp-lead {
++  margin-top: 0;
+ }
+ 
+-.home-btn-final-secondary:hover {
+-  background: rgba(255, 255, 255, 0.1);
+-  border-color: rgba(255, 255, 255, 0.25);
++.lp-final-actions {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 12px;
++  margin-top: 32px;
+ }
+ 
+-.final-subnote {
+-  display: block;
+-  font-size: 0.8rem;
+-  color: var(--home-text-dim);
++.lp-final-note {
++  margin-top: 24px;
++  font-size: 12px;
++  letter-spacing: 0.08em;
++  text-transform: uppercase;
++  color: var(--lp-dim);
+ }
+ 
+-/* ==========================================================================
+-   FOOTER CORPORATIVO
+-   ========================================================================== */
+-.home-footer-section {
+-  border-top: 1px solid var(--home-border);
+-  padding: 60px 24px 30px;
+-  background: #05080e;
+-}
++/* ---------- Rodapé ---------- */
+ 
+-.home-footer-container {
+-  max-width: 1240px;
+-  margin: 0 auto 50px;
+-  display: grid;
+-  grid-template-columns: 1.5fr 2fr;
+-  gap: 50px;
++.lp-footer {
++  padding: 64px 0 28px;
++  font-size: 15px;
+ }
+ 
+-.home-footer-brand {
++.lp-footer-inner {
+   display: flex;
+-  flex-direction: column;
+-  gap: 12px;
++  justify-content: space-between;
++  flex-wrap: wrap;
++  gap: 48px;
+ }
+ 
+-.home-footer-logo {
+-  height: 32px;
+-  width: auto;
+-  align-self: flex-start;
++.lp-footer-brand {
++  max-width: 340px;
+ }
+ 
+-.footer-tagline {
+-  font-size: 0.85rem;
+-  font-weight: 700;
+-  color: var(--home-cyan);
++.lp-footer-logo {
++  display: block;
++  height: 30px;
++  width: auto;
+ }
+ 
+-.footer-desc {
+-  font-size: 0.88rem;
+-  color: var(--home-text-muted);
+-  max-width: 380px;
+-  line-height: 1.5;
+-  margin: 0;
++.lp-footer-brand p {
++  margin-top: 14px;
++  color: var(--lp-muted);
+ }
+ 
+-.home-footer-links-grid {
+-  display: grid;
+-  grid-template-columns: repeat(3, 1fr);
+-  gap: 30px;
++.lp-footer-cols {
++  display: flex;
++  gap: 80px;
+ }
+ 
+-.footer-col h4 {
+-  font-size: 0.85rem;
+-  font-weight: 700;
++.lp-footer-cols h4 {
++  margin-bottom: 14px;
++  font-family: var(--font-mono);
++  font-size: 12px;
++  font-weight: 500;
++  letter-spacing: 0.12em;
+   text-transform: uppercase;
+-  letter-spacing: 0.05em;
+-  color: #fff;
+-  margin: 0 0 16px 0;
++  color: var(--lp-dim);
+ }
+ 
+-.footer-col a, .footer-col button {
++.lp-footer-cols a,
++.lp-footer-cols button {
+   display: block;
+-  background: none;
+-  border: none;
+-  padding: 0;
+   margin-bottom: 10px;
+-  font-size: 0.88rem;
+-  color: var(--home-text-muted);
+-  text-decoration: none;
+-  cursor: pointer;
++  padding: 0;
++  background: none;
++  border: 0;
++  color: var(--lp-muted);
++  font: inherit;
+   text-align: left;
++  cursor: pointer;
+   transition: color 0.2s ease;
+ }
+ 
+-.footer-col a:hover, .footer-col button:hover {
+-  color: #fff;
++.lp-footer-cols a:hover,
++.lp-footer-cols button:hover {
++  color: var(--lp-text);
+ }
+ 
+-.footer-login-link {
+-  color: var(--home-cyan) !important;
+-  font-weight: 700 !important;
++.lp-footer-bottom {
++  display: flex;
++  justify-content: space-between;
++  flex-wrap: wrap;
++  gap: 12px;
++  margin-top: 56px;
++  font-size: 13px;
++  color: var(--lp-dim);
+ }
+ 
+-.home-footer-bottom {
+-  max-width: 1240px;
+-  margin: 0 auto;
+-  padding-top: 24px;
+-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+-  text-align: center;
+-  font-size: 0.8rem;
+-  color: var(--home-text-dim);
++.lp-footer-bottom .lp-mono {
++  font-size: 12px;
++  letter-spacing: 0.12em;
++  text-transform: uppercase;
+ }
+ 
+-/* ==========================================================================
+-   RESPONSIVIDADE (MOBILE & TABLET)
+-   ========================================================================== */
+-@media (max-width: 1024px) {
+-  .home-ecosystem-dual-layout {
+-    grid-template-columns: 1fr;
++/* ---------- Movimento ---------- */
++
++@media (prefers-reduced-motion: no-preference) {
++  .lp-rise {
++    animation: lp-rise 0.9s var(--lp-ease) both;
++    animation-delay: calc(var(--d, 0) * 90ms + 80ms);
++  }
++
++  .lp-line > .lp-rise {
++    animation-name: lp-line-rise;
++  }
++
++  .lp-stage {
++    animation: lp-stage-in 1.2s var(--lp-ease) 0.35s both;
+   }
+-  .less-tools-grid {
+-    grid-template-columns: 1fr;
++
++  .lp-motion [data-reveal] {
++    opacity: 0;
++    transform: translateY(28px);
++    transition: opacity 0.8s ease, transform 0.9s var(--lp-ease);
++    transition-delay: calc(var(--d, 0) * 90ms);
++  }
++
++  .lp-motion [data-reveal].is-visible {
++    opacity: 1;
++    transform: none;
+   }
+-  .brand-pillars-grid {
+-    grid-template-columns: repeat(2, 1fr);
++}
++
++@keyframes lp-rise {
++  from { opacity: 0; transform: translateY(18px); }
++  to { opacity: 1; transform: none; }
++}
++
++@keyframes lp-line-rise {
++  from { transform: translateY(105%); }
++  to { transform: none; }
++}
++
++@keyframes lp-stage-in {
++  from { opacity: 0; transform: translateX(64px); }
++  to { opacity: 1; transform: none; }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  html.home-view {
++    scroll-behavior: auto;
+   }
+-  .tab-showcase-item {
+-    grid-template-columns: 1fr;
++
++  .lp-flow li::before {
++    background: var(--lp-accent);
+   }
+-  .tab-showcase-visual {
+-    border-left: none;
+-    border-top: 1px solid var(--home-border);
+-    min-height: 300px;
++
++  .lp-stage-frame {
++    transform: none;
+   }
+-  .home-calc-card {
+-    grid-template-columns: 1fr;
++
++  .home-wrapper *,
++  .home-wrapper *::before,
++  .home-wrapper *::after {
++    animation: none !important;
++    transition: none !important;
+   }
+-  .home-footer-container {
+-    grid-template-columns: 1fr;
++}
++
++/* ---------- Responsivo ---------- */
++
++@media (min-width: 640px) {
++  .lp-nowrap {
++    white-space: nowrap;
+   }
+ }
+ 
+-@media (max-width: 768px) {
+-  .home-nav-menu {
++@media (max-width: 1200px) {
++  .lp-nav-links {
+     display: none;
+   }
+-  .home-hero-headline {
+-    font-size: 2.1rem;
++
++  .lp-menu-toggle {
++    display: inline-flex;
+   }
+-  .home-poster-overlay-badges {
++
++  .lp-nav.is-open .lp-nav-links {
++    position: absolute;
++    top: 100%;
++    left: 0;
++    right: 0;
++    display: flex;
+     flex-direction: column;
+-    align-items: flex-start;
+-    gap: 12px;
+-    padding: 16px;
++    gap: 0;
++    padding: 8px var(--lp-gutter) 20px;
++    background: rgba(7, 13, 24, 0.97);
++    box-shadow: 0 1px 0 var(--lp-line);
+   }
+-  .poster-float-badge {
+-    width: 100%;
++
++  .lp-nav.is-open .lp-nav-links a {
++    padding: 14px 0;
++    font-size: 18px;
+   }
+-  .calc-results-comparison {
+-    grid-template-columns: 1fr;
++
++  .lp-nav.is-open .lp-nav-links a::after {
++    left: auto;
++    right: 0;
++    top: 50%;
++    margin-top: -2px;
+   }
+-  .ecosystem-grid-cards {
+-    grid-template-columns: 1fr;
++
++  .lp-hero-grid {
++    grid-template-columns: minmax(0, 1fr);
+   }
+-  .brand-pillars-grid {
+-    grid-template-columns: 1fr;
++
++  .lp-h1 {
++    font-size: clamp(40px, 7vw, 76px);
+   }
+-  .demo-caption-bar {
+-    flex-direction: column;
+-    align-items: flex-start;
++
++  .lp-stage {
++    margin-top: 16px;
++  }
++
++  .lp-split,
++  .lp-trust,
++  .lp-final-inner,
++  .lp-tab-panel {
++    grid-template-columns: minmax(0, 1fr);
++  }
++
++  .lp-split-aside {
++    position: static;
++  }
++
++  .sim-grid {
++    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+   }
+-  .home-security-card {
++
++  .sim-area--params {
++    grid-column: 1 / -1;
++    grid-row: auto;
++  }
++
++  .sim-area--current::before {
++    display: none;
++  }
++
++  .sim-bars {
++    grid-column: 1 / -1;
++  }
++}
++
++@media (max-width: 760px) {
++  .home-wrapper {
++    font-size: 16px;
++    --lp-nav-h: 60px;
++  }
++
++  .lp-brand-logo {
++    height: 26px;
++  }
++
++  .lp-nav-actions .lp-btn {
++    height: 36px;
++    padding: 0 14px;
++    font-size: 14px;
++  }
++
++  .lp-nav-actions .lp-btn svg {
++    display: none;
++  }
++
++  .lp-hero-ctas,
++  .lp-final-actions {
+     flex-direction: column;
++    align-items: stretch;
++  }
++
++  .lp-stage {
++    margin-right: calc(-1 * var(--lp-gutter));
++  }
++
++  .lp-stage-frame {
++    border-radius: 12px 0 0 12px;
++  }
++
++  .lp-proof {
++    grid-template-columns: repeat(2, minmax(0, 1fr));
++    gap: 28px 20px;
++  }
++
++  .lp-flow {
++    padding-left: 32px;
++  }
++
++  .lp-flow li {
++    grid-template-columns: minmax(0, 1fr);
++    gap: 6px;
++  }
++
++  .lp-flow li::before {
++    left: -32px;
++  }
++
++  .lp-flow-index {
++    font-size: 36px;
++  }
++
++  .lp-ledger dl {
++    grid-template-columns: minmax(0, 1fr);
++    gap: 28px;
++  }
++
++  .lp-cost-head {
++    grid-template-columns: minmax(0, 1fr);
++  }
++
++  .sim {
++    padding: 10px;
++    border-radius: 20px;
++  }
++
++  .sim-grid {
++    grid-template-columns: minmax(0, 1fr);
++  }
++
++  .sim-area {
++    padding: 22px 18px;
++  }
++
++  .sim-area--noria::before {
++    left: 50%;
++    top: -20px;
++    margin-left: -16px;
++    transform: rotate(90deg);
++  }
++
++  .sim-cta {
++    align-self: stretch;
++    white-space: normal;
++    height: auto;
++    min-height: 52px;
+     text-align: center;
+-    padding: 30px 20px;
+   }
+-  .security-badges-row {
+-    justify-content: center;
++
++  .sim-bars {
++    padding: 20px 18px;
++  }
++
++  .sim-bar-row {
++    grid-template-columns: 76px minmax(0, 1fr);
++    gap: 10px 12px;
++  }
++
++  .sim-bar-value {
++    grid-column: 2;
++    text-align: left;
++  }
++
++  .sim-compare {
++    padding: 4px 18px;
++  }
++
++  .sim-compare-head {
++    display: none;
++  }
++
++  .sim-compare-row {
++    grid-template-columns: minmax(0, 1fr);
++    gap: 4px;
++  }
++
++  .sim-compare-today::before {
++    content: 'Hoje: ';
++    color: var(--lp-dim);
++  }
++
++  .sim-assumptions {
++    padding: 12px 18px;
++  }
++
++  .lp-eco li {
++    grid-template-columns: 32px minmax(0, 1fr) 20px;
++    gap: 8px 14px;
++    padding: 22px 4px;
++  }
++
++  .lp-eco p {
++    grid-column: 2 / -1;
++  }
++
++  .lp-eco-icon {
++    grid-row: 1;
++    grid-column: 3;
++  }
++
++  .lp-tab-visual > :first-child {
++    min-height: 0;
++    padding: 12px;
++  }
++
++  .lp-kanban {
++    grid-template-columns: repeat(5, 132px);
++    overflow-x: auto;
+   }
+-  .tab-showcase-text {
+-    padding: 24px;
++
++  .lp-tenants-grid {
++    grid-template-columns: minmax(0, 1fr);
++  }
++
++  .lp-pillars {
++    grid-template-columns: minmax(0, 1fr);
++  }
++
++  .lp-footer-cols {
++    gap: 48px;
+   }
+ }
+diff --git a/app/tests/unit/landingSavingsModel.test.js b/app/tests/unit/landingSavingsModel.test.js
+new file mode 100644
+index 0000000..7208357
+--- /dev/null
++++ b/app/tests/unit/landingSavingsModel.test.js
+@@ -0,0 +1,40 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import {
++  computeSavings,
++  maxManualMonthly,
++  SAVINGS_ASSUMPTIONS,
++} from '../../src/features/landing/savingsModel.js';
++
++const base = { ...SAVINGS_ASSUMPTIONS, noriaMonthlyCost: null };
++
++test('custo manual considera pessoas, salário e multiplicador de encargos', () => {
++  const result = computeSavings({ attendants: 2, salary: 2400 }, base);
++  assert.equal(result.costPerAttendant, 4200);
++  assert.equal(result.manualMonthly, 8400);
++  assert.equal(result.manualYearly, 100800);
++});
++
++test('sem custo da NORIA configurado, economia é a parcela automatizável e é sinalizada', () => {
++  const result = computeSavings({ attendants: 2, salary: 2400 }, base);
++  assert.equal(result.includesNoriaCost, false);
++  assert.equal(result.savingsMonthly, 5040);
++  assert.equal(result.savingsYearly, 60480);
++  assert.equal(result.withNoriaMonthly, 3360);
++});
++
++test('custo configurado da NORIA é descontado da economia e nunca fica negativo', () => {
++  const withCost = computeSavings({ attendants: 2, salary: 2400 }, { ...base, noriaMonthlyCost: 1000 });
++  assert.equal(withCost.includesNoriaCost, true);
++  assert.equal(withCost.savingsMonthly, 4040);
++
++  const tooExpensive = computeSavings({ attendants: 1, salary: 1500 }, { ...base, noriaMonthlyCost: 99999 });
++  assert.equal(tooExpensive.savingsMonthly, 0);
++});
++
++test('entradas fora dos limites dos sliders são ajustadas aos limites', () => {
++  const result = computeSavings({ attendants: 40, salary: 100 }, base);
++  assert.equal(result.attendants, 12);
++  assert.equal(result.salary, 1500);
++  assert.ok(result.manualMonthly <= maxManualMonthly(base));
++});

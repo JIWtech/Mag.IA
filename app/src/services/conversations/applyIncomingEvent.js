@@ -4,7 +4,7 @@ import { applyConversationLifecycle } from './conversationLifecycle.js';
 import { isInternalOperationalEvent } from '../timeline/eventClassification.js';
 import { canonicalConversationKey, normalizeChannel, normalizeExternalConversationId } from '../identity/conversationIdentity.js';
 import { findKanbanColumn, getStageLabel } from '../kanban/stageResolution.js';
-import { normalizeMedia } from '../media/mediaNormalization.js';
+import { mergeMediaDescriptors, normalizeMedia } from '../media/mediaNormalization.js';
 import { normalizeAudioTranscription, normalizeLocation, normalizeStage, resolveConversationOwnerDetails, resolveEventMessagePreview, resolveEventVisibleText } from './conversationPresentation.js';
 import { cleanAgentName } from '../agents/agentNames.js';
 import { getUsefulTrustedContactName, isUsefulContactName } from '../contacts/contactNames.js';
@@ -92,12 +92,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
           && m.from === msg.from);
       if (existingMsgIndex >= 0) {
         const prevMedia = newMessages[existingMsgIndex].media;
-        const mergedMedia = media ? {
-          ...prevMedia,
-          ...media,
-          url: media.url || prevMedia?.url || '',
-          thumbnailUrl: media.thumbnailUrl || prevMedia?.thumbnailUrl || '',
-        } : prevMedia;
+        const mergedMedia = mergeMediaDescriptors(prevMedia, media);
         newMessages[existingMsgIndex] = {
           ...newMessages[existingMsgIndex],
           status: event.delivery_status || newMessages[existingMsgIndex].status,
@@ -132,12 +127,7 @@ export function applyIncomingEventToConversations(conversations = [], event, ten
           && m.from === 'contact');
       if (existingMsgIndex >= 0) {
         const prevMedia = newMessages[existingMsgIndex].media;
-        const mergedMedia = media ? {
-          ...prevMedia,
-          ...media,
-          url: media.url || prevMedia?.url || '',
-          thumbnailUrl: media.thumbnailUrl || prevMedia?.thumbnailUrl || '',
-        } : prevMedia;
+        const mergedMedia = mergeMediaDescriptors(prevMedia, media);
         newMessages[existingMsgIndex] = {
           ...newMessages[existingMsgIndex],
           status: event.delivery_status || newMessages[existingMsgIndex].status,

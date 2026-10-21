@@ -10,6 +10,31 @@ if (input.tenant_slug !== expectedSlug || (input.noria_extension && input.noria_
 // identity and result untouched so the finalisation node never re-runs it.
 if (input.noria_terminal === true) return { json: { ...input } };
 
+// Version contract with the CORE. The EXT decides only for the version it was published with; the CORE verifies the same
+// value in the decision it receives. A different version blocks the commercial action (see the commercial block).
+const NORIA_GENESIS_CONTRACT_VERSION = '2.0';
+
+// P1-02 (EXT side). A new commercial action (selection, declared interest, offer acceptance, disposition, frustration)
+// needs evidence from the message being processed now. Historical evidence may still identify a product presented
+// before, but never selects or declares interest in it by itself. The CORE applies the same rule before the EXT runs.
+function currentTurnSemantic(semantic, messages) {
+  if (!semantic || semantic.valid !== true) return semantic;
+  const current = new Set((Array.isArray(messages) ? messages : []).flatMap(m => [m?.event_id, m?.id]).filter(Boolean).map(String));
+  const hasCurrent = ids => (Array.isArray(ids) ? ids : []).some(id => current.has(String(id)));
+  const refs = semantic.references || {};
+  const productReferences = (Array.isArray(refs.product_references) ? refs.product_references : []).map(item =>
+    ['selected', 'interest'].includes(item?.role) && !hasCurrent(item.evidence_ids) ? { ...item, role: 'mentioned' } : item);
+  const productRole = ['selected', 'interest'].includes(refs.product_role) && !hasCurrent(refs.evidence_ids) ? 'mentioned' : refs.product_role;
+  const offer = semantic.offer_response && semantic.offer_response.value !== 'none' && !hasCurrent(semantic.offer_response.evidence_ids)
+    ? { ...semantic.offer_response, value: 'none', evidence_ids: [], offer_ref: '' } : semantic.offer_response;
+  const disposition = semantic.customer_disposition && semantic.customer_disposition.value !== 'active' && !hasCurrent(semantic.customer_disposition.evidence_ids)
+    ? { value: 'active', evidence_ids: [] } : semantic.customer_disposition;
+  return { ...semantic, references: { ...refs, product_role: productRole, product_references: productReferences }, offer_response: offer, customer_disposition: disposition };
+}
+const currentMessages = Array.isArray(input.messages) ? input.messages : (input.turn?.messages || []);
+if (input.semantic_intent) input.semantic_intent = currentTurnSemantic(input.semantic_intent, currentMessages);
+if (input.generated?.semantic_intent) input.generated.semantic_intent = currentTurnSemantic(input.generated.semantic_intent, currentMessages);
+
 const base = String($env.SUPABASE_URL || '').replace(/\/$/, '');
 const key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');
 if (!base || !key) throw new Error('NORIA_EXTENSION_POLICY_NO_DB');
@@ -447,6 +472,17 @@ function filterCatalogBySemantic(inventory = [], semanticCatalog = {}) {
 }
 
 /** Resolve only structured references produced by the validated semantic turn. */
+// The model's role for one product of the message. A product without its own entry takes the message role.
+function referenceRoleOf(references = {}, productId = '') {
+  const entry = (Array.isArray(references.product_references) ? references.product_references : []).find(item => String(item?.product_id || '') === String(productId));
+  return entry ? entry.role : (references.product_role || 'none');
+}
+
+// A product the message refers to without selecting it: information (or declared interest), never a selection.
+function nonSelectingReference(product, role, via, ordinal) {
+  return { product: null, identified_product: product, invalid: false, ambiguous: false, contextual: true, resolved_via: via, ordinal, reference_role: role, interest_product: role === 'interest' ? product : null };
+}
+
 function resolveSelection(semantic = null, inventory = [], catalogContext = null) {
   const references = semantic?.valid === true ? semantic.references : null;
   const evidenceIds = Array.isArray(references?.evidence_ids)
@@ -464,6 +500,7 @@ function resolveSelection(semantic = null, inventory = [], catalogContext = null
       return { product: null, invalid: products.length > 0, ambiguous: false, contextual: products.length > 0, ordinal };
     }
     const product = inventory.find(item => String(item?.id || '') === String(reference?.id || '')) || null;
+    if (product && referenceRoleOf(references, product.id) !== 'selected') return nonSelectingReference(product, referenceRoleOf(references, product.id), 'semantic_ordinal', ordinal);
     const eligibility = commercialEligibility(product);
     return {
       product,
@@ -484,6 +521,7 @@ function resolveSelection(semantic = null, inventory = [], catalogContext = null
   const matches = ids.map(id => inventory.find(item => String(item?.id || '') === id) || null).filter(Boolean);
   if (matches.length === 1) {
     const product = matches[0];
+    if (referenceRoleOf(references, product.id) !== 'selected') return nonSelectingReference(product, referenceRoleOf(references, product.id), 'semantic_product_id', null);
     const eligibility = commercialEligibility(product);
     return {
       product,
@@ -1098,7 +1136,9 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
       const financingChosen = paymentMode === 'financing' && Boolean(paymentEvidence);
       const productEligible = Boolean(product) && commercialEligibility(product).eligible;
       const hasSellSide = Boolean(mergedCustomerVehicle?.model || state.sell_vehicle?.model || state.sell_model || state.sell_brand || state.sell_year);
-      const hasBuySide = Boolean(product || state.product_id || state.buy_interest?.product_id || state.buy_interest?.model);
+      // The product object can be only information (a mention or a question). A buy side is a recorded selection
+      // or a declared interest, never the mere presence of a product.
+      const hasBuySide = Boolean(state.product_id || state.buy_interest?.product_id || state.buy_interest?.model);
       // A policy inquiry cannot resurrect a structurally incomplete dual flow.
       // This is state normalization only; it does not infer a sale, a product or
       // a financing choice.
@@ -1286,7 +1326,8 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
         tenant_slug: expectedSlug,
         ...identity,
         status: 'ok',
-        provenance: 'genesis_extension_commercial_decide_v3',
+        provenance: 'genesis_extension_commercial_decide_v4',
+        noria_contract_version: NORIA_GENESIS_CONTRACT_VERSION,
         parameters: parameterStatus,
         semantic: {
           valid: semantic?.valid === true,
@@ -1333,6 +1374,7 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
         stage_key: resolvedStage.stage_key,
         stage: resolvedStage,
         handoff: { required: handoffRequired, reason: handoffReason, destination_queue: handoffQueue },
+        follow_up_policy: followUpDispositionPolicy(settings),
         pending_requirements: collectionMissing,
         operations: {
           product_photo: decideProductPhotoAction(payload, inventory, settings, handoffRequired),
@@ -1408,6 +1450,25 @@ const HOT_LEAD_RULE_CRITERIA = {
   deposit_and_financing_documents_v2: ['deposit_percent', 'financing_documents'],
   deposit_30_and_financing_documents_v1: ['deposit_percent', 'financing_documents'],
 };
+// P1-03. Follow-up action for each customer disposition. The Gemini contract only identifies the disposition; what the
+// business does with pending follow-ups is a commercial policy that belongs to this EXT and comes from the tenant configuration
+// (settings.sales_follow_up.disposition_actions). The CORE executes the action.
+//   cancel     the tenant policy says pending follow-ups are cancelled
+//   keep       the tenant policy says pending follow-ups stay as they are
+//   undecided  no policy defines it: nothing is cancelled or rescheduled; the decision is pending for the business
+// No disposition has a built-in action. Operational cancellations (handoff, contact exclusion) are not decided here.
+function followUpDispositionPolicy(settings = {}) {
+  const configured = settings.sales_follow_up?.disposition_actions && typeof settings.sales_follow_up.disposition_actions === 'object'
+    ? settings.sales_follow_up.disposition_actions : {};
+  const actions = {}, sources = {};
+  for (const disposition of ['declined', 'closed_by_customer', 'deferred_by_customer']) {
+    const configuredAction = Object.prototype.hasOwnProperty.call(configured, disposition) ? configured[disposition] : undefined;
+    if (['cancel', 'keep'].includes(configuredAction)) { actions[disposition] = configuredAction; sources[disposition] = 'tenant_policy'; }
+    else { actions[disposition] = 'undecided'; sources[disposition] = 'no_policy_defined'; }
+  }
+  return { actions, sources };
+}
+
 function genesisCommercialPolicy(settings = {}, tenantId = '') {
   const sales = settings.sales && typeof settings.sales === 'object' ? settings.sales : {};
   const rules = settings.sdr_rules && typeof settings.sdr_rules === 'object' ? settings.sdr_rules : {};
@@ -1529,8 +1590,18 @@ function decideProductPhotoAction(payload, inventory, settings, controlBlocked =
   if (new Set(semantic.references?.mentioned_product_ids || []).size > 1) return action;
   const resolved = resolveSelection(semantic, inventory, payload.catalog_context);
   if (resolved.invalid || resolved.ambiguous) return action;
-  const selected = resolved.product || (semantic.conversation?.continues_previous_topic === true
-    ? inventory.find(item => item.id === payload.product?.id) : null);
+  // Three different things. The product the photo request names must be identified and in stock (resolved here,
+  // from the inventory and the model's role and evidence). A recorded or resolved selection is not needed for the photo:
+  // an explicit request identifies its product without selecting it. Eligibility, the product image proof and the
+  // media settings below still decide whether an image is authorised.
+  // Only the state the CORE authorised for this turn. The unvalidated candidate state (generated.state) is never read here.
+  const recordedSelection = String(payload.state?.product_id || '');
+  const recordedProduct = semantic.conversation?.continues_previous_topic === true && recordedSelection
+    && recordedSelection === String(payload.product?.id || '') ? inventory.find(item => item.id === recordedSelection) : null;
+  const identifiedSubject = resolved.identified_product && referenceRoleOf(semantic.references, resolved.identified_product.id) !== 'none'
+    ? resolved.identified_product : null;
+  const selected = resolved.product || recordedProduct || identifiedSubject;
+  if (!selected || selected.id !== payload.product?.id || !commercialEligibility(selected).eligible) return action;
   if (!selected || selected.id !== payload.product?.id || !commercialEligibility(selected).eligible) return action;
   action.product_id = selected.id;
   action.status = 'not_authorized';
@@ -1578,6 +1649,8 @@ if (input.noria_phase === 'commercial_decision' || input.operation === 'commerci
       commercial_decision_status: 'error', commercial_decision_error: code, commercial_identity: identity
     }
   });
+  // Version contract: a CORE built for another contract version is refused before any commercial decision is made.
+  if (String(input.noria_contract_version || '') !== NORIA_GENESIS_CONTRACT_VERSION) return refuse('COMMERCIAL_CONTRACT_VERSION_MISMATCH');
   if (turn.claimed !== true || !identity.turn_token || identity.session_id !== String(turn.boundary_id || '')
     || !identity.request_id.endsWith(':' + identity.turn_token)) return refuse('COMMERCIAL_TURN_IDENTITY_MISMATCH');
   const inventoryRequired = commercialDecisionNeedsInventory(input);
