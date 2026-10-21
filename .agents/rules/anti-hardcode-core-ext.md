@@ -1,3 +1,8 @@
+---
+trigger: model_decision
+description: Regras anti-hardcode conversacional e separação CORE x EXT. Ler ao mexer em n8n/sources, prompts do Gemini, fallbacks ou políticas comerciais de tenant.
+---
+
 # NORIA — DIRETRIZES DE ARQUITETURA CONVERSACIONAL E REGRAS PERMANENTES CONTRA HARDCODING
 
 > **STATUS:** REGRA ARQUITETURAL PERMANENTE MANDATÓRIA (P0)  

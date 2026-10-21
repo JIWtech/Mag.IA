@@ -1,5 +1,5 @@
 ---
-trigger: always_on
+trigger: manual
 ---
 
 # NORIA — Correções finais CORE × EXT Gênesis
@@ -10,7 +10,7 @@ Corrigir os defeitos comerciais e arquiteturais identificados nas auditorias dos
 
 **Não refazer a arquitetura.** A separação `CORE prepare → EXT commercial.decide → CORE finalize` já foi implementada. Preservá-la.
 
-Consultar obrigatoriamente `AGENTS.md`, `.agents/rules/correção_ext_supabase.md` e este arquivo.
+Consultar obrigatoriamente `.agents/context/correcao-ext-supabase.md` e este arquivo.
 
 Fontes canônicas:
 - `n8n/sources/noria_core.js`

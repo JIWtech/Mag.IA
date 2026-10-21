@@ -1,10 +1,10 @@
 ---
-trigger: always_on
+trigger: manual
 ---
 
 # NORIA — Correção das regras comerciais CORE/EXT × Supabase
 
-**Arquivo:** `.agents/rules/correção_ext_supabase.md`  
+**Arquivo:** `.agents/context/correcao-ext-supabase.md`  
 **Prioridade:** P0/P1  
 **Escopo:** Exclusivamente inconsistências comerciais entre Supabase, CORE e EXT Gênesis.
 
