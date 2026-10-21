@@ -20,6 +20,9 @@ desenvolvimento e preparar hospedagem.
 - `operations/production_deploy_checklist.md`  
   Checklist objetivo para publicar Supabase, n8n e interface sem usar workflows legados.
 
+- `operations/estado_producao_core_2026-10-21.md`  
+  IDs publicados, variáveis de ambiente e configuração de banco do CORE após a estabilização de 21/10.
+
 - `architecture/final_architecture.md`  
   Decisoes de arquitetura SaaS multi-tenant.
 
