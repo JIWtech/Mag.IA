@@ -16,9 +16,35 @@ const contract = (over = {}) => ({ fact_evidence_mode: 'standard', answers: [], 
 
 async function engine(names) {
   const hook = /try \{\r?\n\s*const turnResult = await runTurn\(\);/.exec(code);
-  return new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', code.replace(hook[0], 'return { ' + names.join(',') + ' };\n' + hook[0])).call({ helpers: { httpRequest: async () => ({}) } },
+  return new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', code.replace(hook[0], 'turn = inputJson.noria_preclaimed_turn; return { ' + names.join(',') + ' };\n' + hook[0])).call({ helpers: { httpRequest: async () => ({}) } },
     { tenant_slug: 'wesley_automoveis', tenant_id: 't', remoteJid: '5511@s.whatsapp.net', instance: 'i', noria_preclaimed_turn: { boundary_id: 'b', messages: [], claimed: true, token: 'x' } }, {}, {}, () => ({}));
 }
+
+test('uma foto EXT autorizada libera o pedido para o envio sem forjar photo_sent', async () => {
+  const core = await engine(['salesValidatePrimaryDialogue', 'salesPhotoActionProofs']);
+  const action = { tenant_id: 't', request_ids: ['request_1'] };
+  const attachment = { commercial_action: action };
+  const product = { id: 'vehicle-1' };
+  core.salesPhotoActionProofs.set(attachment, { snapshot: JSON.stringify(attachment), attachment: {
+    id: 'request:photo', tenant_id: 't', session_id: 'b', turn_token: 'x', delivery_state: 'authorized_for_dispatch', product: { id: product.id }
+  } });
+  const generated = { primary_reply: 'A foto está autorizada para envio.', state: {}, primary_facts: [], response_contract: contract() };
+  const plan = { requests: [{ id: 'request_1', topic: 'photos', subject: 'specific_product' }], next_requirement: 'none' };
+  const result = core.salesValidatePrimaryDialogue(generated, plan, { active: false }, {
+    photo_attachment: attachment, product, fact_ledger: [], turn_text: 'Tem foto?', inventory: [], handoff_claim_required: false
+  });
+  assert.ok(!result.issues.includes('UNANSWERED_REQUEST:request_1'));
+  assert.ok(result.issues.includes('SEMANTIC_FACT_AUDIT_REQUIRED'), 'autorização ainda exige a auditoria semântica do texto');
+  assert.equal(generated.response_contract.photo_sent, false, 'autorização não é confirmação de envio');
+});
+
+test('foto sem autorização não cobre o pedido de mídia', async () => {
+  const core = await engine(['salesValidatePrimaryDialogue']);
+  const result = core.salesValidatePrimaryDialogue({ primary_reply: 'A foto está autorizada para envio.', state: {}, primary_facts: [], response_contract: contract() },
+    { requests: [{ id: 'request_1', topic: 'photos', subject: 'specific_product' }], next_requirement: 'none' }, { active: false },
+    { product: { id: 'vehicle-1' }, fact_ledger: [], turn_text: 'Tem foto?', inventory: [], handoff_claim_required: false });
+  assert.ok(result.issues.includes('UNANSWERED_REQUEST:request_1'));
+});
 
 test('a coleta pendente só é exigida quando o pedido atual é a própria coleta; visita, humano, pagamento etc. são perguntas atuais', async () => {
   const core = await engine(['salesValidatePrimaryDialogue']);

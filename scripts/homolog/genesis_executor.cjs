@@ -114,7 +114,7 @@ function cannedPrimaryBody(spec = {}) {
   return { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(payload) }] } }] };
 }
 
-function createWorld({ mode, geminiKey, settings, inventory, scenarioResponses, images = [] }) {
+function createWorld({ mode, geminiKey, settings, inventory, scenarioResponses, images = [], providerFaultFor = null, rpcOverrides = null, storageObjects = {} }) {
   const world = {
     mode, geminiKey, settings, inventory,
     responses: { primary: [...(scenarioResponses?.primary || [])], other: [...(scenarioResponses?.other || [])] },
@@ -140,6 +140,7 @@ function createWorld({ mode, geminiKey, settings, inventory, scenarioResponses, 
     },
     log: { writes: [], blocked: [], simulated_sends: [], gemini: [], gemini_responses: [], simulated_media: [], missing: [], failures: [] },
     seq: 0,
+    providerFaultFor, rpcOverrides, storageObjects: new Map(Object.entries(storageObjects)),
   };
   world.env = {
     SUPABASE_URL: 'https://' + SIM_SUPABASE, SUPABASE_SERVICE_ROLE_KEY: 'homolog-simulated-service-key',
@@ -400,6 +401,14 @@ function supabaseRequest(world, method, url, body) {
   // Optional extension points used only by other homologation drivers (services): per-world RPC adapters and injected faults.
   const rpcName = pathname.startsWith('/rest/v1/rpc/') ? pathname.slice('/rest/v1/rpc/'.length) : null;
   if (world.faultFor) { const fault = world.faultFor(method, pathname, body); if (fault) throw fault; }
+  if (pathname.startsWith('/storage/v1/object/') && method === 'GET') {
+    const [, , , , bucket, ...segments] = pathname.split('/');
+    const key = bucket + '/' + segments.map(decodeURIComponent).join('/');
+    world.log.storage_reads = [...(world.log.storage_reads || []), key];
+    const bytes = world.storageObjects.get(key);
+    if (!bytes) throw new Error('HOMOLOG_STORAGE_OBJECT_MISSING');
+    return { body: Buffer.from(bytes) };
+  }
   if (rpcName && world.rpcOverrides?.[rpcName]) { world.log.writes.push({ method, rpc: rpcName }); return world.rpcOverrides[rpcName](world, body || {}); }
   sideEffectGuard(world, method, pathname);
   if (pathname.startsWith('/rest/v1/rpc/')) {
@@ -522,7 +531,7 @@ async function runCustomerTurn(world, text, index, options = {}) {
   const createdAt = new Date(Date.now() - 1000 * (100 - index)).toISOString();
   if (!options.resume) world.tables.channel_events.push({
     id: eventId, tenant_id: TENANT_ID, tenant_slug: TENANT_SLUG, channel_type: 'whatsapp', external_conversation_id: CHAT_ID,
-    direction: 'inbound', sender_type: 'customer', message_text: text, created_at: createdAt, raw_payload: {}, service: 'sales_qualification',
+    direction: 'inbound', sender_type: 'customer', message_text: text, created_at: createdAt, raw_payload: options.inboundMedia || {}, service: 'sales_qualification',
   });
   const queueRow = existing;
   const messages = options.resume ? existing.claimed : [{ id: eventId, event_id: eventId, text, direction: 'inbound', created_at: createdAt }];
@@ -612,15 +621,16 @@ function interpretationSince(world, from) {
   });
 }
 
-async function runScenario(scenario, { mode, geminiKey, settings, inventory, images = [], seed = null, turnOptions = {} }) {
-  const world = createWorld({ mode, geminiKey, settings, inventory, images, scenarioResponses: { primary: scenario.turns.map(turn => cannedPrimaryBody(turn.gemini || {})), other: scenario.auditor_responses || [] } });
+async function runScenario(scenario, { mode, geminiKey, settings, inventory, images = [], seed = null, turnOptions = {}, providerFaultFor = null, rpcOverrides = null, storageObjects = {}, geminiOverride = null }) {
+  const world = createWorld({ mode, geminiKey, settings, inventory, images, providerFaultFor, rpcOverrides, storageObjects, scenarioResponses: { primary: scenario.turns.map(turn => cannedPrimaryBody(turn.gemini || {})), other: scenario.auditor_responses || [] } });
+  world.geminiOverride = geminiOverride;
   if (seed) seed(world);
   const steps = [];
   let responsesSeen = 0;
   try {
     for (let index = 0; index < scenario.turns.length; index += 1) {
       const text = scenario.turns[index].text;
-      const outcome = await runCustomerTurn(world, text, index, turnOptions);
+      const outcome = await runCustomerTurn(world, text, index, { ...turnOptions, inboundMedia: scenario.turns[index].inbound_media || turnOptions.inboundMedia });
       const f = outcome.finalized || {};
       steps.push({ customer: text, state: observed(world), final: { ok: f.ok ?? null, keys: Object.keys(f).slice(0, 30), cancelled: f.cancelled ?? null, reason: f.reason ?? null, silent: f.silent ?? null, review: f.review_required ?? null, error_code: f.error_code ?? null, delivery_ok: f.delivery_ok ?? null }, finalized_ok: outcome.finalized?.ok ?? null, skipped: outcome.skipped || null,
         error_code: outcome.finalized?.error_code ?? null, decision_status: outcome.decided?.commercial_decision_status ?? null,

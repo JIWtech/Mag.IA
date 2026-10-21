@@ -54,8 +54,8 @@ function validateTenantPolicyContract() {
 }
 const coreBuildMetadata = {
   revision: 'conversation_core_v2_1_34_core_ext_decision_identity_2026_10_21',
-  built_at: '2026-10-21T09:44:56.402Z',
-  core_sha256: '9f55ed21ac592c6381b1f9e90853ee83bb2b8bfcbf28a90bd06aacefa1de4221',
+  built_at: '2026-10-21T10:44:06.939Z',
+  core_sha256: '07ba7e8dc960eaaf76a03aadf2aff53cc795b37ec68862f8121de4a17c63ed35',
   ext_sha256: '59a58a70697e8ef1bff6affedf745171f577873faa3ce4aedafe03ee4e011db9',
 };
 const coreRevision = coreBuildMetadata.revision;
@@ -3176,7 +3176,8 @@ async function scheduleFollowUps(context, sentEvent, event) {
   return Number(result || 0);
 }
 
-async function sendChannelMessage(context, text, event, catalogPhoto = null) {
+async function sendChannelMessage(context, text, event, catalogPhoto = null, mediaOnly = false) {
+  if (mediaOnly && (!catalogPhoto || String(text || '').trim() || event.ai_provider !== 'sales_core' || event.handoff)) throw new Error('MEDIA_ONLY_DELIVERY_INVALID');
   if (!turnCommitted || sendAttempted || deliveryConfirmed || turnFinished) throw new Error('TURN_DELIVERY_STATE_INVALID');
   const suffix = tenantEnvSuffix(tenantSlug);
   const base = env('EVOLUTION_API_URL_' + suffix).replace(/\/$/, '');
@@ -3226,9 +3227,11 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
     || deliveryAttempt.contract !== 'noria_turn_lifecycle_v1') throw new Error('DELIVERY_DISPATCH_NOT_AUTHORIZED');
   deliveryAttemptId = String(deliveryAttempt.id);
   sendAttempted = true;
+  let id = null, sentEvent = null;
+  if (!mediaOnly) {
   const sent = await httpJson('POST', base + '/message/sendText/' + encodeFilter(instance),
     { apikey: key, 'Content-Type': 'application/json' }, { number: chatId, text });
-  const id = sent?.key?.id || sent?.message?.key?.id || sent?.id;
+  id = sent?.key?.id || sent?.message?.key?.id || sent?.id;
   if (!id) throw new Error('Provider response did not contain message ID');
   providerAccepted = true;
   providerMessageId = String(id);
@@ -3247,7 +3250,7 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
       grouped_message_ids: turn.messages.map(item => item.id)
     },
   });
-  const sentEvent = Array.isArray(saved) ? saved[0] : saved;
+  sentEvent = Array.isArray(saved) ? saved[0] : saved;
   if (!sentEvent?.id) throw new Error('OUTBOUND_EVENT_NOT_PERSISTED');
   const confirmation = await supabasePost('/rest/v1/rpc/magia_confirm_turn_delivery', {
     p_tenant: context.tenant.id, p_chat: chatId, p_token: turn.token, p_attempt: deliveryAttemptId,
@@ -3255,11 +3258,12 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
   });
   if (confirmation?.confirmed !== true) throw new Error('DELIVERY_CONFIRMATION_NOT_PERSISTED');
   deliveryConfirmed = true;
-  // The text is already durably confirmed. Optional media is an independent
-  // best-effort side-effect; uncertainty must NOT cause the text to be retried.
+  }
+  // After a text delivery, media is an independent best-effort side effect.
+  // In mediaOnly mode, the image itself is the primary delivery and is confirmed below.
   let photoDelivery = null;
   if (catalogPhoto && event.ai_provider === 'sales_core' && !event.handoff) {
-    const urls = (Array.isArray(catalogPhoto.urls) ? catalogPhoto.urls : []).slice(0, 3);
+    const urls = (Array.isArray(catalogPhoto.urls) ? catalogPhoto.urls : []).slice(0, mediaOnly ? 1 : 3);
     let photoCount = 0, photoAuditFailed = false, photoReceipt = null, photoProviderId = null, photoAttempted = false;
     photoDelivery = { status: 'not_sent', product_id: String(catalogPhoto.product_id || ''), requested_count: urls.length, sent_count: 0 };
     try {
@@ -3282,7 +3286,7 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
         const receiptPayload = {
           contract: 'noria_product_photo_attempt_v1', status: 'dispatch_reserved',
           delivery_attempt_id: deliveryAttemptId, turn_token: turn.token,
-          conversation_session_id: turn.boundary_id, related_outbound_event_id: sentEvent.id,
+          conversation_session_id: turn.boundary_id, ...(sentEvent?.id ? { related_outbound_event_id: sentEvent.id } : {}),
           product_id: catalogPhoto.inventory_product_id, url, image_index: photoCount + 1,
           requires_reconciliation: true
         };
@@ -3310,14 +3314,17 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
         const imageId = imageSent?.key?.id || imageSent?.message?.key?.id || imageSent?.id;
         if (!imageId) throw new Error('CATALOG_PHOTO_PROVIDER_ID_MISSING');
         photoProviderId = String(imageId);
+        providerAccepted = true;
+        providerMessageId = photoProviderId;
         photoCount++;
+        let photoEvent = null;
         try {
           const storedImage = await supabasePost('/rest/v1/channel_events', {
             tenant_id: context.tenant.id, tenant_slug: tenantSlug, channel_type: 'whatsapp',
             external_conversation_id: chatId, external_message_id: String(imageId), direction: 'outbound',
             sender_type: 'assistant', message_text: '', contact_name: turn.messages.at(-1)?.name || firstName,
             service: 'sales_product_photo', stage: event.stage, handoff: false, ai_provider: 'sales_catalog_photo',
-            delivery_status: 'sent', raw_payload: {
+            delivery_status: mediaOnly ? 'internal' : 'sent', raw_payload: {
               content_type: 'image', sales_catalog_photo: true,
               media: {
                 kind: 'image', category: 'image', origin: 'assistant',
@@ -3331,7 +3338,7 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
               conversation_session_id: turn.boundary_id, related_outbound_event_id: sentEvent?.id || null
             }
           });
-          const photoEvent = Array.isArray(storedImage) ? storedImage[0] : storedImage;
+          photoEvent = Array.isArray(storedImage) ? storedImage[0] : storedImage;
           if (strictPhotos && !photoEvent?.id) throw new Error('CATALOG_PHOTO_EVENT_NOT_PERSISTED');
           if (photoReceipt) photoReceipt.payload.photo_outbound_event_id = photoEvent.id;
         } catch { photoAuditFailed = true; if (strictPhotos) throw new Error('CATALOG_PHOTO_EVENT_NOT_PERSISTED'); }
@@ -3343,7 +3350,23 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
           } });
         const confirmedReceipt = Array.isArray(persistedReceipt) ? persistedReceipt[0] : persistedReceipt;
         if (confirmedReceipt?.id !== photoReceipt.id) throw new Error('CATALOG_PHOTO_RECEIPT_NOT_CONFIRMED');
-        photoReceipt = null;
+        if (!mediaOnly) photoReceipt = null;
+        }
+        if (mediaOnly) {
+          if (!photoEvent?.id || !photoProviderId) throw new Error('CATALOG_PHOTO_DELIVERY_EVIDENCE_MISSING');
+          const confirmation = await supabasePost('/rest/v1/rpc/magia_confirm_turn_delivery', {
+            p_tenant: context.tenant.id, p_chat: chatId, p_token: turn.token, p_attempt: deliveryAttemptId,
+            p_provider_message: photoProviderId, p_outbound_event: photoEvent.id,
+          });
+          if (confirmation?.confirmed !== true) throw new Error('DELIVERY_CONFIRMATION_NOT_PERSISTED');
+          const finalizedPhoto = await supabasePatch('/rest/v1/channel_events?id=eq.' + encodeFilter(photoEvent.id)
+            + '&tenant_id=eq.' + encodeFilter(context.tenant.id), { delivery_status: 'sent' });
+          const finalizedPhotoEvent = Array.isArray(finalizedPhoto) ? finalizedPhoto[0] : finalizedPhoto;
+          if (finalizedPhotoEvent?.id !== photoEvent.id) throw new Error('CATALOG_PHOTO_FINALIZATION_NOT_PERSISTED');
+          deliveryConfirmed = true;
+          photoReceipt = null;
+          id = photoProviderId;
+          sentEvent = photoEvent;
         }
       }
       photoDelivery = {
@@ -3369,7 +3392,7 @@ async function sendChannelMessage(context, text, event, catalogPhoto = null) {
     }
   }
   try {
-    const followUpsScheduled = await scheduleFollowUps(context, sentEvent, event);
+    const followUpsScheduled = mediaOnly ? 0 : await scheduleFollowUps(context, sentEvent, event);
     return {
       sent: true, id: String(id), follow_ups_scheduled: followUpsScheduled,
       ...(photoDelivery ? { catalog_photo_delivery: photoDelivery } : {})
@@ -5273,9 +5296,8 @@ function salesAlbumEnvelope(message) {
 function salesMediaCapability(messages = []) {
   const markers = (Array.isArray(messages) ? messages : []).filter(message => !salesAlbumEnvelope(message))
     .map(message => String(message?.text || '').trim().match(/^\[([a-z_]+)\](?:\n|$)/i)?.[1]?.toLowerCase()).filter(Boolean);
-  if (markers.includes('sticker')) return { supported: false, kind: 'sticker', reply: 'Recebi a figurinha, mas não consigo usá-la para identificar um veículo. Pode me dizer em texto como posso ajudar?' };
   if (markers.includes('contact')) return { supported: false, kind: 'contact', reply: 'Recebi o contato, mas não uso esse arquivo como informação comercial. Pode me dizer em texto como posso ajudar?' };
-  const unknown = markers.find(kind => !['image', 'document', 'audio', 'video'].includes(kind));
+  const unknown = markers.find(kind => !['image', 'document', 'audio', 'video', 'sticker'].includes(kind));
   if (unknown) return { supported: false, kind: 'unknown', reply: 'Recebi o arquivo, mas não consigo interpretar esse formato com segurança. Pode enviar em texto, imagem, vídeo ou PDF?' };
   return { supported: true, kind: markers.includes('video') ? 'video' : '' };
 }
@@ -6907,7 +6929,7 @@ function salesInboundMediaShape(messages = []) {
     const raw = row?.raw && typeof row.raw === 'object' ? row.raw : {};
     const rawKind = String(raw.content_type || raw.sales_media_type || raw.source_media?.kind || '').toLowerCase();
     if (rawKind === 'audio' || raw.audio_metadata || raw.audio_processing) return 'audio';
-    if (rawKind === 'image' || rawKind === 'video' || rawKind === 'document') return rawKind;
+    if (rawKind === 'image' || rawKind === 'video' || rawKind === 'document' || rawKind === 'sticker') return rawKind;
     return marker;
   };
   const kinds = rows.map(kindFor);
@@ -8009,6 +8031,9 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
     id: String(message?.event_id || message?.id || ''),
     text: salesRedactPersonalData(message?.text || '')
   }));
+  const stickerParts = media.filter(item => item.kind === 'sticker' && item.readable === true
+    && item._asset?.mime === 'image/webp' && item._asset?.base64)
+    .map(item => ({ inlineData: { mimeType: 'image/webp', data: item._asset.base64 } }));
   markUsage();
   const body = await httpJson('POST', 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
     { 'Content-Type': 'application/json', 'x-goog-api-key': env('GEMINI_API_KEY') },
@@ -8067,8 +8092,8 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
             media_envelopes: turn.messages.filter(salesAlbumEnvelope).map(m => ({ event_id: m.event_id, id: m.id, kind: 'album' })),
             document_status: documentStatus, media: [...new Map([
               ...history.flatMap(e => e.raw_payload?.sales_media || []),
-              ...media.map(m => ({ event_id: m.event_id, id: m.id || null, kind: m.kind, readable: m.readable }))].map(m => [m.event_id, m])).values()]
-          })
+              ...media.map(m => ({ event_id: m.event_id, id: m.id || null, kind: m.kind, readable: m.readable, visual_status: m.kind === 'sticker' ? (m.readable ? 'available' : 'unavailable') : undefined }))].map(m => [m.event_id, m])).values()]
+          }), ...stickerParts
         }]
       }],
       generationConfig: {
@@ -8080,6 +8105,11 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
   const candidate = body.candidates?.[0];
   if (candidate?.finishReason !== 'STOP') throw new Error('INCOMPLETE_SALES_RESPONSE');
   const result = JSON.parse(candidate.content.parts.filter(p => !p.thought).map(p => p.text || '').join(''));
+  if (tenantSlug === 'wesley_automoveis' && (!result || typeof result !== 'object' || typeof result.reply !== 'string'
+    || !result.state || typeof result.state !== 'object' || !result.dialogue_plan || typeof result.dialogue_plan !== 'object'
+    || !result.semantic_intent || typeof result.semantic_intent !== 'object' || !result.response_contract
+    || !Array.isArray(result.response_contract.answers) || !Array.isArray(result.response_contract.requested_fields)
+    || !Array.isArray(result.response_contract.facts))) throw new Error('INVALID_PRIMARY_STRUCTURED_RESPONSE');
   const primaryProviderReply = result.reply;
   result.state = salesMergeState(lead?.state || {}, result.state, turn.messages.flatMap(m => [m.event_id, m.id].filter(Boolean)));
   const selectionProofs = salesCatalogSelectionProofs(history, turn.messages, inventory);
@@ -10031,6 +10061,14 @@ function salesValidatePrimaryDialogue(generated, plan, collection = {}, executio
     if (typeof excerpt !== 'string' || excerpt.trim().length < 3) return false;
     return reply.includes(excerpt.trim());
   };
+  // Authorization is only permission to enter the guarded media sender. It is
+  // not a delivery receipt and never sets photo_sent; the provider receipt is
+  // persisted later by sendChannelMessage.
+  const dispatchablePhoto = salesAuditablePhotoAttachment(execution.photo_attachment);
+  const photoRequestIds = new Set(dispatchablePhoto
+    && dispatchablePhoto.tenant_id === execution.photo_attachment?.commercial_action?.tenant_id
+    && dispatchablePhoto.product.id === execution.product?.id
+    ? (execution.photo_attachment.commercial_action.request_ids || []) : []);
   const financingRequests = (plan?.requests || []).filter(request => request.topic === 'financing');
   // A simple policy inquiry must not be failed because a stale catalogue or
   // qualification request was retained in the model plan.  The EXT confirms
@@ -10039,7 +10077,8 @@ function salesValidatePrimaryDialogue(generated, plan, collection = {}, executio
   const requestsToAudit = execution.financing_policy_inquiry === true && financingRequests.length
     ? financingRequests : (plan?.requests || []);
   for (const request of requestsToAudit) {
-    if (!contract.answers.some(answer => (answer.request_id === request.id || answer.topic === request.topic || (plan.requests.length === 1 && answer.request_id)) && literal(answer.excerpt))) issues.push('UNANSWERED_REQUEST:' + request.id);
+    if (!contract.answers.some(answer => (answer.request_id === request.id || answer.topic === request.topic || (plan.requests.length === 1 && answer.request_id)) && literal(answer.excerpt))
+      && !(request.topic === 'photos' && photoRequestIds.has(request.id))) issues.push('UNANSWERED_REQUEST:' + request.id);
   }
   const asked = new Set(contract.requested_fields.filter(item => literal(item.excerpt) && /[?]/.test(item.excerpt)).map(item => item.field));
   const svState = (generated.state || {}).sell_vehicle || {};
@@ -10428,6 +10467,10 @@ function salesDialogueFactLedger(context, product, state, documentStatus, execut
     else facts.push({ id: path, value: String(value), type: typeof value });
   }
   visit(official, 'official');
+  // The media-only final ledger prunes official.inventory, but Gemini may still
+  // cite the selected product's canonical ID as its fact_id. Keep that identity
+  // alias bound to the same focused product without restoring unrelated stock.
+  if (official.product?.id) facts.push({ id: official.product.id, value: String(official.product.model || official.product.id), type: 'string' });
   if (Array.isArray(execution.authorized_facts)) {
     for (const fact of execution.authorized_facts) {
       if (fact?.fact_id && fact.value !== null && fact.value !== undefined
@@ -12724,6 +12767,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     backendHandoffReply = !(simpleAcknowledgement && ['assigned', 'awaiting_business_hours', 'queued_unassigned'].includes(dispatchStatus));
   }
   let catalogPhotoToSend = null;
+  let mediaOnlyDelivery = false;
   // Commercial intent and product selection belong to the EXT. CORE consumes
   // its action only after validating the enclosing decision's full identity.
   const photoAction = commercialDecisionAuthoritative ? salesValidatedProductPhotoAction(decisionData, context, naturalPlan) : null;
@@ -12813,7 +12857,15 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
         const issueStr = issuesList.join(';') || 'DIALOGUE_REVIEW_REQUIRED';
         event.ai_error = 'DIALOGUE_REVIEW_REQUIRED:' + issueStr;
         event.raw_payload = { ...(event.raw_payload || {}), dialogue_rejection_reason: issueStr };
-        catalogPhotoToSend = null;
+        const independentPhoto = catalogPhotoToSend && salesAuditablePhotoAttachment(catalogPhotoToSend)
+          && issuesList.some(issue => /^UNSUPPORTED_FACT:/.test(issue))
+          && issuesList.every(issue => /^UNSUPPORTED_FACT:/.test(issue) || issue === 'SEMANTIC_FACT_AUDIT_REQUIRED');
+        if (independentPhoto) {
+          mediaOnlyDelivery = true;
+          reply = '';
+          event.raw_payload = { ...(event.raw_payload || {}), media_only_delivery: true,
+            photo_text_audit: 'rejected_independent_text_fact', photo_action_status: 'authorized_for_dispatch' };
+        } else catalogPhotoToSend = null;
         followUpDisposition = 'awaiting_customer';
         if (['sell_model', 'sell_year', 'vehicle_description', 'vehicle_photo'].includes(pendingRequirement) && (!s.sell_vehicle?.model && !s.sell_model)) {
           pendingRequirement = (s.product_id || generated.product) ? '' : 'purchase_product';
@@ -12935,15 +12987,17 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     }
   });
   await saveEvent(event, context);
-  let visibleReply = tenantSlug === 'wesley_automoveis' && naturalPlan ? String(reply || '').trim() : cleanReplyText(reply);
-  if (!visibleReply && !afterSales && !saved.ai_locked) {
+  let visibleReply = mediaOnlyDelivery ? '' : tenantSlug === 'wesley_automoveis' && naturalPlan ? String(reply || '').trim() : cleanReplyText(reply);
+  if (!visibleReply && !mediaOnlyDelivery && !afterSales && !saved.ai_locked) {
     if (depositValidation?.reason === 'exceeds_vehicle_price') {
       visibleReply = 'A entrada informada de ' + salesMoney(depositValidation.deposit_cents) + ' é maior que o valor do veículo' + (generated.product?.price_cents ? ' (' + salesMoney(generated.product.price_cents) + ')' : '') + '. Qual valor você pretende dar de entrada?';
     } else {
       visibleReply = 'Tive uma instabilidade temporária no atendimento. Pode repetir sua mensagem, por favor?';
     }
   }
-  const sent = visibleReply ? await sendChannelMessage(context, visibleReply, event, catalogPhotoToSend) : { sent: false, silent: true };
+  const sent = visibleReply || mediaOnlyDelivery
+    ? await sendChannelMessage(context, visibleReply, event, catalogPhotoToSend, mediaOnlyDelivery)
+    : { sent: false, silent: true };
   if (!event.raw_payload?.human_dispatch && tenantSlug !== 'wesley_automoveis' && saved.ai_locked && handoffReason && defaultAssignee?.name && !['financing_review', 'trade_in_review'].includes(handoffReason)) {
     await salesAssignConversation(context, defaultAssignee, saved);
   }
@@ -13054,6 +13108,7 @@ async function salesClassifyImages(context, rows, history = []) {
   const pending = salesLastPendingRequirement(history);
   const expectedVehiclePhoto = pending === 'vehicle_photo';
   const supportedImageMime = mime => ['image/jpeg', 'image/png', 'image/webp'].includes(String(mime || '').split(';')[0]);
+  const stickerRows = rows.filter(row => /^\[sticker\](?:\n|$)/i.test(String(row.text || '').trim()));
   const storedVehicleEvidence = (raw = {}) => {
     const media = raw?.media || {};
     const mime = String(media.mimeType || media.mime_type || raw?.source_media?.mime_type || '').split(';')[0];
@@ -13062,6 +13117,34 @@ async function salesClassifyImages(context, rows, history = []) {
   };
   for (const row of rows) {
     try {
+      if (/^\[sticker\](?:\n|$)/i.test(String(row.text || '').trim())) {
+        const original = await supabaseGet('/rest/v1/channel_events?select=id,external_message_id,raw_payload&tenant_id=eq.' + encodeFilter(context.tenant.id)
+          + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId) + '&id=eq.' + encodeFilter(row.event_id) + '&limit=1');
+        if (original[0]?.id !== row.event_id || original[0]?.external_message_id !== row.id) throw new Error('STICKER_SCOPE_MISMATCH');
+        const raw = original[0]?.raw_payload || {};
+        const media = raw.media || {};
+        const storagePath = String(media.storagePath || media.storage_path || media.path || '');
+        const bucket = String(media.storage_bucket || media.bucket || env('WHATSAPP_MEDIA_BUCKET') || 'channel-media');
+        const mediaSize = Number(media.storedSize || media.size_bytes || media.file_size_bytes || media.size);
+        const prefix = String(tenantSlug) + '/whatsapp/' + String(chatId).replace(/[^A-Za-z0-9_-]/g, '_') + '/';
+        if (media.status !== 'stored' || media.verified !== true || media.kind !== 'sticker'
+          || String(media.mimeType || media.mime_type || '').split(';')[0] !== 'image/webp'
+          || raw.source_media?.is_animated !== false || !storagePath.startsWith(prefix)
+          || storagePath.includes('..') || !/^[A-Za-z0-9_./-]+\.webp$/i.test(storagePath)
+          || mediaSize <= 0 || mediaSize > 5 * 1024 * 1024) throw new Error('STICKER_NOT_AUTHORIZED');
+        const encodedPath = storagePath.split('/').map(encodeURIComponent).join('/');
+        const response = await helpers.httpRequest({ method: 'GET', url: env('SUPABASE_URL').replace(/\/$/, '')
+          + '/storage/v1/object/' + encodeURIComponent(bucket) + '/' + encodedPath,
+          headers: { apikey: env('SUPABASE_SERVICE_ROLE_KEY'), Authorization: 'Bearer ' + env('SUPABASE_SERVICE_ROLE_KEY') },
+          encoding: 'arraybuffer', timeout: 10000 });
+        const bytes = Buffer.from(response?.body || response);
+        if (bytes.length !== mediaSize || bytes.length < 16
+          || bytes.subarray(0, 4).toString() !== 'RIFF' || bytes.subarray(8, 12).toString() !== 'WEBP'
+          || bytes.readUInt32LE(4) + 8 !== bytes.length || bytes.includes(Buffer.from('ANIM')) || bytes.includes(Buffer.from('ANMF'))
+          || (bytes[20] === 0x2f && bytes.length < 25)) throw new Error('STICKER_BYTES_INVALID');
+        prepared.push({ row, mime: 'image/webp', base64: bytes.toString('base64'), isStored: true, kind: 'sticker' });
+        continue;
+      }
       const caption = String(row.text || '').replace(/^\[image\]\n?/i, '').trim();
       const forceDocument = pending === 'documents'
         || /\b(?:cnh|cpf|rg|documento|habilita[cç][aã]o|comprovante|identidade)\b/i.test(caption);
@@ -13146,7 +13229,7 @@ async function salesClassifyImages(context, rows, history = []) {
   }
   return prepared.map(item => ({
     event_id: item.row.event_id, id: item.row.id, text: item.row.text, kind: item.kind === 'uncertain' ? 'unclassified_image' : item.kind,
-    readable: item.isStored !== false && item.kind === 'vehicle_photo', extracted: {}, _asset: item.mime && item.base64 ? { mime: item.mime, base64: item.base64 } : null,
+    readable: item.isStored !== false && (item.kind === 'vehicle_photo' || item.kind === 'sticker'), extracted: {}, _asset: item.mime && item.base64 ? { mime: item.mime, base64: item.base64 } : null,
     ...(item.trustedStored ? { trusted_stored: true } : {})
   }));
 }
@@ -13282,7 +13365,7 @@ async function salesReadMedia(context, history = [], lead = null) {
       });
     }
   }
-  const imageRows = turn.messages.filter(m => /^\[image\](?:\n|$)/i.test(m.text.trim()));
+  const imageRows = turn.messages.filter(m => /^\[(?:image|sticker)\](?:\n|$)/i.test(m.text.trim()));
   const classified = await salesClassifyImages(context, imageRows, history);
   results.push(...classified.filter(item => item.kind !== 'document'));
   const rows = [...turn.messages.filter(m => /^\[document\](?:\n|$)/i.test(m.text.trim())), ...classified.filter(item => item.kind === 'document')];
