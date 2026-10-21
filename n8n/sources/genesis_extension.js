@@ -1327,6 +1327,12 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
       const decidedMode = tradeInData?.kind === 'independent_sale' ? 'sell'
         : tradeInData?.kind === 'offer' ? 'buy_and_sell'
           : buyOnlyCorrection ? 'buy' : normalizedStateMode;
+      // A photo request for another identified, eligible vehicle moves the authorised product to it, so the
+      // CORE validates the attachment and the caption against the vehicle the customer actually asked for.
+      const productPhoto = decideProductPhotoAction(payload, inventory, settings, handoffRequired);
+      const photoProduct = productPhoto.product_id && productPhoto.product_id !== product?.id
+        ? inventory.find(item => item.id === productPhoto.product_id) || null : null;
+      const authorizedProduct = photoProduct || product;
       const decision = {
         contract: 'noria_commercial_decision_v1',
         tenant_slug: expectedSlug,
@@ -1361,20 +1367,20 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
           financing_qualified: collectionReady,
         },
         lead_classification: leadClassification,
-        authorized_product: product ? {
-          id: product.id, name: product.name, commercial_name: product.commercial_name,
-          brand: product.brand, model: product.model, year: product.year, color: product.color,
-          km: product.km, fuel: product.fuel, price_cents: product.price_cents,
-          observations: product.observations || null,
-          previous_price_cents: product.previous_price_cents, price_source: product.price_source,
-          status: product.status, offerable: product.offerable === true,
-          availability_verified: product.availability_verified === true,
-          source_observed_at: product.source_observed_at || null, synced_at: product.synced_at || null,
+        authorized_product: authorizedProduct ? {
+          id: authorizedProduct.id, name: authorizedProduct.name, commercial_name: authorizedProduct.commercial_name,
+          brand: authorizedProduct.brand, model: authorizedProduct.model, year: authorizedProduct.year, color: authorizedProduct.color,
+          km: authorizedProduct.km, fuel: authorizedProduct.fuel, price_cents: authorizedProduct.price_cents,
+          observations: authorizedProduct.observations || null,
+          previous_price_cents: authorizedProduct.previous_price_cents, price_source: authorizedProduct.price_source,
+          status: authorizedProduct.status, offerable: authorizedProduct.offerable === true,
+          availability_verified: authorizedProduct.availability_verified === true,
+          source_observed_at: authorizedProduct.source_observed_at || null, synced_at: authorizedProduct.synced_at || null,
           // Preserve only this freshly re-authorised EXT snapshot, never CORE media.
-          image_url: product.image_url || null,
-          image_urls: Array.isArray(product.image_urls) ? [...product.image_urls] : [],
-          image_source: product.image_source || null,
-          image_authorization: product.image_authorization || null,
+          image_url: authorizedProduct.image_url || null,
+          image_urls: Array.isArray(authorizedProduct.image_urls) ? [...authorizedProduct.image_urls] : [],
+          image_source: authorizedProduct.image_source || null,
+          image_authorization: authorizedProduct.image_authorization || null,
         } : null,
         inventory_focus: inventoryFocus,
         stage_key: resolvedStage.stage_key,
@@ -1383,7 +1389,7 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
         follow_up_policy: followUpDispositionPolicy(settings),
         pending_requirements: collectionMissing,
         operations: {
-          product_photo: decideProductPhotoAction(payload, inventory, settings, handoffRequired),
+          product_photo: productPhoto,
           trade_in: tradeInData,
           auction: auctionOp,
           financing: {
@@ -1606,9 +1612,11 @@ function decideProductPhotoAction(payload, inventory, settings, controlBlocked =
     && recordedSelection === String(payload.product?.id || '') ? inventory.find(item => item.id === recordedSelection) : null;
   const identifiedSubject = resolved.identified_product && referenceRoleOf(semantic.references, resolved.identified_product.id) !== 'none'
     ? resolved.identified_product : null;
-  const selected = resolved.product || recordedProduct || identifiedSubject;
-  if (!selected || selected.id !== payload.product?.id || !commercialEligibility(selected).eligible) return action;
-  if (!selected || selected.id !== payload.product?.id || !commercialEligibility(selected).eligible) return action;
+  // A product named by the current message may differ from the previous focus ("e a outra? manda foto"): the
+  // EXT re-authorises it here and returns it as the decision's authorized_product. Only the recorded focus
+  // (no reference in this message) must match the product the CORE already had in focus.
+  const selected = resolved.product || identifiedSubject || recordedProduct;
+  if (!selected || !commercialEligibility(selected).eligible) return action;
   action.product_id = selected.id;
   action.status = 'not_authorized';
   if (controlBlocked || payload.lead?.ai_locked === true || payload.dialogue_plan?.human_requested === true) return action;

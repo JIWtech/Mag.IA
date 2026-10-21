@@ -66,8 +66,24 @@ test('anunciar transferência sem execução continua rejeitado; com execução 
 async function run(turnSpec, repairs) {
   const scenario = { name: 'recovery', turns: [{ text: 'Air-bag acionado no painel \nE luz de injeção', gemini: turnSpec }], auditor_responses: repairs };
   const result = await ex.runScenario(scenario, { mode: 'fixtures', geminiKey: null, settings: ex.loadSettings(), inventory: fixtures.inventory });
-  const outbound = result.world.tables.channel_events.filter(row => row.direction === 'outbound').at(-1);
-  return { result, outbound, repairCalls: result.world.log.gemini.filter(item => (item.schema_properties || []).includes('reply') && (item.schema_properties || []).includes('response_contract') && !(item.schema_properties || []).includes('semantic_intent')).length };
+  const outbound = salesOutbound(result.world);
+  return { result, outbound, alert: operatorAlert(result.world), repairCalls: result.world.log.gemini.filter(item => (item.schema_properties || []).includes('reply') && (item.schema_properties || []).includes('response_contract') && !(item.schema_properties || []).includes('semantic_intent')).length };
+}
+// The turn's own sales event, and the internal operator alert of a turn the AI could not answer safely.
+const salesOutbound = world => world.tables.channel_events.filter(row => row.direction === 'outbound' && row.ai_provider !== 'core_error').at(-1);
+const operatorAlert = world => world.tables.channel_events.find(row => row.service === 'technical_error' && row.ai_provider === 'core_operator_review') || null;
+// Nenhuma mensagem técnica chega ao cliente: o turno fica em silêncio e o operador é alertado.
+function assertSilentForOperator(world, alert, issue) {
+  assert.equal(world.log.simulated_sends.length, 0, 'nenhuma mensagem ao cliente');
+  assert.ok(alert, 'operador alertado');
+  assert.equal(alert.delivery_status, 'internal');
+  assert.equal(alert.message_text, '');
+  assert.equal(alert.handoff, false, 'o alerta não é troca de controle');
+  assert.match(alert.ai_error, issue);
+  const queue = world.tables.conversation_turn_queue[0];
+  assert.equal(queue.phase, 'review', 'turno retido para o operador, sem falha técnica');
+  assert.equal(queue.claimed.length, 1, 'a mensagem do cliente fica preservada para o operador');
+  assert.equal(world.log.failures.length, 0, 'sem falha de fila');
 }
 const announced = { reply: 'Vou chamar um atendente para olhar isso.', response_contract: { handoff_announced: true }, semantic_intent: { primary_intent: 'other', topics: ['other'] } };
 
@@ -82,28 +98,33 @@ test('rejeição só comportamental: uma reescrita auditada recupera o atendimen
   assert.doesNotMatch(outbound.message_text, /atendente|encaminh|transfer/i);
 });
 
-test('a reescrita é auditada pelo mesmo auditor: se repetir o anúncio sem execução, vale o bloqueio e o fallback seguro existente', async () => {
+test('a reescrita é auditada pelo mesmo auditor: se repetir o anúncio sem execução, vale o bloqueio e o turno fica em silêncio para o operador', async () => {
   const again = body({ reply: 'Já estou chamando um atendente.', response_contract: contract({ handoff_announced: true }) });
-  const { outbound, repairCalls } = await run(announced, [again]);
+  const { result, outbound, alert, repairCalls } = await run(announced, [again]);
   assert.equal(repairCalls, 1, 'nenhuma segunda tentativa');
   assert.equal(outbound.raw_payload.dialogue_repair.status, 'needs_human_review');
   assert.match(outbound.ai_error, /UNEXECUTED_HANDOFF_ANNOUNCEMENT/);
-  assert.doesNotMatch(outbound.message_text, /Já estou chamando/);
+  assertSilentForOperator(result.world, alert, /UNEXECUTED_HANDOFF_ANNOUNCEMENT/);
 });
 
-test('falha da própria reescrita não derruba o turno: cai no fallback seguro existente', async () => {
-  const { outbound } = await run(announced, []);
+test('falha da própria reescrita não derruba o turno nem gera mensagem técnica', async () => {
+  const { result, outbound, alert } = await run(announced, []);
   assert.equal(outbound.raw_payload.dialogue_repair.status, 'failed');
   assert.match(outbound.ai_error, /UNEXECUTED_HANDOFF_ANNOUNCEMENT/);
-  assert.ok(outbound.message_text.length > 0);
+  assertSilentForOperator(result.world, alert, /UNEXECUTED_HANDOFF_ANNOUNCEMENT/);
 });
 
-test('rejeição factual não é reescrita pelo modelo (preço inventado continua bloqueado)', async () => {
+test('rejeição factual: uma reescrita auditada pode retirar o valor, mas o preço inventado nunca chega ao cliente', async () => {
   const invented = { reply: 'Essa moto custa R$ 99.999,00.', semantic_intent: { primary_intent: 'other', topics: ['other'] } };
-  const { outbound, repairCalls } = await run(invented, [body({ reply: 'x', response_contract: contract() })]);
-  assert.equal(repairCalls, 0, 'nenhuma reescrita para rejeição de valor');
-  assert.match(outbound.ai_error, /UNSUPPORTED_AMOUNT/);
-  assert.equal(outbound.raw_payload.dialogue_repair, undefined);
+  const repeated = body({ reply: 'Ela sai por R$ 99.999,00.', response_contract: contract() });
+  const blocked = await run(invented, [repeated]);
+  assert.equal(blocked.repairCalls, 1, 'uma única reescrita');
+  assert.match(blocked.outbound.ai_error, /UNSUPPORTED_AMOUNT/);
+  assertSilentForOperator(blocked.result.world, blocked.alert, /UNSUPPORTED_AMOUNT/);
+  const fixed = await run(invented, [body({ reply: 'Esse valor eu não tenho confirmado agora. Quer saber outro detalhe dela?', response_contract: contract({ requested_fields: [{ field: 'x', excerpt: 'Quer saber outro detalhe dela?' }] }) })]);
+  assert.equal(fixed.outbound.raw_payload.dialogue_repair?.status, 'accepted', JSON.stringify(fixed.outbound.raw_payload.dialogue_repair));
+  assert.doesNotMatch(fixed.outbound.message_text, /99\.999/);
+  assert.equal(fixed.result.world.log.simulated_sends.length, 1);
 });
 
 // ---------------------------------------------------------------- fechamento P1: handoff, orçamento e falha segura
@@ -114,7 +135,7 @@ const humanRequest = { reply: 'Claro, vou chamar um atendente para você.', resp
 async function runWith(turnSpec, responses, { seed, settings } = {}) {
   const scenario = { name: 'closing', turns: [{ text: 'Quero falar com um atendente', gemini: turnSpec }], auditor_responses: responses };
   const result = await ex.runScenario(scenario, { mode: 'fixtures', geminiKey: null, settings: settings || ex.loadSettings(), inventory: fixtures.inventory, seed });
-  return { result, world: result.world, outbound: result.world.tables.channel_events.filter(row => row.direction === 'outbound').at(-1) };
+  return { result, world: result.world, outbound: salesOutbound(result.world) };
 }
 
 test('handoff autorizado: o CORE executa e persiste (fila humana, lead travado, evento com handoff) sem reescrita nem chamada extra', async () => {
@@ -141,7 +162,7 @@ test('handoff decidido mas não comprovado: nenhuma reescrita de texto o encobre
   assert.doesNotMatch(outbound.message_text, /Certo, seguimos/);
 });
 
-test('a reescrita usa o orçamento Gemini do tenant: uma reserva por chamada; sem orçamento nenhuma chamada sai e o turno cai no fallback seguro', async () => {
+test('a reescrita usa o orçamento Gemini do tenant: uma reserva por chamada; sem orçamento nenhuma chamada sai e o turno fica em silêncio para o operador', async () => {
   const repaired = body({ reply: 'Entendi, obrigado por avisar. Posso ajudar com mais alguma informação do veículo?', response_contract: contract() });
   const reserves = [];
   const counted = await run(announced, [repaired]).then(() => null);
@@ -154,23 +175,17 @@ test('a reescrita usa o orçamento Gemini do tenant: uma reserva por chamada; se
   assert.ok(reserves.length >= gemini && reserves.every(r => r.p_tenant_id && Number.isFinite(r.p_daily_limit)), 'toda chamada reserva o orçamento do tenant antes de sair');
   reserves.length = 0;
   const denied = await withBudget(1);
-  const out = denied.world.tables.channel_events.filter(row => row.direction === 'outbound').at(-1);
+  const out = salesOutbound(denied.world);
   assert.equal(denied.world.log.gemini.length, 1, 'sem orçamento a reescrita não sai');
   assert.equal(out.raw_payload.dialogue_repair.status, 'failed');
   assert.match(out.ai_error, /UNEXECUTED_HANDOFF_ANNOUNCEMENT/);
-  assert.equal(denied.world.log.simulated_sends.length, 1, 'uma única mensagem entregue');
+  assertSilentForOperator(denied.world, operatorAlert(denied.world), /UNEXECUTED_HANDOFF_ANNOUNCEMENT/);
 });
 
-test('reescrita rejeitada: bloqueio preservado, sem mensagem perdida, sem envio duplicado e sem transferência inventada', async () => {
+test('reescrita rejeitada: bloqueio preservado, sem envio, sem transferência inventada e mensagem retida para o operador', async () => {
   const again = body({ reply: 'Já estou chamando um atendente.', response_contract: contract({ handoff_announced: true }) });
-  const { world, outbound } = await run(announced, [again]).then(value => ({ world: value.result.world, outbound: value.outbound }));
-  const queue = world.tables.conversation_turn_queue[0];
-  assert.equal(world.log.simulated_sends.length, 1, 'exatamente uma entrega');
-  assert.equal(world.tables.conversation_turn_delivery_attempts.filter(row => row.status === 'confirmed').length, 1);
-  assert.equal(queue.phase, 'ready');
-  assert.equal(queue.claimed.length, 0, 'a mensagem foi consumida pela entrega confirmada, não perdida');
+  const { world, outbound, alert } = await run(announced, [again]).then(value => ({ world: value.result.world, outbound: value.outbound, alert: value.alert }));
+  assertSilentForOperator(world, alert, /UNEXECUTED_HANDOFF_ANNOUNCEMENT/);
   assert.ok(!outbound.handoff, 'nenhum handoff inventado');
   assert.equal(world.tables.sales_leads[0]?.ai_locked ?? false, false);
-  assert.doesNotMatch(outbound.message_text, /atendente/i);
-  assert.equal(world.log.failures.length, 0, 'sem falha de fila');
 });

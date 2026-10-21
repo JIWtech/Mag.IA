@@ -7,13 +7,13 @@
     "production_approved": false
   },
   "core_revision": "conversation_core_v2_1_34_core_ext_decision_identity_2026_10_21",
-  "built_at": "2026-10-21T10:44:06.939Z",
-  "core_sha256": "07ba7e8dc960eaaf76a03aadf2aff53cc795b37ec68862f8121de4a17c63ed35",
-  "raw_disk_sha256": "4fa7a03597295d817b0b3a94d83b1ec95afe58799cce6229fe40816ea3974938",
+  "built_at": "2026-10-21T14:24:21.814Z",
+  "core_sha256": "1886f57ceaa7630e1f4322816a0b8a30355667c162b8e445b4d50548a09bb515",
+  "raw_disk_sha256": "766e0ccfe01ffa1f19d594f9875ae766814a68c86d39de0ff6c2620e2f8eaeea",
   "hash_explanation": "core_sha256 is the deterministic normalized hash embedded into the runtime code block; raw_disk_sha256 is the direct sha256 of the generated source file on disk after metadata embedding.",
-  "ext_sha256": "59a58a70697e8ef1bff6affedf745171f577873faa3ce4aedafe03ee4e011db9",
+  "ext_sha256": "6d2ebb0d83e40f34b17b4b6035829114666aa6823ae48ecd9384f4aa7bab2249",
   "ext_identity_sha256": "d816584a739645172a4573ee6a74bc25303a597c732ac87446e6c6254af9f026",
-  "ext_bundle_sha256": "c4c4fdc7078dee65432c9c3ff9f509ec42b8fd1a84debf76b0f0a6cc14b2d598",
+  "ext_bundle_sha256": "26825c4819f7e269b49bfd678610d8b2f017eb37c63b7319abd13beb23487c70",
   "services_pipeline": {
     "status": "wired_default_v1_chain_disabled_until_publication",
     "nubia_ext_sha256": "18f7732fd363045a9de68c129a9f137ea095447bdcf5d8e39df371d36048b254",
