@@ -230,8 +230,8 @@ test('build: a cadeia da Núbia v2 está fora do CORE; roteador simples; rotas l
   assert.ok(has('CORE | Preparar resposta | Fase', 'CORE | Preparar resposta', 0));
   assert.ok(has('CORE | Executar EXT Genesis comercial', 'CORE | Finalizar resposta | Fase', 0));
   assert.ok(has('CORE | Finalizar resposta | Fase', 'CORE | Finalizar resposta', 0));
-  // Referências EXT Núbia/Royal removidas do build até serem publicadas: o evento é reconhecido como ignorado, sem entrar no pipeline de outro tenant.
-  assert.ok(has('CORE - É Núbia?', 'Responder Evento Ignorado', 0));
+  // Núbia v1 segue pela sua EXT (nunca pelo pipeline de outro tenant nem como evento ignorado); Royal fica fora até ser publicada.
+  assert.ok(has('CORE - É Núbia?', 'CORE | Executar EXT Núbia', 0));
   assert.ok(!core.nodes.some(n => n.name === 'Executar EXT Nubia (PREENCHER ID)'));
   assert.ok(has('Recuperar Fila WhatsApp', 'Ler Fila WhatsApp', 0));
   const diff = execFileSync('git', ['diff', '--stat', '--', 'n8n/workflows/NORIA EXT _ NB Bronze _ Política de negócio v2.json', 'n8n/sources/genesis_tenant_identity.js'], { cwd: root }).toString().trim();

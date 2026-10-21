@@ -1502,6 +1502,28 @@
         "mode": "runOnceForEachItem",
         "jsCode": "return { json: { ...$json, noria_engine_phase: 'finalize' }, binary: $input.item.binary };"
       }
+    },
+    {
+      "name": "CORE | Executar EXT Núbia",
+      "id": "6f7bb177-082d-4cdb-8d27-faa19d5c3299",
+      "position": [
+        155520,
+        -10624
+      ],
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "vCDXJLqIBCZJRTVv",
+          "mode": "id",
+          "cachedResultUrl": "/workflow/vCDXJLqIBCZJRTVv"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
     }
   ],
   "pinData": {},
@@ -1546,7 +1568,7 @@
       "main": [
         [
           {
-            "node": "Responder Evento Ignorado",
+            "node": "CORE | Executar EXT Núbia",
             "type": "main",
             "index": 0
           }
@@ -2258,6 +2280,17 @@
         [
           {
             "node": "CORE | Finalizar resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CORE | Executar EXT Núbia": {
+      "main": [
+        [
+          {
+            "node": "CORE | Motor conversacional único | Fase",
             "type": "main",
             "index": 0
           }

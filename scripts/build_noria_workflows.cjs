@@ -263,23 +263,34 @@ function configureRoyalRoute(workflow, enabled = ROYAL_ENABLED) {
   if (workflow.nodes.some(node => node.name === execute)) throw new Error('ROYAL_EXT_REFERENCE_REMAINS');
 }
 
-function removeNubiaExtReference(workflow) {
+// Núbia v1 is served by its own EXT (NORIA EXT | NB Bronze | Política de negócio v2), as in production since 16/10,
+// and then by the engine in single phase. Routing her turns to "Responder Evento Ignorado" consumed queued customer
+// messages without any reply, so a Núbia turn always goes through her EXT.
+const NUBIA_EXT_WORKFLOW_ID = process.env.NORIA_NUBIA_EXT_WORKFLOW_ID || 'vCDXJLqIBCZJRTVv';
+function configureNubiaExtRoute(workflow) {
   const gate = 'CORE - É Núbia?';
-  const execute = 'Executar EXT Nubia (PREENCHER ID)';
-  const ignored = 'Responder Evento Ignorado';
+  const execute = 'CORE | Executar EXT Núbia';
+  const legacyExecute = 'Executar EXT Nubia (PREENCHER ID)';
+  const single = 'CORE | Motor conversacional único';
   const gateNode = workflow.nodes.find(node => node.name === gate);
-  const ignoredNode = workflow.nodes.find(node => node.name === ignored);
-  if (!gateNode || !ignoredNode) throw new Error('MISSING_NUBIA_GATE_OR_IGNORE_RESPONSE');
+  if (!gateNode) throw new Error('MISSING_NUBIA_GATE');
 
-  // Núbia remains unavailable until its own EXT is explicitly published. Its
-  // messages are acknowledged as ignored rather than crossing into Gênesis.
-  workflow.nodes = workflow.nodes.filter(node => node.name !== execute);
-  delete workflow.connections[execute];
+  workflow.nodes = workflow.nodes.filter(node => node.name !== legacyExecute);
+  delete workflow.connections[legacyExecute];
+  let node = workflow.nodes.find(n => n.name === execute);
+  if (!node) {
+    node = { name: execute, id: deterministicNodeId('noria-nubia-ext', execute),
+      position: [gateNode.position[0] + 224, gateNode.position[1] - 160] };
+    workflow.nodes.push(node);
+  }
+  Object.assign(node, { type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, parameters: {
+    workflowId: { __rl: true, value: NUBIA_EXT_WORKFLOW_ID, mode: 'id', cachedResultUrl: '/workflow/' + NUBIA_EXT_WORKFLOW_ID },
+    mode: 'each', options: { waitForSubWorkflow: true } } });
   workflow.connections[gate] = { main: [
-    [{ node: ignored, type: 'main', index: 0 }],
+    [{ node: execute, type: 'main', index: 0 }],
     [{ node: 'CORE - É Gênesis?', type: 'main', index: 0 }],
   ] };
-  if (workflow.nodes.some(node => node.name === execute)) throw new Error('NUBIA_EXT_REFERENCE_REMAINS');
+  workflow.connections[execute] = { main: [[{ node: single, type: 'main', index: 0 }]] };
 }
 
 function deterministicNubiaExtId(name) {
@@ -435,7 +446,7 @@ for (const [source, file, prefix, code] of targets) {
     ensureGenesisTerminalBypass(workflow);
     removeNubiaV2CoreNodes(workflow);
     configureRoyalRoute(workflow);
-    removeNubiaExtReference(workflow);
+    configureNubiaExtRoute(workflow);
     routeEngineThroughSubworkflow(workflow);
   }
 
