@@ -1,0 +1,751 @@
+# NORIA — Contexto técnico-comercial e plano de evolução da Núbia (NB Bronze)
+
+## 1. Objetivo
+
+Evoluir a inteligência conversacional da Núbia (`clinica_nubia_oficial`) aproveitando as melhorias arquiteturais desenvolvidas para a Gênesis Automóveis.
+
+O objetivo NÃO é copiar a EXT da Gênesis.
+
+É reutilizar os contratos semânticos, mecanismos de evidência, memória, auditoria e segurança operacional, criando uma autoridade comercial específica para a NB Bronze, orientada a:
+
+- Atendimento e apresentação de serviços.
+- Comparação de procedimentos.
+- Escolha de serviço.
+- Consulta de disponibilidade.
+- Reserva de horários.
+- Pagamento de sinal e confirmação humana.
+- Orientações específicas de preparo.
+- Cancelamentos, remarcações e handoff.
+- Follow-ups comerciais contextualizados.
+
+A migração deve preservar integralmente o atendimento atual até que a nova implementação seja validada.
+
+**Não alterar produção nesta etapa.**
+
+## 2. Histórico: o que evoluímos na Gênesis
+
+A arquitetura anterior concentrava decisões demais no CORE.
+
+O CORE interpretava frases, inferia intenções comerciais, resolvia produtos e controlava decisões que deveriam pertencer ao Gemini ou à extensão comercial.
+
+Isso provocava diversos problemas:
+
+- Mensagens simples recuperavam intenções antigas.
+- Referências a produtos eram confundidas com seleções.
+- O cliente mudava de assunto e o sistema preservava requisitos indevidos.
+- Contratos semânticos inválidos ainda podiam modificar o estado.
+- Evidências de mensagens antigas autorizavam ações no turno atual.
+- Handoffs, follow-ups e registro comercial tinham efeitos colaterais incorretos.
+- O código possuía interpretações linguísticas hardcoded.
+- Decisões comerciais ficavam acopladas à infraestrutura.
+
+A refatoração estabeleceu quatro responsabilidades:
+
+**Gemini — autoridade semântica**
+
+Interpreta linguagem natural e identifica intenção, assunto, referências, correções, ambiguidades, contexto e evidências da manifestação do cliente.
+
+**CORE — infraestrutura e orquestração**
+
+Gerencia mensagens, sessão, contratos, memória, evidências, fila, persistência, entrega, idempotência, validações técnicas e integração entre componentes.
+
+**EXT — autoridade comercial do tenant**
+
+Decide quais ações comerciais são autorizadas segundo as configurações e informações oficiais daquele negócio.
+
+**Auditor — verificação de consistência**
+
+Verifica a resposta e as afirmações contra evidências disponíveis, impedindo informações comerciais não autorizadas.
+
+### Garantias importantes já desenvolvidas
+
+O trabalho da Gênesis estabeleceu proteções que devem ser aproveitadas pela Núbia:
+
+1. Separação entre referência informativa, interesse e seleção.
+2. Evidências do turno atual para novas decisões acionáveis.
+3. Histórico da sessão usado para contexto, não para inventar uma nova intenção.
+4. Contrato semântico inválido não autoriza mudanças comerciais.
+5. Ofertas e referências acionáveis dependem de mensagens efetivamente entregues.
+6. Decisões da extensão verificadas por identidade, proveniência e versão.
+7. Ações comerciais não podem ser executadas apenas porque o modelo escreveu um estado candidato.
+8. Mensagens antigas não podem ressuscitar decisões encerradas.
+9. Falhas antes do envio não devem provocar duplicações.
+10. Entregas `uncertain` exigem reconciliação, sem reenvio automático.
+11. Tickets `review` exigem procedimento de recuperação autorizado.
+12. CORE e EXT devem possuir contratos compatíveis.
+
+**Essas garantias são reutilizáveis. As regras de veículos, financiamento e estoque não são.**
+
+A migração da Núbia deve adaptar os contratos à natureza dos serviços, evitando transportar lógica automotiva para atendimento estético.
+
+---
+
+## 3. Identidade comercial real da Núbia
+
+Dados confirmados por consultas somente leitura ao projeto Supabase `NORIA-prod`.
+
+**Tenant:** `clinica_nubia_oficial`
+
+**Nome comercial:** NB Bronze
+
+**Setor:** Estética e bronzeamento
+
+**Status:** ativo
+
+**Modo de processamento:** `conversation_core_v1`
+
+**Grounding:** `canonical_v2`
+
+**Timezone:** `America/Sao_Paulo`
+
+**Unidade identificada:** `angra`, em Nova Angra, Angra dos Reis/RJ.
+
+**Fontes principais:**
+
+- `tenants`
+- `tenant_settings.settings`
+- `tenant_service_catalog`
+- `appointments`
+- `appointment_capacity_slots`
+- `appointment_capacity_allocations`
+- `follow_up_policies`
+- `follow_up_jobs`
+- `channel_events`
+- `ai_agents`
+- `ai_prompt_versions`
+
+O negócio já possui uma estrutura comercial significativa no Supabase.
+
+Não criar um catálogo paralelo, política paralela ou fonte duplicada de disponibilidade.
+
+### Configurações relevantes
+
+Dentro de `tenant_settings.settings` existem:
+
+- `approved_messages`
+- `business_facts`
+- `appointment_scheduling`
+- `payment`
+- `payment_signal_enabled`
+- `appointment_payment_trigger`
+- `default_ai_appointment_status`
+- `handoff_rules`
+- `attendance_lifecycle`
+- `service_categories`
+- `system_prompt`
+- `grounding_mode`
+
+Essas configurações devem ser compreendidas e reaproveitadas antes de qualquer mudança.
+
+---
+
+## 4. Catálogo comercial: interpretação correta dos serviços
+
+A Núbia vende procedimentos, não produtos de estoque.
+
+A distinção entre serviços precisa ser preservada estruturalmente.
+
+### Bronzeamento em máquina
+
+| Serviço | Preço confirmado | Diferencial |
+|---|---:|---|
+| Bronze Clássico | R$ 99,99 | Máquina em pé, sala compartilhada, frente e costas separadamente |
+| Bronze Premium | R$ 149,99 | Máquina dupla, frente e costas simultaneamente, sala individual |
+| Bronze Comfort | R$ 179,99 | Máquina deitada, sala individual |
+
+Os três possuem características e recursos diferentes.
+
+A IA deve conseguir responder naturalmente perguntas como:
+
+"Qual a diferença entre o Clássico e o Premium?"
+
+"Qual é aquele que a gente fica deitada?"
+
+"Quero o mais confortável."
+
+Essas perguntas NÃO têm o mesmo significado.
+
+Na primeira, a cliente solicita comparação.
+
+Na segunda, identifica uma característica.
+
+Na terceira, demonstra preferência que pode corresponder a um serviço, mas deve ser interpretada pelo Gemini à luz da conversa.
+
+A EXT deve validar o serviço identificado e seus fatos oficiais antes de permitir uma resposta comercial.
+
+### Banhos de Lua
+
+| Serviço | Preço confirmado |
+|---|---:|
+| Banho de Lua Clássico | R$ 19,99 |
+| Banho de Lua Premium | R$ 34,99 |
+| Banho de Lua Comfort | R$ 69,99 |
+
+O catálogo informa diferenças relevantes de produtos, hidratação, esfoliação e composição do procedimento.
+
+Não confundir o Clássico do Banho de Lua com o Bronze Clássico.
+
+A seleção precisa utilizar o identificador canônico do serviço.
+
+Existe também um registro legado `banho_lua`, inativo, com outra estrutura e preço. Não utilizá-lo como serviço ativo.
+
+### Outros serviços
+
+- Bronze de Sol — R$ 99,99.
+- Bronze a Jato na clínica — R$ 149,99.
+- Jato no Bojo — R$ 49,99.
+- Detox Corporal / Mousse Clareador — R$ 49,99.
+- Potência Clássico ou Sol + Jato — R$ 179,99.
+- Potência Premium + Jato — R$ 229,99.
+- Potência Comfort + Jato — R$ 259,99.
+
+Os registros de serviços ativos e seus preços estão em `tenant_service_catalog` e nos fatos comerciais aprovados.
+
+**Importante:** a modalidade de Bronze a Jato a domicílio é descrita em `business_facts` como disponível mediante confirmação da equipe, mas existe um registro de catálogo legado `bronze_jato_domicilio` inativo, com preço antigo.
+
+A IA não pode usar o preço desse registro inativo como preço atual. Deve informar que a equipe confirma preço, região e horário.
+
+Bronze Solar, Jato e combos não devem automaticamente herdar o fluxo de reserva da máquina.
+
+---
+
+## 5. Mensagens aprovadas: como devem funcionar
+
+O Supabase possui `approved_messages`, revisão `nb-texts-v1`, com 16 blocos.
+
+Entre eles:
+
+`bronze_classico`, `bronze_premium`, `bronze_comfort`, `bronze_no_sol`, `bronze_jato_corpo_todo`, `bronze_jato_bojo`, `banho_lua_classico`, `banho_lua_premium`, `banho_lua_comfort`, `banhos_lua`, `detox`, `potencia`, `catalogo`, `informacoes_gerais`, `jato_preparo`, `solar_itens`.
+
+Cada bloco contém texto, origem, finalidade e associação a serviços quando aplicável.
+
+### Decisão arquitetural
+
+O Gemini não deve escolher textos aprovados por regex de palavras do usuário.
+
+Ele deve interpretar:
+
+- Que informação foi solicitada.
+- A qual serviço ela se refere.
+- Se a cliente quer preço, comparação, detalhes, preparo ou agendamento.
+- Se o serviço foi apenas mencionado ou efetivamente escolhido.
+
+A EXT Núbia resolve essa interpretação contra os fatos e blocos autorizados.
+
+O CORE entrega a resposta validada.
+
+### Distinções obrigatórias
+
+`informacoes_gerais` contém orientações para bronzeamento em máquina. Não utilizar automaticamente para Jato ou Solar.
+
+`jato_preparo` contém orientações específicas para Bronze a Jato. Não utilizar como preparo de máquina ou Solar.
+
+`solar_itens` pertence ao Bronze de Sol.
+
+`catalogo` é apresentação geral de serviços e preços, não uma resposta universal para qualquer dúvida.
+
+Não transformar textos aprovados em frases obrigatórias repetidas a cada atendimento. Preservar informações e redações que precisem ser transmitidas literalmente, permitindo naturalidade apenas quando a política autorizar.
+
+Informações de alergias, pele sensível, medicamentos e reações não devem resultar em promessas de segurança clínica. Encaminhar avaliação individual quando necessário.
+
+---
+
+## 6. Contrato semântico específico para a Núbia
+
+A migração deve adaptar o conceito de `product_references` da Gênesis para referências de serviços.
+
+Proposta conceitual:
+
+`service_references[]`
+
+Cada referência deve permitir identificar:
+
+- `service_id` canônico.
+- Papel da referência.
+- IDs de evidência.
+- Eventual relação com o contexto anterior.
+
+Papéis sugeridos:
+
+- `mentioned`
+- `asked_info`
+- `interest`
+- `selected`
+
+**Esses papéis são conceitos de contrato, não palavras-chave que o CORE deva procurar nas mensagens.**
+
+Exemplo:
+
+"Quanto custa o Premium?"
+
+Consulta de preço. Não representa seleção.
+
+"Gostei mais do Premium."
+
+Preferência/interesse. Não confirma reserva.
+
+"Quero marcar o Premium para sexta."
+
+Intenção de agendamento com serviço explicitamente identificado, mas ainda depende de dados e disponibilidade válidos.
+
+"Na verdade era o Comfort."
+
+Correção de referência, que deve substituir a escolha contextual relevante sem gerar duas reservas.
+
+### Tópicos semânticos necessários
+
+O contrato deverá permitir reconhecer:
+
+- Consulta a serviço.
+- Comparação.
+- Solicitação de preço.
+- Orientações de preparo.
+- Pedido de disponibilidade.
+- Intenção de reserva.
+- Escolha ou alteração de data e horário.
+- Comunicação de sinal pago.
+- Remarcação.
+- Cancelamento.
+- Solicitação de humano.
+- Reclamação.
+- Mudança de assunto e correção.
+
+O Gemini deve reconhecer esses tópicos contextualizados e fundamentados nas mensagens.
+
+O CORE não deve implementar listas de frases para decidir essas intenções.
+
+### Evidências
+
+Aplicar o mesmo princípio desenvolvido na Gênesis:
+
+**Histórico pode identificar o assunto; somente evidência atual pode autorizar uma nova decisão.**
+
+Uma mensagem como "bom dia" não pode reaproveitar uma intenção antiga e reservar um horário.
+
+Uma mensagem como "pode ser esse" pode confirmar uma opção apresentada anteriormente, desde que a referência atual esteja sustentada por evidência do turno e a opção anterior pertença ao contexto válido.
+
+Contratos inválidos não podem alterar serviço selecionado, data, pagamento ou estado da reserva.
+
+---
+
+## 7. EXT Núbia: autoridade comercial
+
+A implementação deve isolar decisões específicas da NB Bronze na extensão do tenant.
+
+Não inserir essas regras no CORE compartilhado.
+
+A EXT precisa receber a interpretação semântica validada e um conjunto canônico de fatos/configurações.
+
+Ela devolve decisões autorizadas, por exemplo:
+
+- Serviço identificado.
+- Serviço selecionado.
+- Fatos permitidos para resposta.
+- Bloco aprovado aplicável.
+- Necessidade de esclarecimento.
+- Possibilidade de consulta de agenda.
+- Possibilidade de reserva.
+- Exigência de sinal.
+- Necessidade de confirmação humana.
+- Handoff.
+- Política de follow-up aplicável.
+
+### Autoridades
+
+| Decisão | Responsável |
+|---|---|
+| Entender "quero o mais confortável" | Gemini |
+| Resolver para um serviço existente | EXT Núbia |
+| Autorizar preço e condições | EXT Núbia |
+| Consultar horários reais | RPC de agenda autorizada |
+| Validar capacidade | Banco/RPC |
+| Criar reserva idempotente | RPC de reserva |
+| Entregar a resposta | CORE |
+| Confirmar recebimento do sinal | Equipe/fluxo autenticado |
+| Controlar retry e entrega | CORE |
+
+A extensão não deve criar uma segunda infraestrutura de mensagens ou uma agenda paralela.
+
+---
+
+## 8. Agendamento: principal diferença em relação à Gênesis
+
+O Supabase possui agendamento habilitado.
+
+A unidade automática configurada é Angra dos Reis, identificador `angra`.
+
+A configuração `appointment_scheduling` possui:
+
+- Duração de bloqueio: 90 minutos.
+- Timezone `America/Sao_Paulo`.
+- Horários por dia da semana.
+- Recursos compartilhados e individuais.
+- Capacidades por recurso.
+- Associação serviço → recurso.
+
+### Recursos configurados
+
+| Recurso | Capacidade da agenda |
+|---|---:|
+| `classico` | 4 |
+| `premium` | 1 |
+| `comfort` | 1 |
+| `banho_lua_shared` | 30 |
+
+Os três Banhos de Lua compartilham o mesmo recurso `banho_lua_shared`. Isso significa que a capacidade não deve ser aplicada isoladamente a cada modalidade.
+
+### RPCs existentes
+
+`magia_schedule_spec`
+
+Resolve unidade, serviço, recurso e capacidade.
+
+`magia_appointment_availability`
+
+Consulta horários disponíveis segundo configuração, ocupação e conflitos.
+
+`magia_reserve_session_appointment`
+
+Realiza reserva vinculada à sessão, com proteções de idempotência, validação do pedido e bloqueio de concorrência.
+
+A implementação deve reutilizar esses contratos.
+
+### Regras importantes
+
+Perguntar preço ou detalhes não exige escolha de horário.
+
+Perguntar disponibilidade não equivale a reservar.
+
+Escolher horário não equivale automaticamente a confirmar pagamento.
+
+O fluxo de reserva deve reunir somente as informações necessárias e comprovadas.
+
+Não repetir perguntas cujas respostas já estejam disponíveis no contexto válido.
+
+Não exigir que a cliente informe "Angra dos Reis" para responder perguntas gerais sobre os serviços.
+
+Como existe apenas uma unidade automática configurada, a EXT pode apresentar Angra como opção oficial, mas não deve inventar que a cliente escolheu uma localização sem evidência.
+
+### Pontos que precisam ser reconciliados
+
+**Capacidade do Clássico:** `appointment_scheduling` indica 4, enquanto o metadata do serviço menciona capacidade de sala 6. A autoridade operacional para reservar atualmente é a configuração/RPC da agenda; a divergência comercial deve ser registrada para confirmação.
+
+**Horários:** `business_hours` declara segunda a sábado, das 08h às 18h. O objeto de agenda possui horários para o índice 0, que a RPC interpreta como domingo. É necessário verificar se domingo é uma exceção permitida ou uma configuração inconsistente.
+
+**Tempo:** a duração do procedimento, a permanência da cliente no estabelecimento e o tempo de bloqueio de recurso não são necessariamente iguais. Não misturar esses conceitos.
+
+**Serviços sem recurso:** não oferecer reserva automática para Jato, Solar ou combos simplesmente porque estão ativos no catálogo.
+
+---
+
+## 9. Sinal e pagamento
+
+A Núbia possui política de sinal de 50%.
+
+A configuração confirma:
+
+- `payment_signal_enabled = true`
+- `deposit_percentage = 50`
+- `appointment_payment_trigger = "SINAL PAGO"`
+- `default_ai_appointment_status = "pending_payment"`
+
+Métodos configurados:
+
+- Pix.
+- Link de cartão de crédito.
+- Dinheiro presencial.
+
+### Estados comerciais
+
+Separar explicitamente:
+
+**Intenção de agendar**
+
+A cliente demonstra desejo de marcar.
+
+**Disponibilidade consultada**
+
+Há opções disponíveis segundo o sistema.
+
+**Reserva criada**
+
+A RPC cria a reserva e bloqueia a capacidade correspondente, com estado `pending_payment`.
+
+**Sinal informado**
+
+A cliente comunica o pagamento. Isso representa um relato, não prova bancária.
+
+**Pagamento verificado / agendamento confirmado**
+
+Somente o processo autorizado pode concluir essa transição.
+
+A mensagem `SINAL PAGO` não deve transformar uma reserva em `confirmed` automaticamente.
+
+A Núbia já possui agendamentos em `pending_payment`, `payment_reported` e `confirmed`, comprovando que esses estados existem no ambiente real.
+
+### Condições comerciais oficiais
+
+O banco registra:
+
+- Sinal de 50%.
+- Sinal não reembolsável em determinadas hipóteses de cancelamento.
+- Remarcação com antecedência mínima de 24 horas, excepcionalmente até 8 horas.
+- Tolerância de atraso de 5 minutos.
+- Acréscimo de R$ 10 após 17h, aos domingos e feriados.
+
+Essas condições devem vir de `business_facts` e `payment`, não de constantes embutidas no CORE.
+
+A IA pode comunicar condições autorizadas, mas não pode inventar exceções, conceder reembolso, confirmar pagamento sem prova ou alterar reservas sem autoridade.
+
+---
+
+## 10. Follow-ups comerciais
+
+A Núbia possui política ativa:
+
+| Etapa | Prazo | Objetivo |
+|---|---|---|
+| `3h` | 180 minutos | Retomar conversa recente de forma leve |
+| `24h` | 1.440 minutos | Retomar interesse sem repetição |
+| `15d` | 21.600 minutos | Última reativação contextual |
+
+Os jobs são persistidos em `follow_up_jobs`, conforme `follow_up_policies`.
+
+Na leitura realizada, existiam 123 jobs pendentes para a Núbia. Essa quantidade é dinâmica.
+
+### Proteções já publicadas
+
+`magia_schedule_followups` não deve agendar retomadas comerciais quando existe agendamento futuro não terminal, incluindo reserva pendente de pagamento.
+
+`magia_cancel_followups_from_appointment` cancela jobs comerciais pendentes diante de agendamento futuro válido.
+
+`magia_cancel_followups_from_event` cancela jobs pendentes após novo inbound da cliente, handoff ou encerramento.
+
+Essas regras existem e precisam continuar funcionando.
+
+### O que a migração deve fazer
+
+Distinguir:
+
+- Follow-up comercial de conversa abandonada.
+- Mensagem sobre pagamento pendente.
+- Lembrete de comparecimento.
+- Remarcação.
+- Recuperação de atendimento humano.
+
+Não reutilizar automaticamente a sequência 3h/24h/15d como cobrança de sinal ou lembrete de consulta.
+
+Não agendar follow-up comercial para uma cliente que já possui reserva ativa.
+
+Não criar múltiplos jobs por respostas fragmentadas ou reprocessamentos.
+
+Não reativar conversa encerrada, recusada ou entregue a humano sem autorização adequada.
+
+---
+
+## 11. Handoff humano
+
+O banco possui regras explícitas para:
+
+- Solicitação de atendente humano.
+- Reclamação real.
+- Alteração de horário.
+- Cancelamento.
+- Comunicação `SINAL PAGO`.
+
+A IA deve identificar semanticamente a situação, mas a EXT Núbia determina a ação permitida.
+
+O CORE deve garantir:
+
+- Atribuição efetiva.
+- Registro do motivo.
+- Resposta contextual quando autorizada.
+- Bloqueio de respostas automáticas após handoff.
+- Preservação do contexto.
+- Ausência de handoffs duplicados.
+
+Não anunciar que uma pessoa foi acionada se nenhuma transição operacional correspondente foi efetivada.
+
+Falhas operacionais não devem ser escondidas por frases comerciais aparentemente bem-sucedidas.
+
+---
+
+## 12. Problemas observados que não devemos herdar
+
+A análise dos eventos recentes da Núbia encontrou registros de erro HTTP 400 e inconsistências de contrato de ciclo de turno.
+
+Em uma janela de sete dias, a consulta agregada encontrou 19 eventos com `Request failed with status code 400` e 6 com `TURN_LIFECYCLE_RPC_MISMATCH`.
+
+Esses registros não comprovam que o problema continua ativo nesta exata revisão, mas justificam verificar a integração existente antes da migração.
+
+Também existem relatos históricos de:
+
+- Perguntas simples desviadas indevidamente para agendamento.
+- Falhas quando a cliente não informou explicitamente a unidade.
+- Problemas com áudios não transcritos.
+- Handoff prematuro.
+- Falta de resposta segura após falha técnica.
+
+A migração não deve transformar essas exceções em palavras-chave hardcoded.
+
+Deve corrigir os contratos e a orquestração de forma estrutural.
+
+---
+
+## 13. Diferenças e decisões a resolver antes de implementar
+
+### Modelo Gemini
+
+`tenant_settings.settings.ai_model` informa `gemini-3.5-flash-lite`.
+
+O registro em `ai_agents.model` informa `gemini-2.5-flash-lite`.
+
+Identificar qual fonte o CORE efetivamente consulta e qual delas é a autoridade vigente. Não trocar modelo arbitrariamente.
+
+### Agenda
+
+Resolver a divergência de capacidade do Clássico e esclarecer domingos e horários fora do expediente.
+
+### Modalidades
+
+Confirmar que máquina e Banhos de Lua seguem o caminho automático configurado, enquanto Jato, Solar e combos seguem suas regras de atendimento humano.
+
+### Pagamento
+
+Preservar a diferença entre sinal informado e sinal confirmado.
+
+### Fonte comercial
+
+Quando texto aprovado, serviço ativo, configuração de agenda e política comercial divergirem, não escolher arbitrariamente o dado que favorece a venda.
+
+Identificar a autoridade adequada para cada fato e bloquear somente a ação que depende da informação conflitante.
+
+---
+
+## 14. Plano de implementação por fases
+
+Quero uma implementação incremental, evitando alterar simultaneamente todos os caminhos comerciais.
+
+### Fase 0 — Mapear o caminho legado
+
+Inspecionar o código atual da Núbia, incluindo funções `groundingNubia*`, `scheduling*`, `paymentSignal*`, leitura de `approved_messages`, dispatcher de follow-up e contratos de agendamento.
+
+Identificar quais decisões estão hoje no CORE e quais podem ser transferidas para uma EXT Núbia.
+
+Entregar um mapa de responsabilidades antes de modificar os fluxos.
+
+### Fase 1 — Contrato semântico
+
+Adaptar os mecanismos já consolidados na Gênesis para referências de serviços, comparação, seleção, pedidos de disponibilidade e correções de intenção.
+
+Reutilizar evidências atuais, memória de sessão e validação fail-closed.
+
+Não copiar as intenções comerciais automotivas.
+
+### Fase 2 — EXT comercial Núbia
+
+Isolar políticas de catálogo, preços, apresentações aprovadas, preparo, formas de atendimento e handoff.
+
+A extensão deve devolver decisões estruturadas ao CORE.
+
+Não criar novos hardcodes linguísticos ou comerciais.
+
+### Fase 3 — Agendamento e sinal
+
+Integrar o contrato semântico validado às RPCs existentes de disponibilidade e reserva.
+
+Preservar recursos, capacidade, idempotência, sessão e confirmação humana de pagamento.
+
+Não criar reservas apenas por menção de um horário.
+
+### Fase 4 — Follow-ups e continuidade
+
+Verificar que o novo fluxo preserva as proteções existentes de cancelamento e não mistura retomada comercial com reserva ou sinal pendente.
+
+### Fase 5 — Verificação integrada
+
+Realizar poucos diálogos completos e representativos, sem WhatsApp real.
+
+Exemplos:
+
+1. "Qual a diferença entre Clássico e Premium?"
+2. "Quero o que é feito deitada. Tem horário sexta?"
+3. "Hoje qual é seu último horário?"
+4. "Quero fazer Bronze a Jato em casa."
+5. "Já paguei o sinal."
+6. "Queria remarcar meu horário."
+7. "Na verdade quero o Banho de Lua Premium, não o Bronze Premium."
+8. "Tenho a pele muito sensível, qual é seguro para mim?"
+
+Cada cenário deve verificar interpretação, fatos, autoridade comercial, resposta e eventuais efeitos autorizados.
+
+Não executar bateria extensa de testes.
+
+---
+
+## 15. Critérios de aceite
+
+A migração só estará funcionalmente correta quando:
+
+- O Gemini interpretar naturalmente perguntas sobre os serviços.
+- A EXT não confundir serviços com nomes semelhantes.
+- Menção ou comparação não disparar reserva.
+- Disponibilidade for sustentada pela agenda real.
+- Nenhum horário for inventado.
+- Reserva só for criada com dados suficientes, intenção válida e disponibilidade.
+- A capacidade compartilhada for respeitada.
+- Pagamento informado não equivaler a pagamento confirmado.
+- Preparos forem específicos por procedimento.
+- O CORE não decidir regras comerciais.
+- Handoff for operacionalmente efetivo.
+- Follow-ups permanecerem coerentes.
+- Gênesis e demais tenants continuarem intactos.
+- Não existirem novas interpretações linguísticas hardcoded.
+- A migração não introduzir incompatibilidade entre CORE, EXT e workflows.
+
+## 16. Restrições finais
+
+Leia `AGENTS.md` e todas as regras do projeto.
+
+**ZERO HARDCODE semântico e comercial.**
+
+Preserve a arquitetura:
+
+Gemini interpreta → EXT Núbia decide → CORE executa → auditor verifica.
+
+Aproveite os contratos e mecanismos já consolidados na Gênesis.
+
+Não faça uma cópia da EXT automotiva.
+
+Não altere a Gênesis para facilitar a migração da Núbia.
+
+Não modifique políticas comerciais do Supabase sem aprovação.
+
+Não use credenciais de produção para testes externos.
+
+Não envie mensagens reais.
+
+Não publique workflows.
+
+Não reenvie turnos `uncertain`.
+
+Não resolva tickets `review` automaticamente.
+
+Não sobrescreva alterações de outros agentes.
+
+Não execute uma bateria gigantesca de testes.
+
+## 17. Primeira entrega esperada
+
+Antes de implementar amplamente, apresente:
+
+1. Mapa do caminho atual da Núbia.
+2. Funções comerciais existentes no CORE que devem migrar para a EXT.
+3. Componentes reutilizáveis da Gênesis sem dependência automotiva.
+4. Contrato semântico proposto para serviços/agendamentos.
+5. Contrato de decisão comercial da EXT Núbia.
+6. Divergências comerciais e de agenda que exigem decisão.
+7. Sequência exata de arquivos e workflows que serão alterados.
+8. Plano de implementação incremental, com o menor número de mudanças possível.
+
+**Objetivo: dar à Núbia o mesmo nível de inteligência conversacional e segurança estrutural conquistado na Gênesis, respeitando integralmente as particularidades do negócio de bronzeamento e agendamento.**
