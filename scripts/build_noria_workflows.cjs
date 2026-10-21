@@ -21,7 +21,7 @@ const routerSourceCode = fs.readFileSync(coreRouterSourcePath, 'utf8').replace(/
 // Fallback recovery of the WhatsApp queue. The webhook path processes messages on arrival; this trigger only picks up
 // leftovers (expired leases, retries), so a longer interval cuts idle executions without changing the happy path.
 const RECOVERY_TRIGGER_SECONDS = 30;
-const recoveryCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_recover_core.js'), 'utf8');
+const recoveryCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_recover_core.js'), 'utf8').replace(/\r\n/g, '\n');
 const routerCode = fs.readFileSync(path.join(root, 'n8n/code/command_router.js'), 'utf8').replace(/\r\n/g, '\n');
 const routerInsertStart = routerCode.indexOf('  async function insertEvent(event) {');
 const routerInsertEnd = routerCode.indexOf('  async function loadTenantSettings(', routerInsertStart);
@@ -59,10 +59,11 @@ new AsyncFunction('$env', '$getWorkflowStaticData', recoveryCode);
 new AsyncFunction('$json', '$env', '$vars', routerCode);
 
 // 4. Update workflow JSON files
+// The conversational engine (~0.9 MB) lives once, in its own sub-workflow. The CORE only calls it for real turns,
+// so webhook events, queue recovery and follow-up ticks no longer carry the engine in every execution.
+const CORE_WORKFLOW_FILE = 'NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json';
 const targets = [
-  ['noria_core.js', 'NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json', 'CORE | Motor conversacional único', "const NORIA_NODE_PHASE = 'single';\n" + coreCode],
-  ['noria_core.js', 'NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json', 'CORE | Preparar resposta', "const NORIA_NODE_PHASE = 'prepare';\n" + coreCode],
-  ['noria_core.js', 'NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json', 'CORE | Finalizar resposta', "const NORIA_NODE_PHASE = 'finalize';\n" + coreCode],
+  ['noria_core.js', CORE_WORKFLOW_FILE, null, null],
   ['genesis_extension.js', 'NORIA EXT _ Gênesis _ Política comercial v2 (1).json', 'EXT | Política Gênesis', extCode],
 ];
 
@@ -304,12 +305,102 @@ function writeNubiaV2ExtWorkflow() {
   fs.writeFileSync(target, JSON.stringify(workflow, null, 2) + '\n');
 }
 
+const ENGINE_WORKFLOW_FILE = 'NORIA CORE _ Motor conversacional.json';
+const ENGINE_WORKFLOW_NAME = 'NORIA CORE | Motor conversacional';
+const ENGINE_TRIGGER_NAME = 'Entrada do NORIA CORE | Motor';
+const ENGINE_NODE_NAME = 'CORE | Motor conversacional';
+const ENGINE_ID_PLACEHOLDER = 'PREENCHER_ID_MOTOR';
+const ENGINE_PHASES = {
+  'CORE | Motor conversacional único': 'single',
+  'CORE | Preparar resposta': 'prepare',
+  'CORE | Finalizar resposta': 'finalize',
+};
+// The calling CORE node marks the phase on the item; the engine takes it and removes it before reading its input.
+const enginePrelude = `const NORIA_NODE_PHASE = String($json.noria_engine_phase || '');
+if (!['single', 'prepare', 'finalize'].includes(NORIA_NODE_PHASE)) throw new Error('NORIA_ENGINE_PHASE_REQUIRED');
+delete $json.noria_engine_phase;
+`;
+const engineCode = enginePrelude + coreCode;
+new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', engineCode);
+
+function deterministicNodeId(namespace, name) {
+  const h = crypto.createHash('sha1').update(namespace + ':' + name).digest('hex');
+  return [h.slice(0, 8), h.slice(8, 12), '4' + h.slice(13, 16), '8' + h.slice(17, 20), h.slice(20, 32)].join('-');
+}
+
+function writeEngineWorkflow() {
+  const target = path.join(root, 'n8n/workflows', ENGINE_WORKFLOW_FILE);
+  const previous = fs.existsSync(target) ? JSON.parse(fs.readFileSync(target, 'utf8')) : null;
+  const idFor = name => previous?.nodes?.find(node => node.name === name)?.id || deterministicNodeId('noria-engine', name);
+  const workflow = {
+    name: ENGINE_WORKFLOW_NAME, pinData: {}, active: false,
+    nodes: [
+      { parameters: { inputSource: 'passthrough' }, id: idFor(ENGINE_TRIGGER_NAME), name: ENGINE_TRIGGER_NAME,
+        type: 'n8n-nodes-base.executeWorkflowTrigger', typeVersion: 1.1, position: [0, 0] },
+      { parameters: { mode: 'runOnceForEachItem', jsCode: engineCode }, id: idFor(ENGINE_NODE_NAME), name: ENGINE_NODE_NAME,
+        type: 'n8n-nodes-base.code', typeVersion: 2, position: [320, 0] },
+    ],
+    connections: { [ENGINE_TRIGGER_NAME]: { main: [[{ node: ENGINE_NODE_NAME, type: 'main', index: 0 }]] } },
+    settings: { executionOrder: 'v1', timezone: 'America/Sao_Paulo', callerPolicy: 'workflowsFromSameOwner' },
+  };
+  applyLeanExecutionSettings(workflow);
+  fs.writeFileSync(target, JSON.stringify(workflow, null, 2) + '\n');
+}
+
+// The engine workflow ID only exists after it is imported into n8n: NORIA_ENGINE_WORKFLOW_ID wins, otherwise the ID
+// already configured in the CORE is kept, otherwise a placeholder that must be filled before publishing.
+function resolveEngineWorkflowId(workflow) {
+  if (process.env.NORIA_ENGINE_WORKFLOW_ID) return process.env.NORIA_ENGINE_WORKFLOW_ID;
+  const configured = Object.keys(ENGINE_PHASES)
+    .map(name => workflow.nodes.find(node => node.name === name))
+    .map(node => node?.type === 'n8n-nodes-base.executeWorkflow' ? node.parameters?.workflowId?.value : null)
+    .find(id => id && id !== ENGINE_ID_PLACEHOLDER);
+  return configured || ENGINE_ID_PLACEHOLDER;
+}
+
+// Idempotent: each engine node becomes a sub-workflow call with the same name, position and outgoing connections;
+// every incoming connection is moved to a small marker node that sets the phase (and keeps binary, e.g. audio).
+function routeEngineThroughSubworkflow(workflow) {
+  const engineId = resolveEngineWorkflowId(workflow);
+  for (const [name, phase] of Object.entries(ENGINE_PHASES)) {
+    const node = workflow.nodes.find(n => n.name === name);
+    if (!node) throw new Error('MISSING_ENGINE_NODE: ' + name);
+    node.type = 'n8n-nodes-base.executeWorkflow';
+    node.typeVersion = 1.2;
+    node.parameters = { workflowId: { __rl: true, value: engineId, mode: 'id', cachedResultUrl: '/workflow/' + engineId },
+      mode: 'each', options: { waitForSubWorkflow: true } };
+
+    const markerName = name + ' | Fase';
+    let marker = workflow.nodes.find(n => n.name === markerName);
+    if (!marker) {
+      marker = { name: markerName, id: deterministicNodeId('noria-engine-phase', markerName),
+        position: [node.position[0] - 224, node.position[1] + 160] };
+      workflow.nodes.push(marker);
+    }
+    Object.assign(marker, { type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { mode: 'runOnceForEachItem',
+      jsCode: `return { json: { ...$json, noria_engine_phase: '${phase}' }, binary: $input.item.binary };` } });
+
+    for (const [from, entry] of Object.entries(workflow.connections)) {
+      if (from === markerName) continue;
+      for (const branch of entry?.main || []) {
+        for (const connection of branch || []) if (connection.node === name) connection.node = markerName;
+      }
+    }
+    workflow.connections[markerName] = { main: [[{ node: name, type: 'main', index: 0 }]] };
+  }
+  if (engineId === ENGINE_ID_PLACEHOLDER) {
+    console.warn('AVISO: CORE gerado com ' + ENGINE_ID_PLACEHOLDER + '. Importe o workflow do motor e rode o build com NORIA_ENGINE_WORKFLOW_ID=<id>.');
+  }
+}
+
 for (const [source, file, prefix, code] of targets) {
   const target = path.join(root, 'n8n/workflows', file);
   const workflow = JSON.parse(fs.readFileSync(target, 'utf8'));
-  const nodes = workflow.nodes.filter(n => n.name === prefix || n.name.startsWith(prefix));
-  if (nodes.length !== 1) throw new Error('AMBIGUOUS_WORKFLOW_NODE: ' + prefix);
-  nodes[0].parameters.jsCode = code;
+  if (prefix !== null) {
+    const nodes = workflow.nodes.filter(n => n.name === prefix || n.name.startsWith(prefix));
+    if (nodes.length !== 1) throw new Error('AMBIGUOUS_WORKFLOW_NODE: ' + prefix);
+    nodes[0].parameters.jsCode = code;
+  }
 
   if (source === 'genesis_extension.js') {
     const identityNode = workflow.nodes.find(n => n.name === 'Validar identidade e capacidade do tenant');
@@ -341,21 +432,21 @@ for (const [source, file, prefix, code] of targets) {
         `core_revision: '${coreRevision}'`
       );
     }
-    if (prefix === 'CORE | Finalizar resposta') {
-      ensureGenesisTerminalBypass(workflow);
-      removeNubiaV2CoreNodes(workflow);
-      configureRoyalRoute(workflow);
-      removeNubiaExtReference(workflow);
-    }
+    ensureGenesisTerminalBypass(workflow);
+    removeNubiaV2CoreNodes(workflow);
+    configureRoyalRoute(workflow);
+    removeNubiaExtReference(workflow);
+    routeEngineThroughSubworkflow(workflow);
   }
 
   applyLeanExecutionSettings(workflow);
   fs.writeFileSync(target, JSON.stringify(workflow, null, 2) + '\n');
-  if (source === 'noria_core.js' && prefix === 'CORE | Motor conversacional único') {
-    fs.writeFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), code);
+  if (source === 'noria_core.js') {
+    fs.writeFileSync(path.join(root, 'n8n/code/whatsapp_conversation_core.generated.js'), "const NORIA_NODE_PHASE = 'single';\n" + coreCode);
   }
 }
 
+writeEngineWorkflow();
 writeNubiaV2ExtWorkflow();
 
 // 5. Generate whatsapp_sales.js projection
@@ -402,6 +493,7 @@ const manifest = {
     'n8n/sources/noria_router_core.js',
     'n8n/workflows/' + NUBIA_EXT_WORKFLOW_FILE,
     'n8n/workflows/NORIA CORE _ WhatsApp + Comandos + Follow-ups _ Motor compartilhado v2.json',
+    'n8n/workflows/' + ENGINE_WORKFLOW_FILE,
     'n8n/workflows/NORIA EXT _ Gênesis _ Política comercial v2 (1).json',
     'n8n/code/whatsapp_conversation_core.generated.js',
     'n8n/code/whatsapp_sales.js',

@@ -226,8 +226,10 @@ test('build: a cadeia da Núbia v2 está fora do CORE; roteador simples; rotas l
   const has = (from, to, branch) => (core.connections[from]?.main?.[branch] || []).some(c => c.node === to);
   assert.ok(has('CORE | Preparar dispatch Genesis', 'CORE | Turno terminal Genesis?', 0));
   assert.ok(has('CORE | Turno terminal Genesis?', 'CORE | Executar EXT Genesis por turno', 1));
-  assert.ok(has('CORE | Executar EXT Genesis por turno', 'CORE | Preparar resposta', 0));
-  assert.ok(has('CORE | Executar EXT Genesis comercial', 'CORE | Finalizar resposta', 0));
+  assert.ok(has('CORE | Executar EXT Genesis por turno', 'CORE | Preparar resposta | Fase', 0));
+  assert.ok(has('CORE | Preparar resposta | Fase', 'CORE | Preparar resposta', 0));
+  assert.ok(has('CORE | Executar EXT Genesis comercial', 'CORE | Finalizar resposta | Fase', 0));
+  assert.ok(has('CORE | Finalizar resposta | Fase', 'CORE | Finalizar resposta', 0));
   // Referências EXT Núbia/Royal removidas do build até serem publicadas: o evento é reconhecido como ignorado, sem entrar no pipeline de outro tenant.
   assert.ok(has('CORE - É Núbia?', 'Responder Evento Ignorado', 0));
   assert.ok(!core.nodes.some(n => n.name === 'Executar EXT Nubia (PREENCHER ID)'));
