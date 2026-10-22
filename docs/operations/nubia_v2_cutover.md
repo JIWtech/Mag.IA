@@ -1,5 +1,7 @@
 # Núbia v2 — publicação controlada, piloto e reversão
 
+> **Atenção (21/10/2026):** a cadeia v2 e o roteador com seletor de pipeline **não estão no CORE publicado** (removidos em `bcbabe3`; ver `estado_producao_core_2026-10-21.md`). Enquanto não voltarem, `noria_turn_pipeline.enabled` precisa ficar `false`. Ligado, todo turno da Núbia falha com `NORIA_TURN_PIPELINE_CONFIG_INVALID` e fica sem resposta (aconteceu das 11:25 às 18:06 de 21/10).
+
 Estado: **preparado, nada publicado nem ativado.** Núbia v1 (contrato `1.0`, fase `single`) é o padrão; o contrato `2.0` só é escolhido por `tenant_settings.settings.noria_turn_pipeline`.
 
 ## Como a versão é escolhida (nó `CORE - Resolver extensão do tenant`, fonte `n8n/sources/noria_router.js`)
