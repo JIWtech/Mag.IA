@@ -9,14 +9,23 @@ if (String(input.tenant_slug || '') !== expectedSlug || String(input.noria_exten
 if (String(input.noria_contract_version || '') !== '2.0') throw new Error('NORIA_EXTENSAO_CONTRACT_VERSION_MISMATCH');
 const uuid = String(input.tenant_id || ''), instance = String(input.instance || ''), chatId = String(input.remoteJid || '');
 if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(uuid) || !instance || !chatId) throw new Error('NORIA_IDENTIDADE_INCOMPLETA');
+// Identity is validated once per tenant+instance and reused for 60 s: the EXT runs up to three times per turn and each run used to read the tenant,
+// the full settings document and the channels. A settings change (for example switching the engine off) takes effect within that minute.
+let memory = null;
+try { memory = $getWorkflowStaticData('global'); } catch (_) { memory = null; }
+const cacheKey = uuid + '|' + instance;
+const hit = memory?.noria_identity?.[cacheKey];
+if (hit && Number(hit.at) > Date.now() - 60000 && hit.verified?.tenant_id === uuid) return {json:{...input,noria_verified_settings:hit.verified}};
 const base = String($env.SUPABASE_URL || '').replace(/\/$/, ''), key = String($env.SUPABASE_SERVICE_ROLE_KEY || '');
 if (!base || !key) throw new Error('NORIA_CREDENCIAIS_SUPABASE_AUSENTES');
 const headers = {apikey:key,Authorization:'Bearer '+key};
 const get = endpoint => this.helpers.httpRequest({method:'GET',url:base+'/rest/v1/'+endpoint,headers,json:true,timeout:7000});
 const tenants = await get('tenants?select=id,slug,status&id=eq.'+encodeURIComponent(uuid)+'&slug=eq.'+encodeURIComponent(expectedSlug)+'&limit=1');
 if (!Array.isArray(tenants) || tenants.length!==1 || tenants[0].status!=='active') throw new Error('NORIA_TENANT_INVALIDO');
-const settingsRows = await get('tenant_settings?select=settings&tenant_id=eq.'+encodeURIComponent(uuid)+'&limit=1');
-const s = settingsRows?.[0]?.settings || {};
+// Only the keys this node exposes are read: the settings document also carries large prompt revisions the EXT never uses.
+const identityKeys = ['whatsapp_processing_mode','conversation_capability','whatsapp_audio_enabled','appointment_scheduling','approved_messages','vehicle_sheet_id','sales','sdr_rules','business_facts','sales_follow_up'];
+const settingsRows = await get('tenant_settings?select='+identityKeys.map(k=>k+':settings->'+k).join(',')+'&tenant_id=eq.'+encodeURIComponent(uuid)+'&limit=1');
+const s = settingsRows?.[0] || {};
 if (s.whatsapp_processing_mode!=='conversation_core_v1') throw new Error('NORIA_MOTOR_INATIVO_TENANT');
 if (s.conversation_capability!=='sales_v1') throw new Error('NORIA_CAPACIDADE_DIVERGENTE');
 const channels = await get('channels?select=external_id,config,status&tenant_id=eq.'+encodeURIComponent(uuid)+'&type=eq.whatsapp&status=eq.active&limit=25');
@@ -31,4 +40,10 @@ for (const field of ['name','payment_methods','vehicle_appraisal','financing','t
 const sourceFollowUp = s.sales_follow_up && typeof s.sales_follow_up==='object' ? s.sales_follow_up : {};
 const sales_follow_up = sourceFollowUp.disposition_actions && typeof sourceFollowUp.disposition_actions==='object' ? {disposition_actions:sourceFollowUp.disposition_actions} : {};
 const verified = {tenant_id:uuid,whatsapp_processing_mode:s.whatsapp_processing_mode,conversation_capability:s.conversation_capability,whatsapp_audio_enabled:s.whatsapp_audio_enabled===true,appointment_scheduling:{enabled:s.appointment_scheduling?.enabled===true},approved_messages:{enabled:s.approved_messages?.enabled===true},vehicle_sheet_id:typeof s.vehicle_sheet_id==='string'?s.vehicle_sheet_id:'',sales,sdr_rules,business_facts,sales_follow_up};
+if (memory) {
+  const kept = {};
+  for (const [k, v] of Object.entries(memory.noria_identity || {})) if (Number(v?.at) > Date.now() - 60000) kept[k] = v;
+  kept[cacheKey] = { at: Date.now(), verified };
+  memory.noria_identity = kept;
+}
 return {json:{...input,noria_verified_settings:verified}};

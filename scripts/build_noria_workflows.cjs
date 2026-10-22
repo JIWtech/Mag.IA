@@ -307,7 +307,10 @@ function writeNubiaV2ExtWorkflow() {
 for (const [source, file, prefix, code] of targets) {
   const target = path.join(root, 'n8n/workflows', file);
   const workflow = JSON.parse(fs.readFileSync(target, 'utf8'));
-  const nodes = workflow.nodes.filter(n => n.name === prefix || n.name.startsWith(prefix));
+  // Prefer the exact node name: phase-specific nodes may share the logical
+  // prefix (for example "... | Fase") and must not make the target ambiguous.
+  const exactNodes = workflow.nodes.filter(n => n.name === prefix);
+  const nodes = exactNodes.length ? exactNodes : workflow.nodes.filter(n => n.name.startsWith(prefix));
   if (nodes.length !== 1) throw new Error('AMBIGUOUS_WORKFLOW_NODE: ' + prefix);
   nodes[0].parameters.jsCode = code;
 
