@@ -74,6 +74,29 @@ if (capability !== 'sales_v1' || settings.whatsapp_processing_mode !== 'conversa
  * - noria_business_result_v1
  */
 
+// Edit distance between two short words (brand names), bounded by the caller.
+function editDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    let previous = row[0]; row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const current = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1));
+      previous = current;
+    }
+  }
+  return row[b.length];
+}
+
+// The rejected brand the customer's vehicle belongs to, read from brand, model and the raw mention
+// ("peugeout", "citroem"): customers misspell brands and the model may leave the brand field empty.
+function rejectedBrandOf(vehicle = {}, rejectedBrands = []) {
+  const words = [vehicle.brand, vehicle.model, vehicle.raw_mention].map(normalizeText).join(' ').split(/[^a-z0-9]+/).filter(Boolean);
+  return rejectedBrands.map(normalizeText).filter(Boolean).find(brand => words.some(word =>
+    word === brand || (brand.length >= 5 && word.length >= 4 && editDistance(word, brand) <= 2)
+    || (brand.length >= 4 && word.length >= 4 && editDistance(word, brand) <= 1))) || null;
+}
+
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
@@ -139,14 +162,22 @@ function parseBrazilianCurrency(text) {
     parseText = parseText.replace(/\b(?:se\s+nao\s+der|caso\s+nao\s+de|se\s+precisar)\s+sem\s+entrada\b/i, '').trim();
   }
 
-  const depositMatch = !isDepositInquiry ? (
-    parseText.match(/(?:entrada|sinal)(?:\s+de)?\s*(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?|\d+(?:\.\d{3})*(?:,\d{1,2})?)/i)
-    || parseText.match(/(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?|\d+(?:\.\d{3})*(?:,\d{1,2})?)\s*(?:de\s+)?(?:entrada|sinal)/i)
-    || parseText.match(/\b(\d+(?:[.,]\d+)?\s*(?:mil|k)?)\s*(?:e\s+(?:o\s+)?(?:resto|restante|saldo)|e\s+parcela|e\s+financia)\b/i)
-    || parseText.match(/(?:dou|daria|consigo\s+dar|vou\s+dar|posso\s+dar)\s+(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?)/i)
-    || parseText.match(/tenho\s+R\$\s*(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?)/i)
-    || parseText.match(/tenho\s+(\d+(?:[.,]\d+)?\s*(?:mil|k))\b/i)
-  ) : null;
+  // A bare four-digit number in the vehicle-year range ("meu camaro 2007 de entrada") is the customer's
+  // vehicle, never an amount: amounts in that range are written with "mil", "k", "R$" or cents.
+  const vehicleYearLike = match => match && /^(?:19[5-9]\d|20[0-3]\d)$/.test(String(match[1] || '').trim()) && !/R\$\s*$/i.test(match.input.slice(0, match.index + match[0].indexOf(match[1])));
+  const depositPatterns = [
+    /(?:entrada|sinal)(?:\s+de)?\s*(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?|\d+(?:\.\d{3})*(?:,\d{1,2})?)/i,
+    /(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?|\d+(?:\.\d{3})*(?:,\d{1,2})?)\s*(?:de\s+)?(?:entrada|sinal)/i,
+    /\b(\d+(?:[.,]\d+)?\s*(?:mil|k)?)\s*(?:e\s+(?:o\s+)?(?:resto|restante|saldo)|e\s+parcela|e\s+financia)\b/i,
+    // "30 mil avista e o resto parcelado", "15 mil no pix e o restante no cartão"
+    /\b(\d+(?:[.,]\d+)?\s*(?:mil|k))\s*(?:a\s*vista|avista|em\s+dinheiro|no\s+pix|em\s+especie)\s*,?\s*(?:e\s+)?(?:o\s+)?(?:resto|restante|saldo)\b/i,
+    /(?:dou|daria|consigo\s+dar|vou\s+dar|posso\s+dar)\s+(?:R\$\s*)?(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?)/i,
+    /tenho\s+R\$\s*(\d+(?:[.,]\d+)?(?:\s*(?:mil|k))?)/i,
+    /tenho\s+(\d+(?:[.,]\d+)?\s*(?:mil|k))\b/i,
+  ];
+  const depositMatch = !isDepositInquiry
+    ? depositPatterns.map(pattern => parseText.match(pattern)).find(match => match && !vehicleYearLike(match)) || null
+    : null;
   if (depositMatch) {
     const val = parsePrice(depositMatch[1]);
     if (val !== null) {
@@ -310,13 +341,23 @@ function normalizeVehicleCategory(value) {
 // Maps the tenant-scoped Supabase snapshot to the same internal contract used
 // by catalog selection, pricing and auction checks. This is intentionally a
 // reader only: Sheets remains the synchronisation authority.
+// A snapshot row older than the tenant limit (settings.sales.inventory_max_age_hours) is not offered: the
+// source may have sold it since. No limit configured: the row keeps its own status.
+function inventorySnapshotStale(syncedAt, maxAgeHours, nowMs = Date.now()) {
+  const limit = Number(maxAgeHours);
+  if (!Number.isFinite(limit) || limit <= 0) return false;
+  const synced = Date.parse(String(syncedAt || ''));
+  return !Number.isFinite(synced) || nowMs - synced > limit * 3600 * 1000;
+}
+
 function parseSupabaseInventoryRows(rows, options = {}) {
   if (!Array.isArray(rows) || rows.length > 200) throw new Error('INVENTORY_SNAPSHOT_INVALID');
   const ids = new Set();
   const imageMap = options.imageMap || new Map();
   return rows.map(row => {
     const id = String(row?.vehicle_id || '').trim();
-    const statusObj = normalizeStatus(row?.status);
+    const sourceStatus = normalizeStatus(row?.status);
+    const statusObj = sourceStatus?.offerable && inventorySnapshotStale(row?.synced_at, options.maxAgeHours) ? normalizeStatus('unverified') : sourceStatus;
     const brand = String(row?.brand || '').trim(), model = String(row?.model || '').trim();
     const year = Number(row?.model_year), cents = row?.price_cents === null || row?.price_cents === undefined ? null : Number(row.price_cents);
     const previousCents = row?.previous_price_cents === null || row?.previous_price_cents === undefined ? null : Number(row.previous_price_cents);
@@ -346,14 +387,14 @@ function parseSupabaseInventoryRows(rows, options = {}) {
   });
 }
 
-async function loadSupabaseInventory({ tenantId, supabaseUrl, serviceRoleKey, httpRequest, includeImages = false } = {}) {
+async function loadSupabaseInventory({ tenantId, supabaseUrl, serviceRoleKey, httpRequest, includeImages = false, maxAgeHours = null } = {}) {
   if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(String(tenantId || '')) || !supabaseUrl || !serviceRoleKey || !httpRequest) {
     throw new Error('INVENTORY_SNAPSHOT_CONFIG_INVALID');
   }
   const select = 'vehicle_id,sheet_row,brand,model,model_year,color,mileage_km,fuel,category,status,price_cents,previous_price_cents,availability_confirmed,price_source,observations,source_observed_at,synced_at';
   const cleanBase = String(supabaseUrl).replace(/\/$/, '');
   const rows = await httpRequest({ method: 'GET', url: cleanBase + '/rest/v1/genesis_inventory_vehicles?select=' + encodeURIComponent(select) + '&tenant_id=eq.' + encodeURIComponent(tenantId) + '&order=sheet_row.asc&limit=200', headers: { apikey: serviceRoleKey, Authorization: 'Bearer ' + serviceRoleKey }, json: true, timeout: 7000 });
-  if (!includeImages) return parseSupabaseInventoryRows(rows);
+  if (!includeImages) return parseSupabaseInventoryRows(rows, { maxAgeHours });
 
   const imageMap = new Map(), imageAuthorizations = new Map();
   try {
@@ -390,7 +431,7 @@ async function loadSupabaseInventory({ tenantId, supabaseUrl, serviceRoleKey, ht
     }
   } catch (_) { }
   // Missing/partial registry never authorizes another vehicle by a folder name.
-  return parseSupabaseInventoryRows(rows, { imageMap, imageAuthorizations });
+  return parseSupabaseInventoryRows(rows, { imageMap, imageAuthorizations, maxAgeHours });
 }
 
 function classifyCatalogAudience(value = 'all') {
@@ -1108,16 +1149,21 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
       // 2. Purchase of the CUSTOMER's vehicle from tenant_settings.sdr_rules.
       // Never applied to stock that the store itself sells.
       const purchaseEvaluation = { evaluated: false, requires_human: false, reason: null, preferred: false, source: 'tenant_settings.sdr_rules' };
-      if (tradeInData?.kind === 'independent_sale') {
-        const v = mergedCustomerVehicle || {};
-        const rejectedBrands = leadRules.rejected_purchase_brands.map(normalizeText).filter(Boolean);
+      // Direct sale as the decision defines it below (independentSale): a trade-in offer is never evaluated here.
+      if (tradeInData?.kind === 'independent_sale' || (!tradeInData && state.transaction_mode === 'sell')) {
+        const v = mergedCustomerVehicle || state.sell_vehicle || {};
         const preferredModels = leadRules.preferred_purchase_models.map(normalizeText).filter(Boolean);
-        const vBrand = normalizeText(v.brand || ''), vModel = normalizeText(v.model || '');
+        const vModel = normalizeText(v.model || '');
         const vYear = v.year ? Number(v.year) : null;
         purchaseEvaluation.evaluated = true;
-        if (vBrand && rejectedBrands.some(rb => vBrand.includes(rb))) purchaseEvaluation.reason = 'rejected_brand';
-        else if (vYear && leadRules.minimum_purchase_year !== null && vYear < leadRules.minimum_purchase_year) purchaseEvaluation.reason = 'year_below_minimum';
-        purchaseEvaluation.requires_human = Boolean(purchaseEvaluation.reason);
+        const rejectedBrand = rejectedBrandOf(v, leadRules.rejected_purchase_brands);
+        if (rejectedBrand) {
+          purchaseEvaluation.reason = 'rejected_brand';
+          purchaseEvaluation.brand = leadRules.rejected_purchase_brands.find(item => normalizeText(item) === rejectedBrand) || rejectedBrand;
+        } else if (vYear && leadRules.minimum_purchase_year !== null && vYear < leadRules.minimum_purchase_year) purchaseEvaluation.reason = 'year_below_minimum';
+        // The store does not buy this vehicle: there is nothing for a human to appraise. The customer is told
+        // the policy (the EXT's own reply below) and may still use the vehicle as entry in a purchase.
+        purchaseEvaluation.requires_human = false;
         purchaseEvaluation.preferred = Boolean(vModel && preferredModels.some(m => vModel.includes(m) || m.includes(vModel)));
       }
 
@@ -1227,6 +1273,19 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
       } else if (tradeInData?.kind === 'policy_inquiry' && !product) {
         nextPending = 'purchase_product';
       }
+      // A vehicle the store does not buy: no appraisal requirement (model, year, photo, condition) is collected.
+      if (purchaseEvaluation.reason && ['sell_model', 'sell_year', 'vehicle_photo', 'vehicle_description'].includes(nextPending)) nextPending = '';
+      // The customer is told the purchase policy by the EXT itself; the model wrote before this decision.
+      const wantedProduct = product || (state.product_id ? inventory.find(item => item.id === state.product_id && commercialEligibility(item).eligible) : null);
+      const productLabel = wantedProduct ? String(wantedProduct.commercial_name || wantedProduct.name || [wantedProduct.brand, wantedProduct.model, wantedProduct.year].filter(Boolean).join(' ')).trim() : '';
+      const purchasePolicyReply = !purchaseEvaluation.reason ? null : [
+        purchaseEvaluation.reason === 'rejected_brand'
+          ? 'A loja não compra ' + purchaseEvaluation.brand + ' diretamente.'
+          : 'A loja não compra diretamente veículos anteriores a ' + leadRules.minimum_purchase_year + '.',
+        policy.trade_in.accepted_subject_to_appraisal !== true ? ''
+          : productLabel ? 'Mas ele pode entrar como parte do pagamento do ' + productLabel + ', sujeito à avaliação. Quer seguir assim?'
+            : 'Mas, se você for levar um veículo da loja, ele pode entrar como parte do pagamento, sujeito à avaliação.',
+      ].filter(Boolean).join(' ');
 
       // 7. Handoff evaluation
       // Independent sale: hand off to appraisal only when the CONFIGURED remote
@@ -1243,22 +1302,53 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
         independentSaleAppraisal.evaluated = true;
         const vehicleModel = String(reconciledVehicle ? (reconciledVehicle.model || '') : (state.sell_vehicle?.model || state.sell_model || '')).trim();
         if (!vehicleModel) independentSaleAppraisal.missing.push('sell_model');
+        // The store does not buy below minimum_purchase_year: without the year the policy cannot be applied.
+        const vehicleYear = reconciledVehicle ? reconciledVehicle.year : (state.sell_vehicle?.year || state.sell_year);
+        if (leadRules.minimum_purchase_year !== null && !vehicleYear) independentSaleAppraisal.missing.push('sell_year');
         if (remoteAppraisal.photos_required === true && !(Number(appraisalEvidence.vehicle_photo_count) > 0)) independentSaleAppraisal.missing.push('vehicle_photo');
         if (remoteAppraisal.condition_description_required === true && appraisalEvidence.description_reported !== true) independentSaleAppraisal.missing.push('vehicle_description');
         independentSaleAppraisal.ready = independentSaleAppraisal.missing.length === 0;
       }
+      // What a remote direct-sale appraisal still lacks (model, year, photo, condition) is what the AI asks next.
+      // The store's order (model, year, photo, condition) prevails over the requirement the model picked.
+      if (independentSaleAppraisal.evaluated && !independentSaleAppraisal.ready
+        && (!nextPending || nextPending === 'none' || ['sell_model', 'sell_year', 'vehicle_photo', 'vehicle_description'].includes(nextPending))) {
+        nextPending = independentSaleAppraisal.missing[0];
+      }
+      // The year was asked and the customer does not know it: the purchase policy cannot be applied, so a
+      // person takes over and the lead is classified cold.
+      const priorPending = String(state.dialogue_context?.pending_requirement || state.pending_requirement || '');
+      const knownSaleYear = reconciledVehicle ? reconciledVehicle.year : (state.sell_vehicle?.year || state.sell_year);
+      const saleYearUnknown = independentSale && priorPending === 'sell_year' && !knownSaleYear
+        && /\bnao\s+(?:sei|lembro|me\s+lembro|tenho\s+(?:certeza|ideia)|faco\s+ideia)\b|\bsei\s+la\b/.test(normalizeText(turnText));
       let handoffRequired = false, handoffReason = null, handoffQueue = null;
       const appraisalRequested = dialoguePlan.handoff_reason === 'appraisal_review';
-      const tradeInReadyForReview = tradeInData?.kind === 'offer'
+      // After the trade-in policy was discussed in this conversation, the customer naming the vehicle in this
+      // message (answering "qual é o modelo, ano e estado?") is the concrete offer, even when the model did not
+      // label it again. A described offer (model plus year or condition) goes to appraisal without the model's
+      // request: the store, not the model, decides that the offer is complete.
+      const tradeMemory = dialoguePlan.memory || state.dialogue_memory || {};
+      const tradeDiscussed = ['policy_discussed', 'offered'].includes(tradeMemory.trade_in_status)
+        || ['entry_inquiry', 'entry'].includes(tradeMemory.customer_vehicle_purpose);
+      const turnEventIds = new Set(turnMessages.flatMap(message => [message?.event_id, message?.id]).filter(Boolean).map(String));
+      const offeredVehicle = mergedCustomerVehicle || state.sell_vehicle || null;
+      const vehicleNamedNow = Boolean(offeredVehicle?.model) && (offeredVehicle.evidence_ids || []).some(id => turnEventIds.has(String(id)));
+      const entryFollowUp = (!tradeInData || tradeInData.kind === 'policy_inquiry') && tradeDiscussed && vehicleNamedNow
+        && (['buy', 'buy_and_sell'].includes(state.transaction_mode) || state.intent === 'buy');
+      const offerDescribed = Boolean(offeredVehicle?.model)
+        && Boolean(offeredVehicle.year || offeredVehicle.condition_reported || offeredVehicle.maintenance_reported);
+      const tradeInReadyForReview = (tradeInData?.kind === 'offer' || entryFollowUp)
         && policy.trade_in.accepted_subject_to_appraisal === true
-        && appraisalRequested
-        && !nextPending;
+        && (appraisalRequested || offerDescribed)
+        && (!nextPending || nextPending === 'none');
       if (auctionOp?.required) {
         handoffRequired = true; handoffReason = auctionOp.reason || 'auction_risk';
       } else if (tradeInReadyForReview) {
         handoffRequired = true; handoffReason = 'appraisal_review'; handoffQueue = 'appraisal_review';
-      } else if (purchaseEvaluation.requires_human) {
+      } else if (saleYearUnknown) {
         handoffRequired = true; handoffReason = 'appraisal_review'; handoffQueue = 'appraisal_review';
+        nextPending = '';
+        leadClassification.temperature = 'cold';
       } else if (independentSaleAppraisal.ready) {
         handoffRequired = true; handoffReason = 'appraisal_review'; handoffQueue = 'appraisal_review';
         nextPending = '';
@@ -1333,6 +1423,14 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
       const photoProduct = productPhoto.product_id && productPhoto.product_id !== product?.id
         ? inventory.find(item => item.id === productPhoto.product_id) || null : null;
       const authorizedProduct = photoProduct || product;
+      // The vehicle the customer just asked to see becomes the focus of the conversation: the next
+      // question ("quantos km?") is about it, not about the vehicle focused before the photo.
+      const photoFocusEvidence = photoProduct ? String(productPhoto.evidence_ids[0] || '') : '';
+      const photoFocus = photoProduct && photoFocusEvidence ? {
+        product_id: photoProduct.id, product_evidence: photoFocusEvidence, product_variant_evidence: photoFocusEvidence,
+        buy_interest: { ...(state.buy_interest || {}), brand: photoProduct.brand || '', model: photoProduct.model || '',
+          year: photoProduct.year ?? null, raw_mention: '', product_id: photoProduct.id, evidence_ids: [...productPhoto.evidence_ids] },
+      } : null;
       const decision = {
         contract: 'noria_commercial_decision_v1',
         tenant_slug: expectedSlug,
@@ -1358,10 +1456,12 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
           sell_model: buyOnlyCorrection ? '' : (reconciledVehicle ? (reconciledVehicle.model || '') : (state.sell_model || '')),
           sell_year: buyOnlyCorrection ? null : (reconciledVehicle ? (reconciledVehicle.year ?? null) : (state.sell_year || null)),
           trade_in: buyOnlyCorrection ? null : state.trade_in || null,
-          product_id: obsoleteInventoryFocus ? '' : state.product_id || '',
-          product_evidence: obsoleteInventoryFocus ? '' : state.product_evidence || '',
-          product_variant_evidence: obsoleteInventoryFocus ? '' : state.product_variant_evidence || '',
-          buy_interest: obsoleteInventoryFocus ? null : state.buy_interest || null,
+          ...(photoFocus || {
+            product_id: obsoleteInventoryFocus ? '' : state.product_id || '',
+            product_evidence: obsoleteInventoryFocus ? '' : state.product_evidence || '',
+            product_variant_evidence: obsoleteInventoryFocus ? '' : state.product_variant_evidence || '',
+            buy_interest: obsoleteInventoryFocus ? null : state.buy_interest || null,
+          }),
           pending_requirement: nextPending,
           lead_temperature: leadClassification.temperature,
           financing_qualified: collectionReady,
@@ -1406,7 +1506,8 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
           },
           independent_sale_appraisal: independentSaleAppraisal,
           customer_vehicle_reconciliation: vehicleReconciliation,
-          purchase_policy: { requires_human: purchaseEvaluation.requires_human, reason: purchaseEvaluation.reason, preferred: purchaseEvaluation.preferred, evaluated: purchaseEvaluation.evaluated },
+          purchase_policy: { requires_human: purchaseEvaluation.requires_human, reason: purchaseEvaluation.reason, preferred: purchaseEvaluation.preferred, evaluated: purchaseEvaluation.evaluated,
+            brand: purchaseEvaluation.brand || null, informational_reply: purchasePolicyReply },
           appraisal_policy: { vehicle_appraisal: policy.appraisal.vehicle_appraisal, opening_hours: facts.opening_hours || null, locations: facts.locations || null },
           warranty_policy: { response: leadRules.warranty_response || null },
         },
@@ -1674,7 +1775,7 @@ if (input.noria_phase === 'commercial_decision' || input.operation === 'commerci
       authorisedInventory = await loadSupabaseInventory({
         tenantId: input.tenant_id, supabaseUrl: base, serviceRoleKey: key,
         includeImages: [settings.sales?.whatsapp_catalog_photo_enabled, settings.sales?.vehicle_photos_enabled].some(value => value === true || value === 'true'),
-        httpRequest: this.helpers.httpRequest.bind(this.helpers),
+        httpRequest: this.helpers.httpRequest.bind(this.helpers), maxAgeHours: settings.sales?.inventory_max_age_hours,
       });
     } catch (error) {
       // A decision that depends on stock cannot fall back to CORE payload data.
@@ -1788,7 +1889,7 @@ if (snapshotBase && snapshotKey) {
     const inventory = await loadSupabaseInventory({
       tenantId: input.tenant_id, supabaseUrl: snapshotBase, serviceRoleKey: snapshotKey,
       includeImages: [settings.sales?.whatsapp_catalog_photo_enabled, settings.sales?.vehicle_photos_enabled].some(value => value === true || value === 'true'),
-      httpRequest: this.helpers.httpRequest.bind(this.helpers),
+      httpRequest: this.helpers.httpRequest.bind(this.helpers), maxAgeHours: settings.sales?.inventory_max_age_hours,
     });
     const offerable = filterOfferableCatalog(inventory, 'all');
     businessContext.inventory = inventory;
@@ -1916,3 +2017,4 @@ return {
     noria_business_context: businessContext,
   }
 };
+
