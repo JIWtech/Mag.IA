@@ -53,8 +53,8 @@ function validateTenantPolicyContract() {
 }
 const coreBuildMetadata = {
   revision: 'conversation_core_v2_1_34_core_ext_decision_identity_2026_10_24',
-  built_at: '2026-10-24T02:38:18.946Z',
-  core_sha256: '99289e1a319da66569ffdea413bac3e84dc102d8fca5bea951d39ea4667324f9',
+  built_at: '2026-10-24T04:01:51.348Z',
+  core_sha256: '9fa263dbffd0eadf7fa3cbbe4785b18739cb6424d5c1353e36715696999ffa56',
   ext_sha256: '3fffdf4d39074c3857d0269fd1c4ce5d011ff32f619007c7e995eaa3059de663',
 };
 const coreRevision = coreBuildMetadata.revision;
@@ -6562,10 +6562,10 @@ function salesSchema() {
   return {
     type: 'OBJECT', properties: {
       action: { type: 'STRING', enum: ['reply', 'catalog', 'location', 'register_interest', 'handoff'] },
-      reply: str, reason: { type: 'STRING', enum: ['none', 'after_sales', 'human', 'missing_product', 'appraisal', 'documents', 'unknown'] },
+      reply: str, reason: { type: 'STRING', enum: ['none', 'after_sales', 'human', 'missing_product', 'appraisal', 'documents', 'unknown'], description: 'after_sales só quando o cliente relata problema, defeito ou pendência de um veículo que JÁ COMPROU do negócio. Perguntar se o negócio oferece ou faz um serviço não é after_sales: se ele estiver em business.human_services, use dialogue_plan.human_service_id.' },
       state: {
         type: 'OBJECT', properties: {
-          intent: { type: 'STRING', enum: ['buy', 'sell', 'after_sales', 'unknown'] }, transaction_mode: { type: 'STRING', enum: ['buy', 'sell', 'buy_and_sell', 'after_sales', 'unknown'] },
+          intent: { type: 'STRING', enum: ['buy', 'sell', 'after_sales', 'unknown'] }, transaction_mode: { type: 'STRING', enum: ['buy', 'sell', 'buy_and_sell', 'after_sales', 'unknown'], description: 'after_sales só quando o cliente relata problema, defeito ou pendência de um veículo que JÁ COMPROU do negócio. Perguntar se o negócio oferece ou faz um serviço não é after_sales: se ele estiver em business.human_services, use dialogue_plan.human_service_id.' },
           customer_name: str, name_evidence: str, product_id: str, product_evidence: str, product_variant_evidence: str,
           deposit_cents: { type: 'INTEGER', nullable: true }, deposit_evidence: str,
           sell_brand: str, sell_model: str, sell_year: { type: 'INTEGER', nullable: true }, sell_brand_evidence: str, sell_model_evidence: str, sell_year_evidence: str,
@@ -8567,7 +8567,10 @@ function salesTenantHumanService(context, serviceId, plan = null) {
   return { id, name: String(service.name || id), confirmation: String(service.confirmation || '').trim() };
 }
 
-function salesHandoffMessage(contextOrAssignee, maybeAssignee, maybeFrustrated = false, hoursStatus = null) {
+// options.reaction=false: another sentence (a declared service's confirmation) already answers the customer, so the
+// notice does not open with "Entendi!"/"Sem problema", which only fit a customer who asked for a person.
+function salesHandoffMessage(contextOrAssignee, maybeAssignee, maybeFrustrated = false, hoursStatus = null, options = {}) {
+  const reaction = options?.reaction !== false;
   let context = null;
   let assignee = null;
   let isFrustrated = false;
@@ -8588,12 +8591,16 @@ function salesHandoffMessage(contextOrAssignee, maybeAssignee, maybeFrustrated =
   if (status.configured && !status.is_open) {
     const nextFormatted = status.next_opening?.formatted;
     const whenNotice = nextFormatted ? ' ' + nextFormatted : ' no próximo expediente';
+    if (!reaction) {
+      return 'No momento nossa equipe de atendimento está fora do horário comercial. Seu atendimento já ficou registrado na fila e nosso próximo atendimento inicia' + whenNotice + '.';
+    }
     if (isFrustrated) {
       return 'Entendi. No momento nossa equipe de atendimento está fora do horário comercial. Seu pedido já ficou registrado na fila e nosso próximo atendimento inicia' + whenNotice + '.';
     }
     return 'Entendi! No momento nossa equipe de atendimento está fora do horário comercial. Seu atendimento já ficou registrado na fila e nosso próximo atendimento inicia' + whenNotice + '.';
   }
 
+  if (!reaction) return 'Vou passar seu atendimento para ' + target + ' continuar por aqui.';
   if (isFrustrated) {
     return 'Entendi. Vou passar seu atendimento para ' + target + ' continuar por aqui.';
   }
@@ -9485,7 +9492,7 @@ function salesSemanticIntentSchema() {
   const str = { type: 'STRING' }, list = { type: 'ARRAY', items: str };
   return {
     type: 'OBJECT', properties: {
-      primary_intent: { type: 'STRING', enum: ['inventory_search', 'purchase', 'sale', 'buy_and_sell', 'trade_in', 'financing', 'price_question', 'product_details', 'after_sales', 'human_handoff', 'other', 'ambiguous'] },
+      primary_intent: { type: 'STRING', enum: ['inventory_search', 'purchase', 'sale', 'buy_and_sell', 'trade_in', 'financing', 'price_question', 'product_details', 'after_sales', 'human_handoff', 'other', 'ambiguous'], description: 'after_sales só quando o cliente relata problema, defeito ou pendência de um veículo que JÁ COMPROU do negócio. Perguntar se o negócio oferece ou faz um serviço não é after_sales: se ele estiver em business.human_services, use dialogue_plan.human_service_id.' },
       secondary_intents: { type: 'ARRAY', items: { type: 'STRING', enum: ['inventory_search', 'purchase', 'sale', 'buy_and_sell', 'trade_in', 'financing', 'price_question', 'product_details', 'after_sales', 'human_handoff', 'other'] } },
       topics: list,
       customer_disposition: { type: 'OBJECT', description: 'Interprete a mensagem inteira: recusar modalidade, produto ou condição enquanto solicita alternativa continua active. declined só para desistência do atendimento/negócio inteiro; closed_by_customer só encerramento sem nova solicitação. Cite os IDs das mensagens atuais que comprovam a decisão.', properties: { value: { type: 'STRING', enum: ['active', 'declined', 'closed_by_customer', 'deferred_by_customer'] }, evidence_ids: list }, required: ['value', 'evidence_ids'] },
@@ -11990,8 +11997,10 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
   const adPriceUnverified = adPriceClaims.length && referralProduct && !salesPriceKnown(referralProduct)
     ? { price_source: 'unverified_whatsapp_catalog', advertisement_price_cents: adPriceClaims[0] } : null;
   const priceDiscrepancy = currentPriceDiscrepancy || referralPriceDiscrepancy || adPriceUnverified;
-  const afterSales = generated.reason === 'after_sales' || mode === 'after_sales'
-    || /(?:comprei|comprei com voces|carro que comprei).{0,100}(?:defeito|problema|quebrou|parou|garantia)/.test(normalizeText(rawText));
+  // A request matching a service the tenant declared (validated in the plan) is that service, answered with its
+  // confirmation, even when the model also tags the turn as after-sales: asking for a service is not a problem report.
+  const afterSales = !naturalPlan?.human_service && (generated.reason === 'after_sales' || mode === 'after_sales'
+    || /(?:comprei|comprei com voces|carro que comprei).{0,100}(?:defeito|problema|quebrou|parou|garantia)/.test(normalizeText(rawText)));
   // generic-auction-evaluation-v1
   const targetAuctionState = generated.state || lead?.state || {};
   const auctionProductCandidate = generated.product || catalogChoice?.product || salesResolveInventoryReference(latestTurnText, inventory)?.product
@@ -13098,7 +13107,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
             ? (hoursStatus?.is_open === false
               ? 'Ótimo! Recebemos as informações necessárias. Vamos analisar as possibilidades de financiamento e retornaremos em breve com uma resposta.\nNo momento nossa equipe está fora do expediente. Nosso próximo horário de atendimento inicia' + (hoursStatus.next_opening?.formatted ? ' ' + hoursStatus.next_opening.formatted : ' no próximo horário comercial') + ', e sua simulação já está registrada na fila.'
               : 'Ótimo! Recebemos as informações necessárias. Vamos analisar as possibilidades de financiamento e retornaremos em breve com uma resposta.')
-            : salesHandoffMessage(context, defaultAssignee, isFrustrated && !acceptedHumanOffer && !explicitCurrentHumanRequest, hoursStatus);
+            : salesHandoffMessage(context, defaultAssignee, isFrustrated && !acceptedHumanOffer && !explicitCurrentHumanRequest, hoursStatus, { reaction: !humanService?.confirmation });
       }
       if (humanService?.confirmation && reply) reply = humanService.confirmation + ' ' + reply;
       await cancelPendingFollowUps(context, handoffReason === 'trade_in_review' ? 'trade_in_handoff' : (handoffReason === 'financing_review' ? 'financing_handoff' : 'human_dispatch'));
