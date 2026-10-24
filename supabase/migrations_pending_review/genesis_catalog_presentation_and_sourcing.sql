@@ -13,7 +13,7 @@ set settings = jsonb_set(
       "name": "Busca de veículo fora do estoque",
       "description": "O cliente procura um veículo específico (marca, modelo ou ano) que não está no estoque anunciado: a loja consegue o veículo com lojas parceiras e locadoras",
       "requires": "no_inventory_product",
-      "confirmation": "Conseguimos buscar esse carro pra você!"
+      "confirmation": "Conseguimos buscar esse veículo pra você!"
     }]'::jsonb,
   true)
 from tenants t
