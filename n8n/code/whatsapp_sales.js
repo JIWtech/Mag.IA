@@ -7,6 +7,22 @@ function salesCommercialContract() {
   return tenantBusinessRules.modules?.commercial_contract || {};
 }
 
+function salesSupportedContractVersion() {
+  const declared = salesCommercialContract();
+  const versions = SUPPORTED_COMMERCIAL_CONTRACTS[declared.contract];
+  return Array.isArray(versions) && typeof declared.version === 'string' && versions.includes(declared.version) ? declared.version : '';
+}
+
+function salesGroundedMaxOutputTokens() {
+  const value = tenantBusinessRules.modules?.dialogue?.grounded_max_output_tokens;
+  return Number.isInteger(value) && value >= 1024 && value <= 8192 ? value : 2048;
+}
+
+function salesDialogueCopy(key, fallback) {
+  const value = tenantBusinessRules.modules?.dialogue?.copy?.[key];
+  return typeof value === 'string' && value.trim() ? value : fallback;
+}
+
 function salesSafeFailureDiagnostics(error, phase) {
   const diagnostic = error?.diagnostic && typeof error.diagnostic === 'object'
     ? error.diagnostic : httpSafeDiagnostic(error, { operation: phase });
@@ -449,7 +465,12 @@ function salesDirectSellInquiry(text = '') {
   return /^(?:(?:ola|oi)\s+)?(?:voces|vcs|a loja)\s+(?:compram|compra)\s+(?:carros?|veiculos?|motos?)$/.test(value);
 }
 
-function salesAutomatedContactGuard(messages = [], history = []) {
+function salesTenantOwnNames(context = {}) {
+  const names = [context?.tenant?.name, context?.tenant?.slug, settingsFor(context).business_facts?.name, 'noria'];
+  return new Set(names.flatMap(name => normalizeText(String(name || '')).split(/[^a-z0-9]+/)).filter(word => word.length >= 3));
+}
+
+function salesAutomatedContactGuard(messages = [], history = [], ownNames = new Set()) {
   const recent = [...(messages || [])];
   if (!recent.length) return null;
   const hasMeaningfulText = recent.some(item => {
@@ -463,8 +484,8 @@ function salesAutomatedContactGuard(messages = [], history = []) {
   // Require explicit OTHER-company service greeting, not generic "ola" or a quoted example.
   const otherCompany = /(?:voce entrou em contato com|aqui no atendimento d[ao]|bem.vind[oa] ao atendimento d[ao])\s+(?:(?:a|o|da|do)\s+)?([a-z0-9]{3,30})/.exec(norm);
   const group = otherCompany?.[1] || '';
-  // O conteúdo não autentica uma conta comercial; a supressão vem dos fatos do ingresso.
-  if (!group || salesUsesStructuredDialogue()) return null;
+  // Só rotula; a supressão ainda exige o fato non_customer do ingresso.
+  if (!group || ownNames.has(group)) return null;
   const automatedText = /\b(?:como posso ajudar|consigo ajudar melhor|atendimento|recebeu|mensagens? em texto)\b/.test(norm);
   if (!automatedText) return null;
   const priorBotTemplate = (history || []).some(h => h?.direction === 'inbound' && h?.raw_payload?.content_type === 'template');
@@ -489,10 +510,8 @@ function salesPriceKnown(row = {}) {
 
 function salesPriceUnavailableReply(row = null) {
   const item = row ? 'do ' + salesCatalogLabel(row, false) : 'do veículo';
-  if (salesUsesStructuredDialogue()) {
-    return 'Ainda não consegui consultar um preço cadastrado ' + item + ' na planilha da loja. Posso pedir para a equipe conferir?';
-  }
-  return 'Ainda não consegui confirmar o preço ' + item + ' no catálogo do WhatsApp. Posso pedir para a equipe conferir o valor atualizado?';
+  return salesDialogueCopy('price_unavailable',
+    'Ainda não consegui confirmar o preço {item} no catálogo do WhatsApp. Posso pedir para a equipe conferir o valor atualizado?').replace('{item}', item);
 }
 
 function salesCatalogSyncConfig(context = {}) {
@@ -3736,7 +3755,7 @@ function salesDuplicateReplyDecision(reply = '', history = [], pendingRequiremen
   // Meaningful repeated questions can legitimately need the same answer.
   // Bare acknowledgements of completed exchanges are silenced before Gemini.
   if (salesUsesStructuredDialogue() && !pendingRequirement) return { duplicate: false, escalate: false, offerHuman: false, level: 0, reply };
-  const baseReply = reorientation || (salesUsesStructuredDialogue() ? 'Qual opção do catálogo você quer escolher?' : 'Já anotei as informações anteriores. Se tiver algum detalhe novo ou quiser falar com a equipe, pode me avisar.');
+  const baseReply = reorientation || salesDialogueCopy('duplicate_reorientation', 'Já anotei as informações anteriores. Se tiver algum detalhe novo ou quiser falar com a equipe, pode me avisar.');
   if (level >= 2) return { duplicate: true, escalate: false, offerHuman: true, level, reply: baseReply + ' Se preferir, posso chamar a equipe para continuar.' };
   return { duplicate: true, escalate: false, offerHuman: false, level, reply: baseReply };
 }
@@ -5758,7 +5777,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
   let tradeInOffer = tradeInContext?.kind === 'offer' ? tradeInContext : null;
   let ownVehicleOffer = salesOwnVehicleOfferEvidence(history, turn.messages) ||
     (tradeInOffer ? { mode: 'sell', id: tradeInOffer.evidence_ids.at(-1), hasOwnership: true, vehicle_text: '' } : null);
-  const autoContactReason = salesAutomatedContactGuard(turn.messages, history);
+  const autoContactReason = salesAutomatedContactGuard(turn.messages, history, salesTenantOwnNames(context));
   if (autoContactReason && turn.suppression_evidence?.non_customer) {
     if (!await commit()) return { ok: true, skipped: true, reason: 'superseded' };
     Object.assign(event, {
@@ -6011,7 +6030,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
     tenant_id: context.tenant.id,
     tenant_slug: tenantSlug,
     noria_extension: inputJson.noria_extension,
-    noria_contract_version: salesUsesStructuredDialogue() ? NORIA_SALES_CONTRACT_VERSION : '1.0',
+    noria_contract_version: salesUsesStructuredDialogue() ? salesSupportedContractVersion() : '1.0',
     remoteJid: chatId,
     instance: inputJson.instance,
     session_id: turn.boundary_id,
@@ -6102,7 +6121,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     && inputJson.commercial_decision_status === 'ok'
     && decisionData?.status === 'ok'
     && decisionData?.provenance === salesCommercialContract().provenance
-    && decisionData?.noria_contract_version === NORIA_SALES_CONTRACT_VERSION
+    && decisionData?.noria_contract_version === salesSupportedContractVersion()
     && decisionIdentityMatches;
   if (commercialContractTurn && !commercialDecisionAuthoritative) {
     throw new Error('COMMERCIAL_DECISION_PROVENANCE_INVALID');
@@ -6815,7 +6834,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     } else {
       stage = cfg.stage_keys.human;
       reply = salesPriceAuthorized(context, generated.product)
-        ? 'Vi que existe um valor diferente no anúncio. O preço cadastrado na planilha da loja é '
+        ? 'Vi que existe um valor diferente no anúncio. O preço cadastrado pela loja é '
         + (salesPriceKnown(generated.product) ? salesMoney(generated.product.price_cents) : 'a confirmar')
         + '. Vou pedir para a equipe conferir a divergência antes de fechar a negociação.'
         : 'Vi que existe um valor no anúncio, mas ainda não consegui confirmar o preço atual no catálogo do WhatsApp. Vou pedir para a equipe verificar a condição anunciada antes de te informar um valor final.';

@@ -1757,6 +1757,11 @@ const policy = {
   scheduling_enabled: settings.appointment_scheduling?.enabled === true,
   modules: {
     dialogue: { contract: 'noria_sales_dialogue_v1', instructions: genesisDialogueInstructions(),
+      grounded_max_output_tokens: 4096,
+      copy: {
+        price_unavailable: 'Ainda não consegui consultar um preço cadastrado {item} na planilha da loja. Posso pedir para a equipe conferir?',
+        duplicate_reorientation: 'Qual opção do catálogo você quer escolher?',
+      },
       composition_instruction: 'Se plan.catalog_list_requested=true, devolva catalog: escreva intro e closing com suas próprias palavras e liste item_ids EXATAMENTE na ordem de official.catalog, sem omitir, repetir ou inventar IDs. A aplicação apresenta cada label autorizado em uma linha numerada, com espaço antes e depois da lista. Não escreva outra lista de veículos no intro/closing. include_prices é sua decisão conforme o pedido atual; preços só vêm da ficha. Não diga uma contagem diferente de official.catalog.length e não afirme disponibilidade não verificada. Se official.catalog estiver vazio, explique que não há anúncio correspondente na lista consultada, sem concluir que a loja não tem veículos. ' +
         'Quando um pedido é purchase e outro sale, reconheça AMBOS os objetivos atuais: compra do veículo da loja e venda do próprio veículo. Não pule a compra para pedir somente fotos. Perguntar sobre entrada em dinheiro continua permitido após optar por venda separada; política antiga de troca não é intenção vigente. official.inventory contém anúncios, não prova estoque físico atual: availability_verified=false também proíbe afirmar que essas opções estão em estoque. ' +
         'Não prometa verificar e retornar depois sem ação executada que assegure isso. Não é preciso escrever o nome da categoria venda separada em toda resposta: basta respeitar a finalidade, sem transformar o veículo em entrada. ' +

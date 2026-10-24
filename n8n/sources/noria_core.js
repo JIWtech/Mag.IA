@@ -41,12 +41,29 @@ function salesUsesStructuredDialogue() {
 function salesCommercialContract() {
   return tenantBusinessRules.modules?.commercial_contract || {};
 }
+// Versões de decisão comercial que ESTE motor implementa. A EXT declara a sua; o CORE só aceita uma
+// versão listada aqui, para que CORE e EXT publicados em versões incompatíveis sejam recusados.
+const SUPPORTED_COMMERCIAL_CONTRACTS = Object.freeze({ noria_commercial_decision_v1: Object.freeze(['2.0']) });
+function salesSupportedContractVersion() {
+  const declared = salesCommercialContract();
+  const versions = SUPPORTED_COMMERCIAL_CONTRACTS[declared.contract];
+  return Array.isArray(versions) && typeof declared.version === 'string' && versions.includes(declared.version) ? declared.version : '';
+}
+// Orçamento da resposta fundamentada declarado pela EXT; sem declaração, o padrão do motor.
+function salesGroundedMaxOutputTokens() {
+  const value = tenantBusinessRules.modules?.dialogue?.grounded_max_output_tokens;
+  return Number.isInteger(value) && value >= 1024 && value <= 8192 ? value : 2048;
+}
+// Textos de redação declarados pela EXT; o CORE só tem o padrão genérico.
+function salesDialogueCopy(key, fallback) {
+  const value = tenantBusinessRules.modules?.dialogue?.copy?.[key];
+  return typeof value === 'string' && value.trim() ? value : fallback;
+}
 // No tenant slug is hardcoded in the shared engine. Client ownership is checked
 // against the Supabase tenant and channel by each extension and loadTenantContext.
 const allowedBusinessProfiles = { nb_bronze_v1: 'standard', vehicle_sales_v1: 'sales_v1', services_booking_v2: 'standard' };
 function validateTenantPolicyContract() {
-  if (salesUsesStructuredDialogue() && (salesCommercialContract().contract !== 'noria_commercial_decision_v1'
-    || typeof salesCommercialContract().version !== 'string' || !salesCommercialContract().version
+  if (salesUsesStructuredDialogue() && (!salesSupportedContractVersion()
     || typeof salesCommercialContract().provenance !== 'string' || !salesCommercialContract().provenance
     || !Array.isArray(tenantBusinessRules.modules.dialogue.instructions)
     || tenantBusinessRules.modules.dialogue.instructions.some(value => typeof value !== 'string'))) {
@@ -67,9 +84,9 @@ function validateTenantPolicyContract() {
 }
 const coreBuildMetadata = {
   revision: 'conversation_core_v2_1_34_core_ext_decision_identity_2026_10_24',
-  built_at: '2026-10-24T14:49:44.440Z',
-  core_sha256: '4ac2b992096a70f92d0ba616ba8d560075db7eb684f822db559fddd4652dc07b',
-  ext_sha256: 'ec6258bea5a7b8220093f2a06593576d84168c5e2bbd53f5892f50dd5e00de1e',
+  built_at: '2026-10-24T15:27:04.438Z',
+  core_sha256: '9ffc3e7833302b12560699134c523c8eeb0a909fb82fd8c039142d065d1bba0a',
+  ext_sha256: '6bdddb5034b8e7d42ab91e364eb78395690642aa8ea00a10558c071005dd107e',
 };
 const coreRevision = coreBuildMetadata.revision;
 let salesInventoryMemo = null;
@@ -4154,7 +4171,7 @@ async function callGroundedGemini(context, history, catalog, appointments) {
       {
         system_instruction: { parts: [{ text: prompt }, { text: 'CONTRATO DE PREÇOS: price_claims deve listar toda afirmação monetária de reply, inclusive valores por extenso, sinais, taxas e comparações. Cada item exige source_type (service_price, service_deposit ou business_fee), source_id (external_id exato do serviço ou chave exata da taxa), amount_cents inteiro em centavos e excerpt literal contendo a proposição inteira com seu sujeito e valor. Preço e sinal de cada serviço vêm somente da mesma linha do catálogo oficial e da política de sinal do tenant; nunca de outro serviço ou de resposta anterior. Cada serviço comparado exige fonte própria. Se não há afirmação monetária, use []. Blocos aprovados e ações determinísticas usam []. Não invente desconto, pacote ou total sem fonte.' }] }, contents: [{ role: 'user', parts: [{ text: JSON.stringify(input) }] }],
         generationConfig: {
-          temperature: 0.2, maxOutputTokens: salesUsesStructuredDialogue() ? 4096 : 2048, thinkingConfig: { thinkingBudget: 512 },
+          temperature: 0.2, maxOutputTokens: salesGroundedMaxOutputTokens(), thinkingConfig: { thinkingBudget: 512 },
           responseMimeType: 'application/json', responseSchema: groundingResponseSchema(context, catalog)
         }
       });
@@ -5604,7 +5621,12 @@ function salesDirectSellInquiry(text = '') {
   const value = normalizeText(text).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   return /^(?:(?:ola|oi)\s+)?(?:voces|vcs|a loja)\s+(?:compram|compra)\s+(?:carros?|veiculos?|motos?)$/.test(value);
 }
-function salesAutomatedContactGuard(messages = [], history = []) {
+// Palavras do nome da própria empresa (tenant e business_facts), para não confundir a saudação dela com outra empresa.
+function salesTenantOwnNames(context = {}) {
+  const names = [context?.tenant?.name, context?.tenant?.slug, settingsFor(context).business_facts?.name, 'noria'];
+  return new Set(names.flatMap(name => normalizeText(String(name || '')).split(/[^a-z0-9]+/)).filter(word => word.length >= 3));
+}
+function salesAutomatedContactGuard(messages = [], history = [], ownNames = new Set()) {
   const recent = [...(messages || [])];
   if (!recent.length) return null;
   const hasMeaningfulText = recent.some(item => {
@@ -5618,8 +5640,8 @@ function salesAutomatedContactGuard(messages = [], history = []) {
   // Require explicit OTHER-company service greeting, not generic "ola" or a quoted example.
   const otherCompany = /(?:voce entrou em contato com|aqui no atendimento d[ao]|bem.vind[oa] ao atendimento d[ao])\s+(?:(?:a|o|da|do)\s+)?([a-z0-9]{3,30})/.exec(norm);
   const group = otherCompany?.[1] || '';
-  // O conteúdo não autentica uma conta comercial; a supressão vem dos fatos do ingresso.
-  if (!group || salesUsesStructuredDialogue()) return null;
+  // Só rotula; a supressão ainda exige o fato non_customer do ingresso.
+  if (!group || ownNames.has(group)) return null;
   const automatedText = /\b(?:como posso ajudar|consigo ajudar melhor|atendimento|recebeu|mensagens? em texto)\b/.test(norm);
   if (!automatedText) return null;
   const priorBotTemplate = (history || []).some(h => h?.direction === 'inbound' && h?.raw_payload?.content_type === 'template');
@@ -5644,10 +5666,8 @@ function salesPriceKnown(row = {}) {
 }
 function salesPriceUnavailableReply(row = null) {
   const item = row ? 'do ' + salesCatalogLabel(row, false) : 'do veículo';
-  if (salesUsesStructuredDialogue()) {
-    return 'Ainda não consegui consultar um preço cadastrado ' + item + ' na planilha da loja. Posso pedir para a equipe conferir?';
-  }
-  return 'Ainda não consegui confirmar o preço ' + item + ' no catálogo do WhatsApp. Posso pedir para a equipe conferir o valor atualizado?';
+  return salesDialogueCopy('price_unavailable',
+    'Ainda não consegui confirmar o preço {item} no catálogo do WhatsApp. Posso pedir para a equipe conferir o valor atualizado?').replace('{item}', item);
 }
 
 function salesCatalogSyncConfig(context = {}) {
@@ -6910,9 +6930,8 @@ function salesPersistedIntentDecision(previous = {}) {
   return { state, evidence: { mode: salesModeFor(previous), id: '' }, source: 'persisted_state' };
 }
 
-// Version contract between the CORE and the Gênesis EXT. Both sides must agree before any commercial decision is applied:
-// the EXT echoes this version in its decision and the CORE verifies it. A mismatch blocks the commercial action.
-const NORIA_SALES_CONTRACT_VERSION = salesCommercialContract().version || '';
+// Version contract between the CORE and the EXT. Both sides must agree before any commercial decision is applied:
+// the EXT echoes the version it declared, and the CORE accepts it only if listed in SUPPORTED_COMMERCIAL_CONTRACTS.
 // Refusals caused by a CORE and an EXT published at different contract versions. The EXT identity of a previous publication
 // still reports NORIA_EXTENSAO_TENANT_INCORRETO for a version it does not accept.
 const CONTRACT_CUTOVER_PATTERN = /COMMERCIAL_CONTRACT_VERSION_MISMATCH|COMMERCIAL_DECISION_PROVENANCE_INVALID|NORIA_EXTENSAO_CONTRACT_VERSION_MISMATCH|NORIA_EXTENSAO_TENANT_INCORRETO|NORIA_EXT_DISPATCH_UNAVAILABLE:CONTRACT_VERSION/;
@@ -9006,7 +9025,7 @@ function salesDuplicateReplyDecision(reply = '', history = [], pendingRequiremen
   // Meaningful repeated questions can legitimately need the same answer.
   // Bare acknowledgements of completed exchanges are silenced before Gemini.
   if (salesUsesStructuredDialogue() && !pendingRequirement) return { duplicate: false, escalate: false, offerHuman: false, level: 0, reply };
-  const baseReply = reorientation || (salesUsesStructuredDialogue() ? 'Qual opção do catálogo você quer escolher?' : 'Já anotei as informações anteriores. Se tiver algum detalhe novo ou quiser falar com a equipe, pode me avisar.');
+  const baseReply = reorientation || salesDialogueCopy('duplicate_reorientation', 'Já anotei as informações anteriores. Se tiver algum detalhe novo ou quiser falar com a equipe, pode me avisar.');
   if (level >= 2) return { duplicate: true, escalate: false, offerHuman: true, level, reply: baseReply + ' Se preferir, posso chamar a equipe para continuar.' };
   return { duplicate: true, escalate: false, offerHuman: false, level, reply: baseReply };
 }
@@ -11228,7 +11247,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
   let tradeInOffer = tradeInContext?.kind === 'offer' ? tradeInContext : null;
   let ownVehicleOffer = salesOwnVehicleOfferEvidence(history, turn.messages) ||
     (tradeInOffer ? { mode: 'sell', id: tradeInOffer.evidence_ids.at(-1), hasOwnership: true, vehicle_text: '' } : null);
-  const autoContactReason = salesAutomatedContactGuard(turn.messages, history);
+  const autoContactReason = salesAutomatedContactGuard(turn.messages, history, salesTenantOwnNames(context));
   if (autoContactReason && turn.suppression_evidence?.non_customer) {
     if (!await commit()) return { ok: true, skipped: true, reason: 'superseded' };
     Object.assign(event, {
@@ -11481,7 +11500,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
     tenant_id: context.tenant.id,
     tenant_slug: tenantSlug,
     noria_extension: inputJson.noria_extension,
-    noria_contract_version: salesUsesStructuredDialogue() ? NORIA_SALES_CONTRACT_VERSION : '1.0',
+    noria_contract_version: salesUsesStructuredDialogue() ? salesSupportedContractVersion() : '1.0',
     remoteJid: chatId,
     instance: inputJson.instance,
     session_id: turn.boundary_id,
@@ -11572,7 +11591,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     && inputJson.commercial_decision_status === 'ok'
     && decisionData?.status === 'ok'
     && decisionData?.provenance === salesCommercialContract().provenance
-    && decisionData?.noria_contract_version === NORIA_SALES_CONTRACT_VERSION
+    && decisionData?.noria_contract_version === salesSupportedContractVersion()
     && decisionIdentityMatches;
   if (commercialContractTurn && !commercialDecisionAuthoritative) {
     throw new Error('COMMERCIAL_DECISION_PROVENANCE_INVALID');
@@ -12285,7 +12304,7 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
     } else {
       stage = cfg.stage_keys.human;
       reply = salesPriceAuthorized(context, generated.product)
-        ? 'Vi que existe um valor diferente no anúncio. O preço cadastrado na planilha da loja é '
+        ? 'Vi que existe um valor diferente no anúncio. O preço cadastrado pela loja é '
         + (salesPriceKnown(generated.product) ? salesMoney(generated.product.price_cents) : 'a confirmar')
         + '. Vou pedir para a equipe conferir a divergência antes de fechar a negociação.'
         : 'Vi que existe um valor no anúncio, mas ainda não consegui confirmar o preço atual no catálogo do WhatsApp. Vou pedir para a equipe verificar a condição anunciada antes de te informar um valor final.';
