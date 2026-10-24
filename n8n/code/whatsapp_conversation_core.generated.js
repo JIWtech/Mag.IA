@@ -85,8 +85,8 @@ function validateTenantPolicyContract() {
 }
 const coreBuildMetadata = {
   revision: 'conversation_core_v2_1_34_core_ext_decision_identity_2026_10_24',
-  built_at: '2026-10-24T18:36:19.262Z',
-  core_sha256: '1845e8b6b969abbeb365c39b9bf7ccec8887c6f6692a78b5866fce40b6c7ea77',
+  built_at: '2026-10-24T19:57:03.353Z',
+  core_sha256: '49a932d063fcdde39cf95d51900b7baa66a9f8c8b83c6875d332b15715ce5ffb',
   ext_sha256: 'dd531a1adaa56010bae606413078379b76ba0dcf22c305caedcf0cf91af68606',
 };
 const coreRevision = coreBuildMetadata.revision;
@@ -5071,14 +5071,23 @@ async function patchAudioProcessing(context, eventId, externalMessageId, audioRe
     { audio_processing: audioResult }, 'audio_transcription_not_persisted');
 }
 
+// Áudios transcritos por turno: configurável no tenant (1 a 6), padrão 4.
+function salesAudioBatchLimit(context) {
+  const value = Number(settingsFor(context).whatsapp_audio_batch_limit);
+  return Number.isInteger(value) && value >= 1 && value <= 6 ? value : 4;
+}
+
 async function transcribeTurnAudio(context, { tolerateUnintelligible = false } = {}) {
   const audioMessages = turn.messages.filter(row => row.text === '[audio]');
   if (!audioMessages.length) return;
   if (settingsFor(context).whatsapp_audio_enabled !== true) throw new Error('audio_disabled_for_tenant');
-  if (audioMessages.length > 2) throw new Error('audio_batch_limit');
   turn.audio_transcriptions = {};
   turn.audio_unintelligible = [];
-  for (const item of audioMessages) {
+  // Acima do limite, os áudios mais antigos ficam sem transcrição e registrados; o turno segue com os mais recentes.
+  const overflow = audioMessages.slice(0, Math.max(0, audioMessages.length - salesAudioBatchLimit(context)));
+  turn.audio_skipped = overflow.map(item => item.event_id);
+  if (tolerateUnintelligible) for (const item of overflow) { turn.audio_unintelligible.push(item.event_id); item.text = ''; }
+  for (const item of audioMessages.slice(overflow.length)) {
     const path = '/rest/v1/channel_events?tenant_id=eq.' + encodeFilter(context.tenant.id)
       + '&channel_type=eq.whatsapp&external_conversation_id=eq.' + encodeFilter(chatId)
       + '&id=eq.' + encodeFilter(item.event_id);
@@ -11248,6 +11257,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
   // Otherwise those checks see '[audio]' instead of the spoken message.
   // Technical failures go to the shared durable hold, not an unbounded retry.
   await transcribeTurnAudio(context, { tolerateUnintelligible: true });
+  if (turn.audio_skipped?.length) event.raw_payload = { ...(event.raw_payload || {}), audio_batch_overflow_event_ids: turn.audio_skipped };
   if (turn.audio_unintelligible?.length) {
     const unintelligibleIds = new Set(turn.audio_unintelligible);
     const spoken = turn.messages.filter(message => !unintelligibleIds.has(message.event_id) && String(message.text || '').trim());

@@ -29,6 +29,11 @@ function salesSafeFailureDiagnostics(error, phase) {
   return { ...diagnostic, phase, operation: diagnostic.operation || phase };
 }
 
+function salesAudioBatchLimit(context) {
+  const value = Number(settingsFor(context).whatsapp_audio_batch_limit);
+  return Number.isInteger(value) && value >= 1 && value <= 6 ? value : 4;
+}
+
 function salesEnabled(context) {
   return tenantBusinessRules.profile === 'vehicle_sales_v1' && settingsFor(context).conversation_capability === 'sales_v1';
 }
@@ -5775,6 +5780,7 @@ async function runSalesTurnPrepare(context, history, event, control) {
   // Otherwise those checks see '[audio]' instead of the spoken message.
   // Technical failures go to the shared durable hold, not an unbounded retry.
   await transcribeTurnAudio(context, { tolerateUnintelligible: true });
+  if (turn.audio_skipped?.length) event.raw_payload = { ...(event.raw_payload || {}), audio_batch_overflow_event_ids: turn.audio_skipped };
   if (turn.audio_unintelligible?.length) {
     const unintelligibleIds = new Set(turn.audio_unintelligible);
     const spoken = turn.messages.filter(message => !unintelligibleIds.has(message.event_id) && String(message.text || '').trim());
