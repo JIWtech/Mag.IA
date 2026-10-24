@@ -58,6 +58,7 @@ Permissões: onboarding não é executável por `anon`; exige `auth.uid()` váli
 - O código ativo do EXT foi executado em leitura contra a configuração real do Supabase. O código ativo do CORE aceitou o contrato resultante, incluindo as 44 instruções e a política de avaliação normalizada.
 - Regeneração idempotente validada. `git diff --check` limpo. Busca de padrões de segredos no diff sem ocorrências.
 - Suíte ampla: 70 arquivos, 590 testes, 412 aprovados, 168 falhas legadas e 10 ignorados. As falhas incluem fixtures e expectativas antigas, dependências de banco/ambiente e suítes fora do contrato atual. Esse conjunto permanece pendente e não é tratado como aprovado. Frontend não foi alterado nesta rodada; nenhum deploy Vercel foi realizado por estas mudanças.
+- `npm audit --json` em `app/`, após o push: zero vulnerabilidades na branch `dev`. O GitHub anunciou seis alertas na branch padrão `main` (dois altos, três moderados e um baixo). Conferência de `origin/main` mostrou lockfile diferente: por exemplo, Vite 6.4.3 em `main` e 6.4.5 em `dev`. Os alertas da branch padrão não foram declarados resolvidos nem houve promoção automática para ela. [Alertas do GitHub](https://github.com/JIWtech/NORIA/security/dependabot).
 
 ## Observação de produção e pendências históricas
 
@@ -89,4 +90,4 @@ Backups locais ignorados pelo Git:
 
 Para rollback do n8n: ler novamente a versão ativa, recusar alterações concorrentes e restaurar somente o código dos nós previstos a partir do backup. Se reverter ambos, restaurar o motor antes do EXT, preservando conexões, IDs, credenciais e settings vigentes. Após PUT, conferir versão ativa e conteúdo. Um rollback do banco exige revisar alterações posteriores e o pré-estado; nunca excluir workspaces reais ou liberar filas como parte da reversão.
 
-Commits de implementação: `eb59e32` (CORE/EXT), `a013381` (Supabase) e `74d0979` (resposta vazia e barreira de publicação). Não houve promoção de branch estável com a suíte ampla falhando.
+Commits de implementação: `eb59e32` (CORE/EXT), `a013381` (Supabase) e `74d0979` (resposta vazia e barreira de publicação). Documentação inicial consolidada em `c04da77`. Push para `origin/dev` confirmado; repositório local sincronizado. Não houve promoção de branch estável com a suíte ampla falhando.
