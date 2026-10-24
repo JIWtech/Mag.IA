@@ -1928,6 +1928,10 @@ function salesInboundMediaShape(messages = []) {
   };
 }
 
+function salesNeutralMediaSituation(shape = {}) {
+  return shape.neutralAudio ? 'neutral_audio' : shape.videoOnly ? 'video_only' : 'photo_only';
+}
+
 function salesNeutralMediaStartReply(previous = {}, evidence = {}, shape = {}) {
   if (salesModeFor(previous) !== 'unknown') return '';
   if (shape.neutralAudio) return 'Recebi seu \u00e1udio. Como posso ajudar?';
@@ -5794,7 +5798,8 @@ async function runSalesTurnPrepare(context, history, event, control) {
         raw_payload: { ...(event.raw_payload || {}), audio_unintelligible_event_ids: [...unintelligibleIds] }
       });
       await saveEvent(event);
-      const sentAudioReply = await sendChannelMessage(context, mediaFallbackText({ category: 'audio' }, 'media_audio_unintelligible'), event);
+      const sentAudioReply = await sendChannelMessage(context, await composeMediaNotice(context, history, 'audio_unintelligible',
+        mediaFallbackText({ category: 'audio' }, 'media_audio_unintelligible')), event);
       await complete('done');
       return { ok: true, audio_unintelligible: true, ...sentAudioReply };
     }
@@ -5934,7 +5939,8 @@ async function runSalesTurnPrepare(context, history, event, control) {
       }
     } else {
       generated = {
-        action: 'reply', reason: 'none', reply: mediaCapability.reply, state: salesMergeState(lead?.state || {}, {}),
+        action: 'reply', reason: 'none', state: salesMergeState(lead?.state || {}, {}),
+        reply: await composeMediaNotice(context, history, mediaCapability.kind === 'contact' ? 'contact_card' : 'unsupported_file', mediaCapability.reply),
         product: lead?.product || null, media_notice: mediaCapability.kind
       };
     }
@@ -6279,7 +6285,8 @@ async function runSalesTurnFinalize(context, history, event, control, intermedia
   const neutralMediaReply = salesNeutralMediaStartReply(lead?.state || {}, intentDecision.evidence, inboundMediaShape);
   // neutral-media-state-v1
   if (neutralMediaReply) generated = {
-    ...generated, action: 'reply', reason: 'none', reply: neutralMediaReply,
+    ...generated, action: 'reply', reason: 'none',
+    reply: await composeMediaNotice(context, history, salesNeutralMediaSituation(inboundMediaShape), neutralMediaReply),
     state: salesMergeState(lead?.state || {}, {}), product: lead?.product || null
   };
   const semanticCatalogChoice = salesUsesStructuredDialogue() ? salesSemanticCatalogChoice(generated.semantic_intent, history, inventory) : null;
