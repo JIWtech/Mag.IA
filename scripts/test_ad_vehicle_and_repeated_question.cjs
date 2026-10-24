@@ -25,9 +25,27 @@ test('pergunta nova ou resposta sem pergunta não é repetição', () => {
   assert.equal(repeats(s10, [{ direction: 'outbound', ai_provider: 'human_operator', message_text: s10 }]), false);
 });
 
+test('mensagem inteira repetida depois de um follow-up é detectada (produção …1919, 15:27)', () => {
+  const renault = 'A loja não compra Renault diretamente. Mas, se você for levar um veículo da loja, ele pode entrar como parte do pagamento, sujeito à avaliação.';
+  const history = [out(renault), { direction: 'outbound', ai_provider: 'configured_follow_up', message_text: 'Oi! Podemos continuar seu atendimento na Genesis Automóveis?' },
+    { direction: 'inbound', message_text: 'Não' }];
+  const recent = new Function('salesCurrentSessionHistory', slice('normalizeText') + slice('salesComparableReply') + slice('salesQuestionSentences')
+    + slice('salesRepeatsLastQuestion') + slice('salesRepeatsRecentAssistant') + '; return salesRepeatsRecentAssistant;')(h => h);
+  assert.equal(recent(renault, history), true);
+  assert.equal(recent('Tudo bem, obrigado pelo retorno! Se precisar, é só chamar.', history), false);
+});
+
+test('o Gemini vê follow-ups e mensagens do atendente, identificados pelo autor', () => {
+  const line = core.split('\n').find(l => l.includes('recent_assistant_messages:'));
+  assert.match(line, /configured_follow_up/);
+  assert.match(line, /human_operator/);
+  assert.match(line, /author/);
+});
+
 test('repetição é corrigida por reformulação auditada e nunca deixa o cliente sem resposta', () => {
   const finalize = core.slice(core.indexOf('async function runSalesTurnFinalize('));
-  const block = finalize.slice(finalize.indexOf('salesRepeatsLastQuestion('), finalize.indexOf('salesRepeatsLastQuestion(') + 1400);
+  assert.ok(finalize.indexOf('salesRepeatsRecentAssistant(') > 0);
+  const block = finalize.slice(finalize.indexOf('salesRepeatsRecentAssistant('), finalize.indexOf('salesRepeatsRecentAssistant(') + 1400);
   assert.match(block, /audit\.status === 'accepted'/, 'só depois de a resposta original ter sido aceita');
   assert.match(block, /salesRepairRejectedDialogue\([^)]*\['REPEATED_QUESTION'\]/);
   assert.match(block, /salesAuditPrimaryDialogue\(/, 'a reformulação passa pelo mesmo auditor');
