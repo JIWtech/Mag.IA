@@ -55,3 +55,32 @@ Motivo: na conversa de 24/10 às 00:34, "vcs vendem Camaro?" recebeu "Não traba
 - O CORE ativo já contém `salesCatalogPresentationPolicy` e `salesTenantHumanService` (`requires`); `scripts/test_catalog_presentation_policy.cjs` passou 5/5. As configurações são lidas por turno, sem cache.
 - Rollback: bloco comentado ao final da migração.
 - Não foi enviado WhatsApp real de teste.
+
+## Aplicação complementar — pós-venda, textos dos serviços e janela de follow-up (24/10, 01:15 BRT)
+
+Autorização do usuário: “pode publicar, mas antes quero que implemente que a mensagem de follow up nao deva ser enviada entre 21 e 6 da manhã. ai pode publicar, depois de validar”.
+
+### Problemas de produção corrigidos
+- 00:43/00:50: “Conseguimos buscar…” e “Fazemos sim! … despachante.” seguidos de “Entendi!”. A confirmação do serviço era colada antes do aviso de transferência, que reage como se o cliente tivesse pedido um atendente.
+- 00:56: “Fazem documentação ? Regularizar” foi atribuído ao atendente sem mensagem. O turno foi marcado como pós-venda (`intent: after_sales`), que na Gênesis é silencioso (regra do PASSO_A_PASSO), apesar de ser pedido do serviço declarado.
+
+### CORE (motor `mlKNPv862H2g3Gap`)
+- Pedido que corresponde a um serviço declarado (`human_services`) não é tratado como pós-venda; o cliente recebe a confirmação. Pós-venda sem serviço declarado continua silencioso.
+- Schema do modelo: `after_sales` só para problema/pendência de veículo já comprado; pedir um serviço não é pós-venda.
+- `salesHandoffMessage(..., { reaction: false })`: sem “Entendi!”/“Sem problema” depois da confirmação de um serviço.
+- Versão `9d9455db-33b0-40c0-be38-24ee44115706` → `eebbab87-35c5-456c-9327-0e2d6cc0265a` (ativa).
+
+### Follow-up (entrada `3N5oN6sxtir9lFrA`, nó “Processar Follow-ups”)
+- Nenhum follow-up entre 21:00 e 06:00 no fuso do tenant (`settings.timezone`, padrão America/Sao_Paulo). Ajustável por tenant em `settings.follow_up_quiet_hours = { start, end }`; valor inválido usa o padrão.
+- Job reivindicado na janela volta a `pending` com `due_at` no fim dela (`error = 'quiet_hours_deferred'`), protegido pelo `lease_token`; nada é gerado nem enviado. Checado ao reivindicar e de novo antes do envio. Falha ao adiar = `failed`, sem envio.
+- A fonte `n8n/code/whatsapp_follow_up_dispatch.js` estava defasada do nó publicado (o publicado exige credenciais Evolution do tenant, sem fallback global). A fonte foi igualada ao publicado antes da mudança, e o build passou a projetar o nó a partir dela.
+- Versão `2772a573-24cb-480f-ba81-9e06c0d02158` → `e95f9020-a88f-4603-b1e4-8ce225293c4a` (ativa).
+
+### Supabase (Gênesis)
+- `supabase/migrations_pending_review/genesis_human_services_copy_20261024.sql`: confirmações de `busca_veiculo` (“…a nossa equipe pode verificar com lojas parceiras se consegue ele pra você!”) e `despachante` (“Sim! A loja cuida da documentação do seu veículo…”), sem prometer o veículo. Guard pelo texto anterior; md5 depois = `a5dd0f98e7efbd2f09a8b0d472f344c0`. Rollback no arquivo.
+
+### Validação
+- Antes de publicar: produção (rascunho e ativa) idêntica ao HEAD `2cece25` nos dois workflows; só o nó alvo foi trocado; demais nós, conexões e settings preservados; código ativo conferido após o PUT.
+- Testes: `test_catalog_presentation_policy` 9/9 e `test_sales_follow_up` 13/13. Em todas as `scripts/test_*.cjs`: nenhuma falha nova (169 legadas, eram 173).
+- n8n: zero execuções `error`/`crashed` após a publicação. Sem WhatsApp real de teste.
+- Rollback: republicar o nó a partir do HEAD `2cece25` (versões anteriores acima).
