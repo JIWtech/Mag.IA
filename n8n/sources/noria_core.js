@@ -67,8 +67,8 @@ function validateTenantPolicyContract() {
 }
 const coreBuildMetadata = {
   revision: 'conversation_core_v2_1_34_core_ext_decision_identity_2026_10_24',
-  built_at: '2026-10-24T14:40:08.091Z',
-  core_sha256: '9d37d9e3f98107fcd9bc7cdf231c295ddd0daa46caefea8a97b205dbfad719a8',
+  built_at: '2026-10-24T14:49:44.440Z',
+  core_sha256: '4ac2b992096a70f92d0ba616ba8d560075db7eb684f822db559fddd4652dc07b',
   ext_sha256: 'ec6258bea5a7b8220093f2a06593576d84168c5e2bbd53f5892f50dd5e00de1e',
 };
 const coreRevision = coreBuildMetadata.revision;
@@ -8295,6 +8295,16 @@ async function salesGenerate(context, history, inventory, media, documentStatus,
       || !result.semantic_intent || typeof result.semantic_intent !== 'object' || !result.response_contract
       || !Array.isArray(result.response_contract.answers) || !Array.isArray(result.response_contract.requested_fields)
       || !Array.isArray(result.response_contract.facts))) throw new Error('INVALID_PRIMARY_STRUCTURED_RESPONSE');
+    // Um pedido textual sem resposta precisa de uma candidata completa antes de aplicar estado.
+    // Mídia, serviço declarado e controle humano podem ter resposta delegada à EXT.
+    // Estes sinais só adiam esta regeneração; a EXT e o auditor continuam exigindo autorização.
+    if (salesUsesStructuredDialogue() && result.action === 'reply' && !result.reply.trim()
+      && !result.dialogue_plan.human_service_id && result.dialogue_plan.human_requested !== true
+      && result.semantic_intent.primary_intent !== 'after_sales'
+      && Array.isArray(result.dialogue_plan.requests)
+      && result.dialogue_plan.requests.some(request => request?.topic !== 'photos')) {
+      throw new Error('EMPTY_PRIMARY_TEXT_RESPONSE');
+    }
   } catch (error) {
     // Nenhum dado da candidata foi aplicado. Uma única regeneração usa o mesmo contexto,
     // schema e orçamento do tenant; a nova candidata passa pelas mesmas validações.

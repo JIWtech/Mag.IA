@@ -54,6 +54,10 @@ async function prepare(spec) {
 }
 (async () => {
   if (!['check', 'apply'].includes(mode) || !specPath) throw Error('Usage: <check|apply> <spec.json>');
+  if (mode === 'apply') {
+    // A publicação nem consulta o plano de escrita se a regressão obrigatória falhar.
+    execFileSync(process.execPath, [path.join(__dirname, 'validate_noria_release.cjs')], { cwd: root, stdio: 'inherit', timeout: 65000 });
+  }
   const specs = JSON.parse(fs.readFileSync(path.resolve(root, specPath), 'utf8'));
   const prepared = [];
   for (const spec of specs) prepared.push(await prepare(spec));
