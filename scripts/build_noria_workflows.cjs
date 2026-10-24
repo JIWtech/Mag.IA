@@ -22,6 +22,8 @@ const routerSourceCode = fs.readFileSync(coreRouterSourcePath, 'utf8').replace(/
 // leftovers (expired leases, retries), so a longer interval cuts idle executions without changing the happy path.
 const RECOVERY_TRIGGER_SECONDS = 30;
 const recoveryCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_recover_core.js'), 'utf8').replace(/\r\n/g, '\n');
+// The follow-up dispatcher ("Processar Follow-ups") is projected from its source, so the CORE never drifts from it.
+const followUpDispatchCode = fs.readFileSync(path.join(root, 'n8n/code/whatsapp_follow_up_dispatch.js'), 'utf8').replace(/\r\n/g, '\n').trimEnd();
 const routerCode = fs.readFileSync(path.join(root, 'n8n/code/command_router.js'), 'utf8').replace(/\r\n/g, '\n');
 const routerInsertStart = routerCode.indexOf('  async function insertEvent(event) {');
 const routerInsertEnd = routerCode.indexOf('  async function loadTenantSettings(', routerInsertStart);
@@ -65,6 +67,7 @@ new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', genesisIde
 new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', nubiaExtCode);
 new AsyncFunction('$json', '$env', '$vars', '$getWorkflowStaticData', routerSourceCode);
 new AsyncFunction('$env', '$getWorkflowStaticData', recoveryCode);
+new AsyncFunction('$env', followUpDispatchCode);
 new AsyncFunction('$json', '$env', '$vars', routerCode);
 
 // 4. Update workflow JSON files
@@ -445,6 +448,9 @@ for (const [source, file, prefix, code] of targets) {
     const recoveryNode = workflow.nodes.find(n => n.name === 'Ler Fila WhatsApp');
     if (!recoveryNode || recoveryNode.type !== 'n8n-nodes-base.code') throw new Error('MISSING_TURN_RECOVERY_NODE');
     recoveryNode.parameters.jsCode = recoveryCode;
+    const followUpNode = workflow.nodes.find(n => n.name === 'Processar Follow-ups');
+    if (!followUpNode || followUpNode.type !== 'n8n-nodes-base.code') throw new Error('MISSING_FOLLOW_UP_DISPATCH_NODE');
+    followUpNode.parameters.jsCode = followUpDispatchCode;
     const recoveryTrigger = workflow.nodes.find(n => n.name === 'Recuperar Fila WhatsApp');
     if (!recoveryTrigger || recoveryTrigger.type !== 'n8n-nodes-base.scheduleTrigger') throw new Error('MISSING_TURN_RECOVERY_TRIGGER');
     recoveryTrigger.parameters.rule = { interval: [{ field: 'seconds', secondsInterval: RECOVERY_TRIGGER_SECONDS }] };
@@ -521,6 +527,7 @@ const manifest = {
     'n8n/code/whatsapp_conversation_core.generated.js',
     'n8n/code/whatsapp_sales.js',
     'n8n/code/whatsapp_recover_core.js',
+    'n8n/code/whatsapp_follow_up_dispatch.js',
     'n8n/code/command_router.js',
     'scripts/turn_queue_operational_bridge.cjs',
   ],

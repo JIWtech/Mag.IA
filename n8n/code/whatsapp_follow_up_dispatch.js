@@ -26,9 +26,47 @@ const headers = { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey, 'Co
 const rpc = (name, payload) => request.call(this, 'POST', supabaseUrl + '/rest/v1/rpc/' + name, headers, payload);
 const get = path => request.call(this, 'GET', supabaseUrl + '/rest/v1/' + path, headers);
 const post = (path, body) => request.call(this, 'POST', supabaseUrl + '/rest/v1/' + path, { ...headers, Prefer: 'return=representation' }, body);
+const patch = (path, body) => request.call(this, 'PATCH', supabaseUrl + '/rest/v1/' + path, { ...headers, Prefer: 'return=representation' }, body);
 
 async function finish(job, status, eventId = null, error = '') {
   return rpc('magia_finish_followup_job', { p_job: job.id, p_lease: job.lease_token, p_status: status, p_event: eventId, p_error: error });
+}
+
+// No follow-up is sent inside the quiet window, in the tenant's time zone: 21:00-06:00 by default,
+// settings.follow_up_quiet_hours = { start: 'HH:MM', end: 'HH:MM' } overrides it. A job claimed inside
+// the window goes back to pending, due when the window ends; nothing is generated or sent.
+const DEFAULT_FOLLOW_UP_QUIET_HOURS = { start: '21:00', end: '06:00' };
+function clockMinutes(value) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value || '').trim());
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+function localMinutes(now, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+  return Number(parts.find(part => part.type === 'hour').value) * 60 + Number(parts.find(part => part.type === 'minute').value);
+}
+function quietWindowEnd(settings, now = new Date()) {
+  const configured = settings.follow_up_quiet_hours;
+  const custom = [clockMinutes(configured?.start), clockMinutes(configured?.end)];
+  const [start, end] = custom.every(value => value !== null) ? custom
+    : [clockMinutes(DEFAULT_FOLLOW_UP_QUIET_HOURS.start), clockMinutes(DEFAULT_FOLLOW_UP_QUIET_HOURS.end)];
+  if (start === end) return null;
+  let current;
+  try { current = localMinutes(now, String(settings.timezone || '').trim() || 'America/Sao_Paulo'); }
+  catch (_) { current = localMinutes(now, 'America/Sao_Paulo'); }
+  const inside = start < end ? current >= start && current < end : current >= start || current < end;
+  if (!inside) return null;
+  const due = new Date(now.getTime() + ((end - current + 1440) % 1440) * 60000);
+  due.setUTCSeconds(0, 0);
+  return due;
+}
+async function deferForQuietHours(job, settings) {
+  const due = quietWindowEnd(settings);
+  if (!due) return null;
+  const rows = await patch('follow_up_jobs?id=eq.' + encodeURIComponent(job.id) + '&lease_token=eq.' + encodeURIComponent(job.lease_token)
+    + '&status=eq.processing', { status: 'pending', due_at: due.toISOString(), lease_token: null, locked_until: null,
+      error: 'quiet_hours_deferred', updated_at: new Date().toISOString() });
+  if (!Array.isArray(rows) || rows.length !== 1) throw new Error('FOLLOW_UP_QUIET_HOURS_DEFER_FAILED');
+  return due;
 }
 
 async function conversationChanged(job) {
@@ -169,6 +207,11 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
     const settingsRows = await get('tenant_settings?select=settings&tenant_id=eq.' + encodeURIComponent(job.tenant_id) + '&limit=1');
     const settings = settingsRows?.[0]?.settings || {};
     const sales = settings.conversation_capability === 'sales_v1';
+    const quietUntil = await deferForQuietHours(job, settings);
+    if (quietUntil) {
+      outcome.push({ id: job.id, status: 'deferred', reason: 'quiet_hours', due_at: quietUntil.toISOString() });
+      continue;
+    }
     if (!await protectedEligibility(job, settings)) {
       await finish(job, 'cancelled', null, 'contact_or_sales_blocked');
       outcome.push({ id: job.id, status: 'cancelled', reason: 'contact_or_sales_blocked' });
@@ -206,13 +249,19 @@ for (const job of Array.isArray(jobs) ? jobs : []) {
       continue;
     }
     const tenantSuffix = suffix(job.tenant_slug);
-    const base = (env('EVOLUTION_API_URL_' + tenantSuffix) || env('EVOLUTION_API_URL') || '').replace(/\/$/, '');
-    const key = env('EVOLUTION_API_KEY_' + tenantSuffix) || env('EVOLUTION_API_KEY');
-    const instance = env('EVOLUTION_INSTANCE_' + tenantSuffix) || channel.external_id;
-    if (!base || !key || !instance || (channel?.external_id && instance !== channel.external_id)) throw new Error('Credenciais Evolution do tenant nao configuradas');
+    const base = env('EVOLUTION_API_URL_' + tenantSuffix).replace(/\/$/, '');
+    const key = env('EVOLUTION_API_KEY_' + tenantSuffix);
+    const instance = env('EVOLUTION_INSTANCE_' + tenantSuffix);
+    if (!base || !key || instance !== channel.external_id) throw new Error('Credenciais Evolution do tenant nao configuradas');
     if (!await protectedEligibility(job, settings)) {
       await finish(job, 'cancelled', null, 'contact_or_sales_blocked_before_send');
       outcome.push({ id: job.id, status: 'cancelled', reason: 'contact_or_sales_blocked_before_send' });
+      continue;
+    }
+    // The window may have started while the message was being prepared.
+    const quietBeforeSend = await deferForQuietHours(job, settings);
+    if (quietBeforeSend) {
+      outcome.push({ id: job.id, status: 'deferred', reason: 'quiet_hours', due_at: quietBeforeSend.toISOString() });
       continue;
     }
     sendAttempted = true;

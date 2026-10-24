@@ -7,9 +7,9 @@
     "production_approved": false
   },
   "core_revision": "conversation_core_v2_1_34_core_ext_decision_identity_2026_10_24",
-  "built_at": "2026-10-24T02:38:18.946Z",
-  "core_sha256": "99289e1a319da66569ffdea413bac3e84dc102d8fca5bea951d39ea4667324f9",
-  "raw_disk_sha256": "8878bbd3b3c84855fb497aba27bb156142f67e4814145c4e3d6c1862fe81b451",
+  "built_at": "2026-10-24T04:01:51.348Z",
+  "core_sha256": "9fa263dbffd0eadf7fa3cbbe4785b18739cb6424d5c1353e36715696999ffa56",
+  "raw_disk_sha256": "28e9f58a8f1862b3f4d7bdf5577db9d122e5a7c19e11ec7dd2aa102bd7b9df49",
   "hash_explanation": "core_sha256 is the deterministic normalized hash embedded into the runtime code block; raw_disk_sha256 is the direct sha256 of the generated source file on disk after metadata embedding.",
   "ext_sha256": "3fffdf4d39074c3857d0269fd1c4ce5d011ff32f619007c7e995eaa3059de663",
   "ext_identity_sha256": "e9cf3fb35e249c1c4df8e1d546c436014f2adf6106dd533c042f2322b07bda9e",
@@ -32,6 +32,7 @@
     "n8n/code/whatsapp_conversation_core.generated.js",
     "n8n/code/whatsapp_sales.js",
     "n8n/code/whatsapp_recover_core.js",
+    "n8n/code/whatsapp_follow_up_dispatch.js",
     "n8n/code/command_router.js",
     "scripts/turn_queue_operational_bridge.cjs"
   ]
