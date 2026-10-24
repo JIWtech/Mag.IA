@@ -75,3 +75,37 @@ test('official.product precisa ser o produto em foco', async () => {
     { product: inventory[1], fact_ledger: ledger, inventory, turn_text: 'qual o preço?', handoff_claim_required: false });
   assert.ok(issues.some(issue => issue.startsWith('FACT_PRODUCT_IDENTITY_MISMATCH:official.product')), JSON.stringify(issues));
 });
+
+test('auditor rejeita preço sem prova mesmo quando ele coincide com o ano do veículo', async () => {
+  const { salesValidateSemanticEvidence } = await engine(['salesValidateSemanticEvidence']);
+  const reply = 'O Onix custa 2020. Ano 2020.';
+  const source = { fact_id: 'official.inventory.0.year', source_product_id: inventory[0].id, source_value: '2020' };
+  const claim = { fact_id: source.fact_id, source_product_id: source.source_product_id, value: '2020', excerpt: 'Ano 2020.' };
+  const report = { scope_key: 'scope', complete: true, segments: [
+    { text: 'O Onix custa 2020. ', kind: 'unsupported', evidence: [] },
+    { text: 'Ano 2020.', kind: 'supported_fact', evidence: [source] },
+  ] };
+  const issues = salesValidateSemanticEvidence(report, 'scope', reply, [claim], [source]);
+  assert.ok(issues.includes('SEMANTIC_FACT_UNSUPPORTED'), JSON.stringify(issues));
+});
+
+test('trecho de ligação rejeitado pelo auditor não é promovido por palavras conhecidas', async () => {
+  const { salesValidateSemanticEvidence } = await engine(['salesValidateSemanticEvidence']);
+  const source = { fact_id: 'official.inventory.0.year', source_product_id: inventory[0].id, source_value: '2020' };
+  const claim = { fact_id: source.fact_id, source_product_id: source.source_product_id, value: '2020', excerpt: '2020' };
+  const report = { scope_key: 'scope', complete: true, segments: [
+    { text: 'O Onix está por ', kind: 'unsupported', evidence: [] },
+    { text: '2020', kind: 'supported_fact', evidence: [source] },
+  ] };
+  assert.ok(salesValidateSemanticEvidence(report, 'scope', 'O Onix está por 2020', [claim], [source])
+    .includes('SEMANTIC_FACT_UNSUPPORTED'));
+});
+
+test('proposição inteira sustentada pelo auditor continua aceita', async () => {
+  const { salesValidateSemanticEvidence } = await engine(['salesValidateSemanticEvidence']);
+  const reply = 'O Onix é de 2020.';
+  const source = { fact_id: 'official.inventory.0.year', source_product_id: inventory[0].id, source_value: '2020' };
+  const claim = { fact_id: source.fact_id, source_product_id: source.source_product_id, value: '2020', excerpt: '2020' };
+  const report = { scope_key: 'scope', complete: true, segments: [{ text: reply, kind: 'supported_fact', evidence: [source] }] };
+  assert.deepEqual(salesValidateSemanticEvidence(report, 'scope', reply, [claim], [source]), []);
+});

@@ -91,10 +91,11 @@ function editDistance(a, b) {
 // The rejected brand the customer's vehicle belongs to, read from brand, model and the raw mention
 // ("peugeout", "citroem"): customers misspell brands and the model may leave the brand field empty.
 function rejectedBrandOf(vehicle = {}, rejectedBrands = []) {
-  const words = [vehicle.brand, vehicle.model, vehicle.raw_mention].map(normalizeText).join(' ').split(/[^a-z0-9]+/).filter(Boolean);
-  return rejectedBrands.map(normalizeText).filter(Boolean).find(brand => words.some(word =>
-    word === brand || (brand.length >= 5 && word.length >= 4 && editDistance(word, brand) <= 2)
-    || (brand.length >= 4 && word.length >= 4 && editDistance(word, brand) <= 1))) || null;
+  // Gemini owns brand interpretation/canonicalization. Restriction matching is
+  // an exact normalized comparison of that field with the tenant's settings;
+  // mentions of other vehicles never redefine the offered vehicle's brand.
+  const brand = normalizeText(vehicle.brand);
+  return brand && rejectedBrands.map(normalizeText).filter(Boolean).find(value => value === brand) || null;
 }
 
 function normalizeText(value) {
@@ -1194,8 +1195,11 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
         : (state.transaction_mode || 'unknown');
       const buyContext = ['buy', 'buy_and_sell'].includes(normalizedStateMode);
 
-      const currency = parseBrazilianCurrency(turnText);
-      const depositCents = currency.deposit_cents !== null ? currency.deposit_cents : (state.deposit_cents ?? null);
+      // The CORE already validated the model's amount and its evidence. The
+      // commercial phase consumes that structured value; rereading free text
+      // here would create a second, contradictory authority for the same fact.
+      const depositCents = Number.isSafeInteger(state.deposit_cents) && state.deposit_cents >= 0
+        ? state.deposit_cents : null;
 
       // Documents come only from the configured contract: full_name, birth_date,
       // identity_document_photo (accepted types are identity_document_photo.one_of).
@@ -1317,10 +1321,14 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
       }
       // The year was asked and the customer does not know it: the purchase policy cannot be applied, so a
       // person takes over and the lead is classified cold.
+      const turnEventIds = new Set(turnMessages.flatMap(message => [message?.event_id, message?.id]).filter(Boolean).map(String));
       const priorPending = String(state.dialogue_context?.pending_requirement || state.pending_requirement || '');
       const knownSaleYear = reconciledVehicle ? reconciledVehicle.year : (state.sell_vehicle?.year || state.sell_year);
+      const yearEvidence = semantic?.customer_vehicle?.year_evidence_ids;
       const saleYearUnknown = independentSale && priorPending === 'sell_year' && !knownSaleYear
-        && /\bnao\s+(?:sei|lembro|me\s+lembro|tenho\s+(?:certeza|ideia)|faco\s+ideia)\b|\bsei\s+la\b/.test(normalizeText(turnText));
+        && semantic?.valid === true && semantic.customer_vehicle?.year_unknown === true
+        && Array.isArray(yearEvidence) && yearEvidence.length > 0
+        && yearEvidence.every(id => turnEventIds.has(String(id)));
       let handoffRequired = false, handoffReason = null, handoffQueue = null;
       const appraisalRequested = dialoguePlan.handoff_reason === 'appraisal_review';
       // After the trade-in policy was discussed in this conversation, the customer naming the vehicle in this
@@ -1330,7 +1338,6 @@ async function executeBusinessOperation(operation, payload = {}, context = {}) {
       const tradeMemory = dialoguePlan.memory || state.dialogue_memory || {};
       const tradeDiscussed = ['policy_discussed', 'offered'].includes(tradeMemory.trade_in_status)
         || ['entry_inquiry', 'entry'].includes(tradeMemory.customer_vehicle_purpose);
-      const turnEventIds = new Set(turnMessages.flatMap(message => [message?.event_id, message?.id]).filter(Boolean).map(String));
       const offeredVehicle = mergedCustomerVehicle || state.sell_vehicle || null;
       const vehicleNamedNow = Boolean(offeredVehicle?.model) && (offeredVehicle.evidence_ids || []).some(id => turnEventIds.has(String(id)));
       const entryFollowUp = (!tradeInData || tradeInData.kind === 'policy_inquiry') && tradeDiscussed && vehicleNamedNow

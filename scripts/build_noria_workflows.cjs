@@ -31,13 +31,22 @@ const routerInsertCode = routerCode.slice(routerInsertStart, routerInsertEnd).tr
 // 2. Compute SHA-256 hashes and build metadata
 const extSha256 = crypto.createHash('sha256').update(extCode).digest('hex');
 const now = new Date();
-const todayStr = now.toISOString().slice(0, 10).replace(/-/g, '_');
-const coreRevision = `conversation_core_v2_1_34_core_ext_decision_identity_${todayStr}`;
-const builtAt = now.toISOString();
 
 // To avoid circular hash dependency, compute coreSha256 over canonical code with fixed placeholder
 const normalizedForHash = coreCode.replace(/const coreBuildMetadata = \{[\s\S]*?\};/, 'const coreBuildMetadata = { revision: "", built_at: "", core_sha256: "", ext_sha256: "" };');
 const coreSha256 = crypto.createHash('sha256').update(normalizedForHash).digest('hex');
+// Rebuilding unchanged engine sources must not change bytes just because the
+// clock moved. Keep the original timestamp/revision only for the same CORE+EXT.
+// Other artifacts keep their own source hashes in the manifest below.
+const previousMetadata = /const coreBuildMetadata = \{[\s\S]*?\};/.exec(coreCode)?.[0] || '';
+const previousFields = Object.fromEntries([...previousMetadata.matchAll(/(revision|built_at|core_sha256|ext_sha256):\s*['"]([^'"]*)['"]/g)]
+  .map(match => [match[1], match[2]]));
+const revisionPrefix = 'conversation_core_v2_1_34_core_ext_decision_identity_';
+const previousDate = Number.isFinite(Date.parse(previousFields.built_at)) ? new Date(previousFields.built_at).toISOString() : null;
+const reuseMetadata = previousFields.core_sha256 === coreSha256 && previousFields.ext_sha256 === extSha256
+  && previousDate && previousFields.revision === revisionPrefix + previousDate.slice(0, 10).replace(/-/g, '_');
+const builtAt = reuseMetadata ? previousFields.built_at : now.toISOString();
+const coreRevision = reuseMetadata ? previousFields.revision : revisionPrefix + builtAt.slice(0, 10).replace(/-/g, '_');
 
 const updatedMetadataBlock = `const coreBuildMetadata = {
   revision: '${coreRevision}',
