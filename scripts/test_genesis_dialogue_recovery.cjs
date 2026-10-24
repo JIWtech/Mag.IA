@@ -253,6 +253,17 @@ test('recuperação semântica aceita apenas falta de suporte; contradição e p
   }
 });
 
+test('fato declarado em trecho que o auditor julgou não factual é falta de prova: recebe a mesma reescrita auditada', async () => {
+  // Produção 24/10 14:03: "O Nissan Versa SL 2013 é uma ótima escolha." trazia modelo e ano dentro de uma opinião.
+  const { salesIssuesRepairable } = await engine(['salesIssuesRepairable']);
+  assert.equal(salesIssuesRepairable(['FACT_CLASSIFIED_AS_NON_FACTUAL', 'UNSUPPORTED_SEMANTIC_CLAIM']), true);
+  assert.equal(salesIssuesRepairable(['FACT_CLASSIFIED_AS_NON_FACTUAL', 'SEMANTIC_FACT_CONTRADICTED']), false);
+  const src = fs.readFileSync(path.join(root, 'n8n/sources/noria_core.js'), 'utf8');
+  const repair = src.slice(src.indexOf('async function salesRepairRejectedDialogue('), src.indexOf('async function salesAuditPrimaryDialogue('));
+  assert.match(repair, /FACT_CLASSIFIED_AS_NON_FACTUAL/, 'a reescrita recebe orientação para esse caso');
+  assert.match(repair, /semanticRejection = issues\.some\([^)]*FACT_CLASSIFIED_AS_NON_FACTUAL/, 'a nova candidata continua em auditoria semântica');
+});
+
 test('reescrita não pode trocar semantic por standard para pular a nova auditoria', async () => {
   const { world, repairs, audits, outbound } = await semanticRecovery({ topic: 'price' });
   assert.equal(repairs, 1);
