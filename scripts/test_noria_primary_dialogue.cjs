@@ -16,7 +16,17 @@ test('availability requires official verification',()=>{const g=generated();g.re
 test('execution errors prevent success regardless valid language',()=>assert.ok(ctx.salesValidatePrimaryDialogue(generated(),plan,collection,{error:'PRODUCT_CHANGED'}).issues.includes('EXECUTION_ERROR:PRODUCT_CHANGED')));
 test('conditional and payment availability are not inventory assertions',()=>{assert.equal(ctx.salesFalseAvailabilityClaim('Preciso confirmar se ela está disponível'),false);assert.equal(ctx.salesFalseAvailabilityClaim('Temos financiamento disponível, sujeito à análise'),false);assert.equal(ctx.salesFalseAvailabilityClaim('O carro está disponível'),true);});
 test('failed handoff does not cancel existing followups',()=>{const start=source.indexOf("} else if (dispatchStatus === 'dispatch_failed') {");assert.ok(start>0,'dispatch_failed branch exists');const end=source.indexOf('} else',start+10);const failureBranch=source.slice(start,end>start?end:start+4000);assert.ok(!failureBranch.includes('cancelPendingFollowUps('),'a failed handoff must not cancel follow-ups');assert.ok(source.includes("await cancelPendingFollowUps(context, handoffReason === 'trade_in_review'"),'successful handoffs still cancel follow-ups');});
-test('post-sales final invariant is silent even after recovery',()=>{const start=source.indexOf("  if (tenantSlug === 'wesley_automoveis' && afterSales) { reply = ''; catalogPhotoToSend = null; }"),c={tenantSlug:'wesley_automoveis',afterSales:true,reply:'transfer failed',catalogPhotoToSend:{}};assert.ok(start>=0);vm.runInNewContext(source.slice(start,source.indexOf('\n',start)),c);assert.equal(c.reply,'');assert.equal(c.catalogPhotoToSend,null);});
+test('política de silêncio da EXT vale após recuperação e exige decisão autorizada',()=>{
+  const branch = source.match(/  if \(commercialSemanticAuthorized && decisionData\?\.response_policy\?\.silent === true\) \{ reply = ''; catalogPhotoToSend = null; \}/)?.[0];
+  assert.ok(branch, 'a política de silêncio da decisão deve ser aplicada antes do envio');
+  for (const [authorized, decision, silent] of [[true,{response_policy:{silent:true}},true],
+    [true,{response_policy:{silent:false}},false],[false,{response_policy:{silent:true}},false],[true,null,false]]) {
+    const c={commercialSemanticAuthorized:authorized,decisionData:decision,reply:'transfer failed',catalogPhotoToSend:{}};
+    vm.runInNewContext(branch,c);
+    assert.equal(c.reply,silent?'':'transfer failed');
+    assert.equal(c.catalogPhotoToSend===null,silent);
+  }
+});
 test('processing status includes operational failures',()=>{const c={generated:{},naturalPlanError:null,event:{ai_error:'ASSIGNMENT_FAILED'}};vm.runInNewContext(source.match(/  const aiProcessingOk = .*;/)[0]+'\nresult=aiProcessingOk',c);assert.equal(c.result,false);});
 test('semantic coverage aligns exact segments across omitted original whitespace only',()=>{const reply='Fato comprovado.\r\n  Próxima pergunta?';const report={scope_key:'scope',complete:true,segments:[{kind:'supported_fact',text:'Fato comprovado.',evidence:[]},{kind:'non_factual',text:'Próxima pergunta?',evidence:[]}]};const aligned=ctx.salesAlignSemanticSegments(report,reply);assert.equal(aligned.segments.map(s=>s.text).join(''),reply);assert.equal(aligned.segments[0].text,'Fato comprovado.\r\n  ');});
 test('semantic coverage that already matches exactly is preserved byte for byte',()=>{const reply='Fato. Pergunta?';const report={segments:[{text:'Fato. ',evidence:[]},{text:'Pergunta?',evidence:[]}]};const aligned=ctx.salesAlignSemanticSegments(report,reply);assert.equal(aligned.segments.map(s=>s.text).join(''),reply);assert.equal(aligned.segments[0].text,'Fato. ');});

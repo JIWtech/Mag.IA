@@ -44,3 +44,26 @@ test('cache vencido é relido e uma validação que falha nunca entra no cache',
   await assert.rejects(() => run(bad, badCalls, { conversation_capability: 'standard' }), /NORIA_CAPACIDADE_DIVERGENTE/);
   assert.equal(bad.noria_identity, undefined);
 });
+
+test('identidade transporta políticas comerciais para a EXT sem expor campos alheios', async () => {
+  const services = [{ id: 'documentation', confirmation: 'A equipe verifica.' }];
+  const catalog = { list_requires_criteria: true, max_items: 3 };
+  const out = await run({}, [], {
+    sales: { catalog_presentation: catalog, inventory_max_age_hours: 48, unrelated_secret: 'não transportar' },
+    business_facts: { human_services: services, unrelated_private: 'não transportar' },
+  });
+  const verified = out.json.noria_verified_settings;
+  assert.deepEqual(verified.sales.catalog_presentation, catalog);
+  assert.equal(verified.sales.inventory_max_age_hours, 48);
+  assert.deepEqual(verified.business_facts.human_services, services);
+  assert.equal(verified.sales.unrelated_secret, undefined);
+  assert.equal(verified.business_facts.unrelated_private, undefined);
+});
+
+test('cache da identidade anterior à projeção comercial é invalidado', async () => {
+  const memory = { noria_identity: { [TENANT+'|inst']: { at: Date.now(), verified: { tenant_id: TENANT } } } };
+  const calls = [];
+  const out = await run(memory, calls);
+  assert.equal(calls.length, 3);
+  assert.equal(out.json.noria_verified_settings.conversation_capability, 'sales_v1');
+});

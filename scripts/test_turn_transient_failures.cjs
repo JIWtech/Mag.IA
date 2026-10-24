@@ -31,6 +31,29 @@ test('outro erro levantado pelo banco continua permanente, mas registrado pelo t
   assert.deepEqual(world.log.failures.map(f => [f.error, f.retryable]), [['SUPABASE_RAISED:SOME_CONTRACT_BROKEN', false]]);
 });
 
+test('PostgREST em body/error serializado mantém o token e aguarda a origem antes do envio', async () => {
+  for (const shape of [
+    { response: { body: JSON.stringify({ message: 'TURN_CONTROL_ORIGIN_REQUIRED' }) } },
+    { error: JSON.stringify({ message: 'TURN_CONTROL_ORIGIN_REQUIRED' }) },
+    { cause: { response: { data: JSON.stringify({ message: 'TURN_CONTROL_ORIGIN_REQUIRED' }) } } },
+  ]) {
+    const world = await run({ rpcOverrides: { magia_turn_suppression_status: () => {
+      throw Object.assign(new Error('Request failed with status code 400'), shape);
+    } } });
+    assert.deepEqual(world.log.failures.map(f => [f.error, f.retryable]), [['TURN_CONTROL_ORIGIN_REQUIRED', true]]);
+    assert.equal(world.log.simulated_sends.length, 0);
+  }
+});
+
+test('corpo arbitrário do provedor não é convertido em token de autorização', async () => {
+  const world = await run({ rpcOverrides: { magia_turn_suppression_status: () => {
+    throw Object.assign(new Error('Request failed with status code 400'), { response: { body: '{"message":"conteúdo privado do cliente"}' } });
+  } } });
+  assert.equal(world.log.simulated_sends.length, 0);
+  assert.equal(world.log.failures[0].retryable, false);
+  assert.doesNotMatch(world.log.failures[0].error, /privado|cliente/);
+});
+
 test('Gemini 429 na geração: retry pela fila, nenhuma mensagem pronta enviada ao cliente', async () => {
   const geminiOverride = (body, schema) => {
     if (!schema.properties?.semantic_intent) return undefined;

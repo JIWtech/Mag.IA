@@ -27,6 +27,8 @@ test('resposta sem afirmação de mídia indisponível não gera issue', () => {
 });
 
 test('redator e auditor recebem a restrição de mídia', () => {
-  assert.match(source, /vehicle_video_allowed=false/);
+  const extension = fs.readFileSync(path.resolve(__dirname, '../n8n/sources/genesis_extension.js'), 'utf8');
+  assert.match(extension, /vehicle_video_allowed=false/);
+  assert.match(source, /dialogue\?\.composition_instruction/);
   assert.match(source, /asserts_unavailable_media: \{ type: 'BOOLEAN' \}/);
 });

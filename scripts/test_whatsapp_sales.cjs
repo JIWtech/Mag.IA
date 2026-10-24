@@ -250,7 +250,7 @@ test('split seller details are accepted and excluded brands are not registered',
   assert.equal(r.saved[0].p_register,false);assert.match(r.sent[0],/nao se enquadra/);
 });
 test('inventory typed numbers are preserved, duplicate identities fail closed',()=>{
-  const context=vm.createContext({tenantSlug:'sales',normalizeText:v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()});
+  const context=vm.createContext({tenantSlug:'sales',tenantBusinessRules:{modules:{}},normalizeText:v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()});
   vm.runInContext(fs.readFileSync(path.join(root,'n8n/code/whatsapp_sales.js'),'utf8'),context);
   const rows=context.salesParseInventory(stock);assert.equal(rows.length,6);assert.equal(rows[4].price_cents,4298000);
   assert.equal(context.salesAmount('Entrada de R$ 12.894,00'),1289400);
